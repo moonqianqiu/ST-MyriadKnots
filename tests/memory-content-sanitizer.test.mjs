@@ -88,6 +88,14 @@ test('M2 同名嵌套 keep：嵌套 keep 继续剥壳；块外裸文本丢弃', 
   assert.equal(sanitizeMemoryContent('before' + OT.content + 'A' + OT.content + 'B' + CT.content + 'C' + CT.content + 'after', { keepTags: 'content' }), 'ABC');
 });
 
+test('属性引号内 > 不截断 token：M0 逐字节保留，M2 keep 取内无碎片', () => {
+  const open = '<' + 'div title="a>b">';
+  const close = '</' + 'div>';
+  assert.equal(sanitizeMemoryContent(`前言${open}正文${close}尾`, { keepTags: '', extraTags: '' }), `前言${open}正文${close}尾`);
+  assert.equal(sanitizeMemoryContent(`前言${open}正文${close}尾`, { keepTags: 'div', extraTags: '' }), '正文');
+  assert.equal(sanitizeMemoryContent(`前言${open}正文${close}尾`, { keepTags: '', extraTags: 'div' }), '前言尾');
+});
+
 test('显式 sourceKeepTags=content 时正文格式不再被吞（回归案例）', () => {
   const raw = [
     '<erii_draft>思考</erii_draft>',

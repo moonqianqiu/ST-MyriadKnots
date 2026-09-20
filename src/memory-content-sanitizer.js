@@ -14,9 +14,12 @@ import { LITERAL_DOUBLE_BRACKET_RULE, normalizeTagRules, normalizeTagNames, TAG_
 const OPEN_NAME_RX = new RegExp(`^<\\/?(?:(${TAG_NAME_SOURCE}))`, 'u');
 const SELF_CLOSING_RX = /\/\s*>$/u;
 const COMMENT_RX = /<!--[\s\S]*?-->/g;
+// 属性部分：引号感知（双/单引号内允许 `>`），避免 `<div title="a>b">` 被提前截断。
+// 未闭合引号视为残缺标签、不成 token（回落为文本，由 M0 保留 / M2 丢弃）。
+const TAG_ATTR_SOURCE = String.raw`(?:\s+[^\s=>\/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>"']+))?)*`;
 
 function freshTokenRx() {
-    return new RegExp(`<\\/?${TAG_NAME_SOURCE}(?:\\s[^>]*)?\\/?>|\\[\\[([\\s\\S]*?)\\]\\]`, 'gu');
+    return new RegExp(`<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_SOURCE}\\s*\\/?>|\\[\\[([\\s\\S]*?)\\]\\]`, 'gu');
 }
 
 // 单遍解析：标签 token / 双中括号 token 建树；文本段原样入 children。
