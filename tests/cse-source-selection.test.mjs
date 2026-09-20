@@ -197,6 +197,20 @@ test('请求来源使用最新人设/角色/note和目标最近两轮，排除�
   assert.deepEqual(h.loaded, ['当前书'], '第二次调用已排除整本，不得再次读取该书');
 });
 
+test('keep=content 只用于原始 AI；用户输入与 canonical 正文不被二次清空', async () => {
+  const h = await sourceHarness();
+  h.chat[1].mes = '<content>旧 AI 正文<qqj-cse>旧 CSE</qqj-cse></content>'; h.chat[1].swipes = [h.chat[1].mes];
+  const result = await captureCseRequestSources({
+    hostAdapter: h.hostAdapter, baseline: h.baseline, floor: h.floor, expectedChatId: CHAT,
+    filterWorldInfoSources: sources => sources, sanitizerOptions: { keepTags: 'content' },
+    sourceSnapshot: { canonicalContent: '目标 AI 提到钥匙', rawFingerprint: h.floor.content.rawFingerprint },
+  });
+  assert.match(result.targetWindow.scanText, /旧 AI 正文/u);
+  assert.match(result.targetWindow.scanText, /目标用户让左佐开门/u);
+  assert.match(result.targetWindow.scanText, /目标 AI 提到钥匙/u);
+  assert.doesNotMatch(result.targetWindow.scanText, /旧 CSE/u);
+});
+
 test('来源异步读取期间切聊天或改目标窗口会 stale，修改目标后的无关尾楼不会作废冻结请求', async () => {
   const switched = await sourceHarness({ onLoad: ({ context }) => { context.chatMetadata.qianqianjie.chatId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'; } });
   await assert.rejects(captureCseRequestSources({ hostAdapter: switched.hostAdapter, baseline: switched.baseline, floor: switched.floor, expectedChatId: CHAT }), error => error.code === 'V3_CSE_STALE');

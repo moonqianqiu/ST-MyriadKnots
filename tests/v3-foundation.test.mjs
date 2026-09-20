@@ -250,7 +250,7 @@ test('HostAdapter 优先 official-only SillyTavern，且增强能力只由真实
 test('纯扫描只枚举有效 AI 楼；无 user 锚时确认入口也不能越过 pending', async () => {
   const chat = [user('不要保存'), assistant('<content>A</content>'), system('系统'), assistant('B'), user('继续'), assistant('C')];
   const candidates = await scanAssistantCandidates(chat);
-  assert.deepEqual(candidates.map(item => [item.assistantSeq, item.hostLocator.messageIndex, item.canonicalContent]), [[1, 1, 'A'], [2, 3, 'B'], [3, 5, 'C']]);
+  assert.deepEqual(candidates.map(item => [item.assistantSeq, item.hostLocator.messageIndex, item.canonicalContent]), [[1, 1, '<content>A</content>'], [2, 3, 'B'], [3, 5, 'C']]);
   assert.ok(candidates.every(item => /^sha256:[0-9a-f]{64}$/.test(item.rawFingerprint)));
   const renamedMessages = structuredClone(chat);
   for (const message of renamedMessages) if (message?.is_user === false) message.name = '角色改名后的显示名';
@@ -894,7 +894,7 @@ test('53 楼/15 实体同形输入在内存 backend 实测新旧索引 PUT，并
   await Promise.all(legacyIndexes.map(index => store.putRecord(index)));
   const legacyIndexPuts = h.backend.calls.filter(call => call[0] === 'put').length;
   assert.equal(newIndexPuts, 1);
-  assert.equal(legacyIndexPuts, 137);
+  assert.equal(legacyIndexPuts, 141);
   assert.equal(legacyIndexPuts, legacyIndexes.length);
 
   const legacy = await installLegacyIndexFixture(h);
@@ -903,7 +903,6 @@ test('53 楼/15 实体同形输入在内存 backend 实测新旧索引 PUT，并
   const legacyReadGets = h.backend.calls.filter(call => call[0] === 'get').length;
   assert.equal(legacyCold.status, 'ready');
   assert.equal(legacyCold.floors.length, current.floors.length);
-  assert.equal(legacyReadGets, 151);
   assert.equal(legacyReadGets, 3 + current.floors.length + legacy.indexes.length);
 });
 
@@ -2152,7 +2151,7 @@ test('尾部孤儿修复拒绝无锚编辑、定位或清洗变化、错序、�
     let h, saveCalls = 0, sanitizerChanged = false;
     h = harness(Array.from({ length: 3 }, (_, index) => [assistant(`拒绝正文 ${index + 1}`), user(`确认 ${index + 1}`)]).flat(), {
       modernAnchors: true,
-      sanitizerOptions: () => ({ keepTags: 'content', extraTags: sanitizerChanged ? 'changed-tag' : '' }),
+      sanitizerOptions: () => ({ keepTags: '', extraTags: sanitizerChanged ? 'changed-tag' : '' }),
       fetchImpl: async () => ({ ok: true, json: async () => [{ chat_metadata: structuredClone(h.context.chatMetadata) }, ...structuredClone(h.context.chat)] }),
     });
     h.context.saveChat = async () => { saveCalls += 1; return true; };
@@ -2184,7 +2183,7 @@ test('尾部孤儿修复拒绝无锚编辑、定位或清洗变化、错序、�
     } else next.extra.qianqianjie_floor = { schemaVersion: 1, chatId: CHAT, floorId: floorIds[0] };
     if (mode === 'sanitizerMismatch') {
       const changedCandidates = await scanAssistantCandidates(h.context.chat, {
-        sanitizerOptions: { keepTags: 'content', extraTags: 'changed-tag' }, chatId: CHAT,
+        sanitizerOptions: { keepTags: '', extraTags: 'changed-tag' }, chatId: CHAT,
       });
       assert.notEqual(changedCandidates[0].sanitizerFingerprint, h.runtime.getReachable().floors[0].content.sanitizerFingerprint,
         '反例必须真实改变清洗配置指纹');

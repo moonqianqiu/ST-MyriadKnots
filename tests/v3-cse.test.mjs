@@ -64,10 +64,10 @@ function backendHarness({ conflictRootPut = null, beforeGet = null, beforePut = 
   } };
 }
 
-function runtimeHarness({ cse, extractor, host = 'official', backendOptions, sharedBackend = null, clock = () => new Date(NOW), chat = null, chatWorldInfo = null, filterWorldInfoSources = sources => sources, failureStorage = undefined } = {}) {
+function runtimeHarness({ cse, extractor, host = 'official', backendOptions, sharedBackend = null, clock = () => new Date(NOW), chat = null, chatWorldInfo = null, filterWorldInfoSources = sources => sources, failureStorage = undefined, sanitizerOptions = { keepTags: '' } } = {}) {
   const handlers = new Map(), calls = [], backend = sharedBackend ?? backendHarness(backendOptions);
   let enabled = true;
-  const books = new Map([['当前书', { entries: { 1: { uid: 1, constant: true, content: '<content>启用作者设定</content>' }, 2: { uid: 2, constant: true, content: '禁用支线', disable: true } } }], ['聊天书', { entries: { 4: { uid: 4, constant: true, content: '聊天书作者设定' } } }], ['未链接书', { entries: { 3: { uid: 3, constant: true, content: '不得进入基线' } } }]]);
+  const books = new Map([['当前书', { entries: { 1: { uid: 1, constant: true, content: '启用作者设定' }, 2: { uid: 2, constant: true, content: '禁用支线', disable: true } } }], ['聊天书', { entries: { 4: { uid: 4, constant: true, content: '聊天书作者设定' } } }], ['未链接书', { entries: { 3: { uid: 3, constant: true, content: '不得进入基线' } } }]]);
   const context = {
     name1: '林岚', name2: '裴晚生', personaId: 'persona-linlan', characterId: 0, groupId: null, chatId: 'host-chat',
     characters: [{ avatar: 'character.png', name: '裴晚生', data: { description: '角色描述', personality: '冷静克制', scenario: '雨夜', extensions: { world: '当前书' } } }],
@@ -99,7 +99,7 @@ function runtimeHarness({ cse, extractor, host = 'official', backendOptions, sha
     assert.equal(options.systemPrompt, CSE_SYSTEM_PROMPT, 'CSE 必须只走分析路由');
     return cse ? cse(options, calls) : { jsonData: { subjects: [{ subject: '主角', situational: [{ text: '记得带伞', visibility: 'private', reason: '收到提醒' }] }] }, taskMetadata: { source: 'test-analysis', sourceLabel: '测试分析 API', model: 'analysis-mock' } };
   };
-  const runtime = createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, generateAnalysisTask, generateUtilityTask, isEnabled: () => enabled, filterWorldInfoSources, sanitizerOptions: () => ({ keepTags: 'content' }), failureStorage, now: clock, newUuid: uuidFactory(), logger: { warn() {} } });
+  const runtime = createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, generateAnalysisTask, generateUtilityTask, isEnabled: () => enabled, filterWorldInfoSources, sanitizerOptions: () => sanitizerOptions, failureStorage, now: clock, newUuid: uuidFactory(), logger: { warn() {} } });
   runtime.bind({ eventSource: context.eventSource, eventTypes: context.eventTypes });
   return { runtime, foundationRuntime, store, baseStore, backend, context, calls, commitResults, readModes, emit(name, ...args) { for (const listener of handlers.get(name) ?? []) listener(...args); }, setEnabled(value) { enabled = value; } };
 }
@@ -196,6 +196,17 @@ test('自动 CSE 输入同时含正文、FloorMemory、previousState、baseline�
   assert.deepEqual(committed.reachable.floors.map(item => item.hostLocator), independentlyRead.floors.map(item => item.hostLocator));
   assert.deepEqual(committed.reachable.floors.map(item => item.content.rawFingerprint), independentlyRead.floors.map(item => item.content.rawFingerprint));
   assert.deepEqual(committed.reachable, independentlyRead, 'CAS 返回快照必须与同一后端独立 full readReachable 完全同义');
+});
+
+test('显式 keep=content 时用户输入与 canonical 正文只做 extra 清洗，不被二次清空', async () => {
+  const h = runtimeHarness({
+    sanitizerOptions: { keepTags: 'content' },
+    chat: [user('请记住带伞'), assistant('<content>裴晚生提醒你带伞。</content>'), assistant('<content>用于确认上一楼稳定。</content>')],
+  });
+  await h.runtime.start().then(() => h.runtime.extractNext());
+  const request = JSON.parse(h.calls.find(call => call.systemPrompt === CSE_SYSTEM_PROMPT).taskMessages[0].content);
+  assert.equal(request.payload.canonicalContent, '裴晚生提醒你带伞。');
+  assert.deepEqual(request.payload.currentUserInput, { source: 'currentUserInput', messages: [{ sourceSnapshotIndex: 0, messageIndex: 0, content: '请记住带伞' }] });
 });
 
 test('CSE mixed tracked 首次预算优先缺记录人物，并能用合并旧名命中前情', async () => {

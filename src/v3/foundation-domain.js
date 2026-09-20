@@ -10,7 +10,7 @@ export const FOUNDATION_CAPABILITIES = Object.freeze({
 });
 
 export const FOUNDATION_FORMAT_VERSION = 1;
-const SANITIZER_VERSION = 'memory-content-sanitizer-v1';
+const SANITIZER_VERSION = 'memory-content-sanitizer-v2';
 const INPUT_SNAPSHOT_VERSION = 2;
 
 const prefixedHash = async value => `sha256:${await sha256(value)}`;
@@ -98,7 +98,7 @@ export async function sanitizerFingerprint(options = {}) {
   return prefixedHash(JSON.stringify([
     SANITIZER_VERSION,
     FOUNDATION_FORMAT_VERSION,
-    String(options.keepTags ?? 'content'),
+    String(options.keepTags ?? ''),
     String(options.extraTags ?? ''),
   ]));
 }

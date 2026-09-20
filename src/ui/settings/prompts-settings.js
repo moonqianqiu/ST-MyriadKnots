@@ -13,7 +13,7 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   const { drawer: wrapperDrawer, body: wrapperBody } = subDrawer({ title: '包裹符', id: 'qqj-settings-wrappers' });
   const current = settings.get();
 
-  const keepTags = element('input', 'settings-input'); keepTags.value = current.sourceKeepTags ?? 'content'; keepTags.placeholder = 'content';
+  const keepTags = element('input', 'settings-input'); keepTags.value = current.sourceKeepTags ?? ''; keepTags.placeholder = '留空＝不清洗；示例：content';
   const extraTags = element('input', 'settings-input'); extraTags.value = current.sourceExtraTags ?? ''; extraTags.placeholder = '示例（不会自动生效）：think, reasoning, [[...]]';
   const storyClockEnabled = element('input'); storyClockEnabled.type = 'checkbox'; storyClockEnabled.checked = current.storyClockEnabled !== false;
   const storyClockPrompt = element('textarea', 'settings-input'); storyClockPrompt.value = current.storyClockPrompt ?? ''; storyClockPrompt.placeholder = '留空＝使用千千结内置默认时间戳提示词';

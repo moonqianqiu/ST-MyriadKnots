@@ -112,10 +112,11 @@ function capturePrecedingUserInputFromSnapshot(snapshot, floor, options) {
   const targetIndex = floor?.hostLocator?.messageIndex;
   if (!Number.isSafeInteger(targetIndex) || !selectAssistantMessage(snapshot.chat?.[targetIndex])) return null;
   const messages = [];
+  const userSanitizerOptions = { keepTags: '', extraTags: options?.extraTags ?? '' };
   for (let messageIndex = targetIndex - 1; messageIndex >= 0; messageIndex -= 1) {
     const selected = selectedUserInput(snapshot.chat?.[messageIndex], expectedChatId);
     if (!selected) break;
-    const content = sanitizeMemoryContent(selected.content, options);
+    const content = sanitizeMemoryContent(selected.content, userSanitizerOptions);
     if (!content) break;
     messages.push(Object.freeze({ content, messageIndex, swipeId: selected.swipeId, selectedSwipeIndex: selected.selectedSwipeIndex }));
     if (messages.length >= 40) break;

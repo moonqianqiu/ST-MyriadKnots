@@ -26,7 +26,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   apiPresetActiveId: '',
   sharedApiMigrationVersion: 0,
   sourceWorldInfoExcludedBooks: [],
-  sourceKeepTags: 'content',
+  // 对齐 ST-SevenDaysCal：keepTags 默认 ''（两栏皆空 = 不清洗 / M0 直通）。
+  // 注意 keepTags 非空时（如 'content'）按 M2 合同只保留 keep 块内部，块外裸文本会丢弃。
+  sourceKeepTags: '',
   sourceExtraTags: '',
   processingPrompt: '',
   summaryPrompt: '',

@@ -10,6 +10,14 @@ const normalized = value => String(value ?? '').normalize('NFKC').trim().toLocal
 const currentCharacter = ctx => Array.isArray(ctx?.characters) ? ctx.characters[ctx.characterId] : ctx?.characters?.[ctx.characterId];
 const characterField = (character, name) => clean(character?.data?.[name] ?? character?.[name]);
 const safeCall = (callback, fallback = null) => { try { return callback() ?? fallback; } catch { return fallback; } };
+const cseRawAssistantSanitizerOptions = options => ({
+  ...(options && typeof options === 'object' ? options : {}),
+  extraTags: [options?.extraTags, 'qqj-cse'].filter(Boolean).join(','),
+});
+const csePlainTextSanitizerOptions = options => ({
+  keepTags: '',
+  extraTags: [options?.extraTags, 'qqj-cse'].filter(Boolean).join(','),
+});
 
 function macroValues({ userName, characterName }) {
   return Object.freeze({ user: clean(userName, 500), char: clean(characterName, 500) });
@@ -84,18 +92,21 @@ async function targetWindow(snapshot, floor, sanitizerOptions, sourceSnapshot = 
   for (let index = targetIndex; index >= 0 && assistantCount < 2; index -= 1) {
     const selected = selectAssistantMessage(snapshot.chat?.[index]);
     if (!selected) continue;
-    rows.push({ messageIndex: index, role: 'assistant', raw: index === targetIndex && sourceSnapshot ? sourceSnapshot.canonicalContent : selected.rawContent,
+    const canonical = index === targetIndex && Boolean(sourceSnapshot);
+    rows.push({ messageIndex: index, role: 'assistant', raw: canonical ? sourceSnapshot.canonicalContent : selected.rawContent, canonical,
       rawFingerprint: index === targetIndex && sourceSnapshot ? sourceSnapshot.rawFingerprint : null });
     const userRaw = selectedUserText(snapshot.chat?.[index - 1]);
     if (userRaw) rows.push({ messageIndex: index - 1, role: 'user', raw: userRaw });
     assistantCount += 1;
   }
   rows.reverse();
+  const rawAssistantOptions = cseRawAssistantSanitizerOptions(sanitizerOptions);
+  const plainTextOptions = csePlainTextSanitizerOptions(sanitizerOptions);
   const frozenRows = [];
   for (const row of rows) frozenRows.push(Object.freeze({
     messageIndex: row.messageIndex,
     role: row.role,
-    content: sanitizeMemoryContent(row.raw, sanitizerOptions),
+    content: sanitizeMemoryContent(row.raw, row.role === 'assistant' && row.canonical !== true ? rawAssistantOptions : plainTextOptions),
     rawFingerprint: row.rawFingerprint ?? `sha256:${await sha256(row.raw)}`,
   }));
   const signature = `sha256:${await sha256(JSON.stringify([liveTargetFingerprint, frozenRows.map(row => [row.messageIndex, row.role, row.rawFingerprint])]))}`;

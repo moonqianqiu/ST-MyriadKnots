@@ -1,80 +1,109 @@
+// 四模式清洗器测试（与 ST-SevenDaysCal 完全对齐后的合同）：
+// - 金样比对见 tests/tag-sanitizer-golden.test.mjs（29 例逐字节锁定）。
+// - 集成层合同：默认值由 settings 层提供（sourceKeepTags 默认留空），
+//   M2 keep 剥壳后内部逐字保留（不再二次删除嵌套标签）。
+// 所有断言均与 SevenDaysCal runtime/tag-sanitizer.js stripTags 逐例对拍核实。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeMemoryTagList, sanitizeMemoryContent } from '../src/memory-content-sanitizer.js';
 import { findEarliestCanonicalDivergence, scanAssistantCandidates, sanitizerFingerprint } from '../src/v3/foundation-domain.js';
 
-test('默认 content 去标签保留正文，并二次删除内部嵌套噪声', () => {
-  const source = '<content class="story">开场<think>秘密<status>更深噪声</status></think>\n正文<reasoning>推理</reasoning></content>';
-  assert.equal(sanitizeMemoryContent(source), '开场\n正文');
-  assert.equal(source, '<content class="story">开场<think>秘密<status>更深噪声</status></think>\n正文<reasoning>推理</reasoning></content>');
+const OT = { think: '<' + 'think>', status: '<' + 'status>', reasoning: '<' + 'reasoning>', content: '<' + 'content>', story: '<' + 'story>', nowplot: '<' + 'now_plot>' };
+const CT = { think: '</' + 'think>', status: '</' + 'status>', reasoning: '</' + 'reasoning>', content: '</' + 'content>', story: '</' + 'story>', nowplot: '</' + 'now_plot>' };
+
+test('M2 keep=content：剥壳取内，内部嵌套标签与文本逐字保留', () => {
+  const source = [OT.content + '开场', OT.think + '秘密' + CT.think, OT.status + '更深噪声' + CT.status, '正文' + OT.reasoning + '推理' + CT.reasoning, CT.content].join('');
+  assert.equal(sanitizeMemoryContent(source, { keepTags: 'content' }), '开场' + OT.think + '秘密' + CT.think + OT.status + '更深噪声' + CT.status + '正文' + OT.reasoning + '推理' + CT.reasoning);
 });
 
-test('成对 think/reasoning/status/snow/details 块连同内容删除，普通方括号保留', () => {
+test('M2 keep=content：keep 块之外的裸文本与其它块丢弃', () => {
   const source = [
     '故事[保留这段]',
-    '<think>思考</think><reasoning>推理</reasoning>',
-    '<status>状态栏</status><snow>雪花组件</snow>',
-    '<details><summary>标题</summary>详情</details>',
+    OT.think + '思考' + CT.think,
+    OT.reasoning + '推理' + CT.reasoning,
+    OT.status + '状态栏' + CT.status,
     '结尾',
   ].join('\n');
-  assert.equal(sanitizeMemoryContent(source), '故事[保留这段]\n\n结尾');
+  assert.equal(sanitizeMemoryContent(source, { keepTags: 'content', extraTags: 'think' }), '');
 });
 
-test('注释、孤立与自闭合标签删除，空行收紧并 trim', () => {
-  const source = '  <!-- SECRET -->\n正文<br/>\n\n\n<orphan attr="x">\n尾声</dangling>  ';
-  assert.equal(sanitizeMemoryContent(source), '正文\n\n尾声');
+test('M2 keep 内的非 keep 配对块：保留原标签壳与文本（对齐 SevenDaysCal 合同）', () => {
+  const source = OT.content + OT.story + '剧情' + CT.story + OT.nowplot + '正文正文' + CT.nowplot + CT.content;
+  assert.equal(sanitizeMemoryContent(source, { keepTags: 'content' }), OT.story + '剧情' + CT.story + OT.nowplot + '正文正文' + CT.nowplot);
 });
 
 test('标签列表规范化与 keep/extra 行为沿用构画合同', () => {
   assert.deepEqual(normalizeMemoryTagList(' Content, THINK,坏 标签,tag_2,foo~~,bar~, [[...]] '), ['content', 'think', 'tag_2', 'bar~', '[[...]]']);
-  assert.equal(sanitizeMemoryContent('<story>保留故事<think>删除</think></story>', { keepTags: 'story', extraTags: 'think' }), '保留故事');
+  assert.equal(sanitizeMemoryContent(OT.story + '保留故事' + OT.think + '删除' + CT.think + CT.story, { keepTags: 'story', extraTags: 'think' }), '保留故事');
 });
 
-test('字面开始符...结束符只删除完整配对区间，并可与标签名混合', () => {
-  const options = { keepTags: 'content', extraTags: 'think，reasoning\n[[...]]' };
-  assert.equal(sanitizeMemoryContent('[[思维链]]\n正文', options), '正文');
-  assert.equal(sanitizeMemoryContent('前[[第一段]]中[[第二段]]后', options), '前中后');
-  assert.equal(sanitizeMemoryContent('<think>推理</think>[[思考]]<reasoning>分析</reasoning>故事', options), '故事');
-  assert.equal(sanitizeMemoryContent('正文[[未闭合', options), '正文[[未闭合');
+test('M3 混合：extra 穿透 keep 子树；keep 块外一切丢弃', () => {
+  const options = { keepTags: 'content', extraTags: 'think,reasoning,[[...]]' };
+  assert.equal(sanitizeMemoryContent('[[思维链]]\n正文', options), '');
+  assert.equal(sanitizeMemoryContent('前[[第一段]]中[[第二段]]后', options), '');
+  assert.equal(sanitizeMemoryContent(OT.think + '推理' + CT.think + '故事', options), '');  // 块外裸文本'故事'同样丢弃（对拍一致）
+  assert.equal(sanitizeMemoryContent('正文[[未闭合', options), '');
   assert.equal(sanitizeMemoryContent('[[未配置]]正文'), '[[未配置]]正文');
-  assert.equal(sanitizeMemoryContent('正文[单个左括号]与单个右括号]', options), '正文[单个左括号]与单个右括号]');
+  assert.equal(sanitizeMemoryContent('正文[单个左括号]与单个右括号]', options), '');
 });
 
-test('真实形态短样本移除思考且保留正文，不改变既有 content 语义', () => {
-  const source = '[[思考]]\n<meta>说明</meta>\n@@[正文]@@\n<content>故事</content>';
+test('M3 extra 恒优先：外层 extra、同名 keep/extra 与双中括号均不得泄漏内容', () => {
+  assert.equal(sanitizeMemoryContent(OT.think + OT.content + '秘密' + CT.content + CT.think, { keepTags: 'content', extraTags: 'think' }), '');
+  assert.equal(sanitizeMemoryContent(OT.content + OT.think + '秘密' + CT.think + '正文' + CT.content, { keepTags: 'content,think', extraTags: 'think' }), '正文');
+  assert.equal(sanitizeMemoryContent('[[<' + 'content>秘密</' + 'content>]]', { keepTags: 'content', extraTags: '[[...]]' }), '');
+  assert.equal(sanitizeMemoryContent(OT.content + '秘密' + CT.content, { keepTags: 'content', extraTags: 'content' }), '');
+});
+
+test('真实形态短样本：extra 删思考块，keep 块剥壳保留正文', () => {
+  const source = '[[思考]]\n<meta>说明</meta>\n@@[正文]@@\n' + OT.content + '故事' + CT.content;
   const result = sanitizeMemoryContent(source, { keepTags: 'content', extraTags: '[[...]]' });
   assert.doesNotMatch(result, /思考|说明/u);
-  assert.match(result, /@@\[正文\]@@/u);
   assert.match(result, /故事/u);
 });
 
-test('extraTags 字面规则改变 sanitizer 指纹并使旧楼识别为 canonical 分歧', async () => {
+test('extraTags 字面规则改变 sanitizer 指纹；keep 无匹配时楼层候选为空', async () => {
   const previousOptions = { keepTags: 'content', extraTags: '' };
   const nextOptions = { keepTags: 'content', extraTags: '[[...]]' };
   assert.notEqual(await sanitizerFingerprint(previousOptions), await sanitizerFingerprint(nextOptions));
   const chat = [{ is_user: false, is_system: false, mes: '[[思考]]正文' }, { is_user: false, is_system: false, mes: '确认楼' }];
   const previous = await scanAssistantCandidates(chat, { sanitizerOptions: previousOptions });
   const next = await scanAssistantCandidates(chat, { sanitizerOptions: nextOptions });
-  assert.equal(previous[0].canonicalContent, '[[思考]]正文');
-  assert.equal(next[0].canonicalContent, '正文');
-  assert.equal(findEarliestCanonicalDivergence(previous.map(item => ({ content: { canonicalFingerprint: item.canonicalFingerprint } })), next), 1);
+  // keep=content：楼内没有 <content> 块 → 清洗为空 → 扫描器丢弃该楼
+  assert.equal(previous.length, 0);
+  assert.equal(next.length, 0);
+  assert.equal(findEarliestCanonicalDivergence([], []), null);
 });
 
-test('保留标签占位符不会与正文中的 KEEP 字样碰撞', () => {
-  assert.equal(sanitizeMemoryContent('原文 KEEP0 <content>正文</content> KEEP1'), '原文 KEEP0 正文 KEEP1');
+test('M0 两栏皆空：不清洗，配对块逐字节保留，仅卫生处理', () => {
+  assert.equal(sanitizeMemoryContent('before' + OT.content + '正文' + CT.content + 'after', { keepTags: '', extraTags: '' }), 'before' + OT.content + '正文' + CT.content + 'after');
 });
 
-test('同名嵌套剔除使用成对边界，不泄漏内层尾部', () => {
-  assert.equal(sanitizeMemoryContent('before<think>A<think>B</think>C</think>after', { extraTags: 'think' }), 'beforeafter');
+test('M1 仅 extra：成对删除连内容，未闭合吞至 EOF，同名嵌套全删', () => {
+  assert.equal(sanitizeMemoryContent('before' + OT.think + '孤儿尾部', { extraTags: 'think' }), 'before');
+  assert.equal(sanitizeMemoryContent('before' + CT.think + '孤儿开头after', { extraTags: 'think' }), 'before孤儿开头after');
+  assert.equal(sanitizeMemoryContent('before' + OT.think + 'A' + OT.think + 'B' + CT.think + 'C' + CT.think + 'after', { extraTags: 'think' }), 'beforeafter');
 });
 
-test('同名嵌套 keep 只剥外壳并保留全部正文，孤儿标签只剥标签', () => {
-  assert.equal(sanitizeMemoryContent('before<content>A<content>B</content>C</content>after'), 'beforeABCafter');
-  assert.equal(sanitizeMemoryContent('<content>A<content>B</content>C</content>', { keepTags: 'content', extraTags: 'content' }), 'ABC');
-  assert.equal(sanitizeMemoryContent('before<think>孤儿尾部', { extraTags: 'think' }), 'before孤儿尾部');
-  assert.equal(sanitizeMemoryContent('before</think>孤儿开头after', { extraTags: 'think' }), 'before孤儿开头after');
+test('M2 同名嵌套 keep：嵌套 keep 继续剥壳；块外裸文本丢弃', () => {
+  assert.equal(sanitizeMemoryContent('before' + OT.content + 'A' + OT.content + 'B' + CT.content + 'C' + CT.content + 'after', { keepTags: 'content' }), 'ABC');
 });
 
-test('空 keep 设置不保留 content，空 extra 不改变默认剔除语义', () => {
-  assert.equal(sanitizeMemoryContent('before<content>正文</content>after', { keepTags: '', extraTags: '' }), 'beforeafter');
+test('显式 sourceKeepTags=content 时正文格式不再被吞（回归案例）', () => {
+  const raw = [
+    '<erii_draft>思考</erii_draft>',
+    '<scene_card>场景</scene_card>',
+    '<!-- SDC-start -->',
+    OT.content,
+    OT.story + '剧情' + CT.story,
+    OT.nowplot + '正文正文' + CT.nowplot,
+    CT.content,
+    '<!-- SDC-end -->',
+    '<meanwhile>y</meanwhile>',
+    '<options>o</options>',
+    '<disclaimer>d</disclaimer>',
+  ].join('\n');
+  const result = sanitizeMemoryContent(raw, { keepTags: 'content' });
+  assert.match(result, /正文正文/u);
+  assert.match(result, /剧情/u);
+  assert.doesNotMatch(result, /思考|场景|<meanwhile>|<options>|disclaimer/u);
 });
