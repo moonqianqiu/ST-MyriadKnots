@@ -3372,6 +3372,8 @@ test('残缺同楼时间戳进入同次提取并作非 exact 兜底，前序参�
 test('原文时间参考标签进入本楼与前楼语义输入，漏写时间时整段 unresolved 兜底且不读取未来楼', async () => {
   const h = harness({
     storyClockReferenceTags: 'Ti',
+    // 正文 canonical 需要剥掉 <Slate> 外壳取 <content>：显式给出 keep，避免依赖清洗器缺省值。
+    sanitizerOptions: () => ({ keepTags: 'content' }),
     initialChat: [
       user('开始'),
       assistant('<Slate><Ti>第三次忍界大战后某年·7月15日·18:00</Ti><content>前楼正文。</content></Slate>'),

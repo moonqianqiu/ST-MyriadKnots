@@ -50,7 +50,9 @@ function harness({ generate = async () => ({ jsonData: { profiles: [] } }), many
     contextProvider: () => ({ chat: [], marker: identity.chatId, chatMetadata: currentPrequel ? { qianqianjiePrequel: currentPrequel } : {} }),
     scanner: async context => { sourceTrace.push(['scan', context.marker]); return { entries: [{ content: '<secret>DROP</secret><content>ALLOWED</content>' }, { content: 'EXCLUDED' }] }; },
     sourceCandidateFactory: async catalog => { sourceTrace.push(['candidates', catalog.entries.length]); return sourceCandidates ?? [{ id: 'worldbook:allowed', kind: 'worldbook', world: '允许书', label: '允许条目', content: catalog.entries[0].content }, { id: 'worldbook:excluded', kind: 'worldbook', world: '排除书', label: '排除条目', content: catalog.entries[1].content }]; },
-    sanitizerOptions: () => ({ keepTags: 'content' }), now: () => new Date('2026-09-06T00:00:00.000Z'),
+    // 世界书来源按 extra-only 清洗：keep 白名单是 AI 正文专属合同，不作用于纯文本/任意 HTML 条目。
+    // 这里 keepTags 故意留 'content' 以锁定该边界；世界书内的 <secret> 由 extraTags 剔除。
+    sanitizerOptions: () => ({ keepTags: 'content', extraTags: 'secret' }), now: () => new Date('2026-09-06T00:00:00.000Z'),
     logger: { warn() {} },
   });
   return { db, runtime, peopleEntities, sourceTrace, get identity() { return identity; }, setIdentity(value) { identity = value; }, get reachable() { return reachable; }, setReachable(value) { reachable = value; },

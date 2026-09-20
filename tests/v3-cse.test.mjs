@@ -209,6 +209,18 @@ test('显式 keep=content 时用户输入与 canonical 正文只做 extra 清洗
   assert.deepEqual(request.payload.currentUserInput, { source: 'currentUserInput', messages: [{ sourceSnapshotIndex: 0, messageIndex: 0, content: '请记住带伞' }] });
 });
 
+test('显式 keep=content 时世界书来源只做 extra 清洗，纯文本作者设定不被清空', async () => {
+  const h = runtimeHarness({
+    sanitizerOptions: { keepTags: 'content' },
+    chat: [user('请记住带伞'), assistant('<content>裴晚生提醒你带伞。</content>'), assistant('<content>用于确认上一楼稳定。</content>')],
+  });
+  await h.runtime.start().then(() => h.runtime.extractNext());
+  const request = JSON.parse(h.calls.find(call => call.systemPrompt === CSE_SYSTEM_PROMPT).taskMessages[0].content);
+  const worldInfo = request.payload.relevantBaseline.worldInfo;
+  assert.equal(worldInfo.some(entry => entry.content === '启用作者设定'), true, '世界书纯文本作者设定不得被 keep 白名单清空');
+  assert.equal(worldInfo.every(entry => entry.content.length > 0), true);
+});
+
 test('CSE mixed tracked 首次预算优先缺记录人物，并能用合并旧名命中前情', async () => {
   const requests = [];
   const h = runtimeHarness({

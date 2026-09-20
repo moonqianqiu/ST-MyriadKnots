@@ -1,7 +1,7 @@
 import { sha256 } from '../identity.js';
 import { parseJsonWithSymbolRepair, repairJsonWithUniqueMissingObjectClose } from '../json-symbol-repair.js';
 import { scanWorldInfo } from '../world-info-scanner.js';
-import { sanitizeMemoryContent } from '../memory-content-sanitizer.js';
+import { sanitizeMemoryContent, extraOnlySanitizerOptions } from '../memory-content-sanitizer.js';
 import { deterministicUuid } from './foundation-domain.js';
 import { validateEntityRecord } from './memory-schema.js';
 import { sanitizeDiagnosticValue, sanitizeTaskMetadata } from './safe-metadata.js';
@@ -126,7 +126,7 @@ export async function captureCseBaseline({ hostAdapter, chatId, narrativeGenerat
   const worldInfoSources = [];
   for (const entry of catalog.entries ?? []) {
     if (entry.hostEnabled === false || entry.disabled === true) continue;
-    const content = sanitizeMemoryContent(entry.content, sanitizerOptions);
+    const content = sanitizeMemoryContent(entry.content, extraOnlySanitizerOptions(sanitizerOptions));
     if (!content) continue;
     worldInfoSources.push({
       sourceKind: 'worldbook', sourceName: text(entry.source, 512), scope: text(entry.scope, 80) || 'unknown',

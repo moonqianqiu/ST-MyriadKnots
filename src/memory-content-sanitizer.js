@@ -175,6 +175,12 @@ export function sanitizeMemoryContent(raw, options = {}) {
     return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// 非 AI 正文来源（用户输入、世界书条目等）只用 extra 清洗：
+// keep 白名单是 AI 正文专属合同，套用到纯文本/任意 HTML 来源会把整条洗空。
+export function extraOnlySanitizerOptions(options = {}) {
+    return { keepTags: '', extraTags: options?.extraTags ?? '' };
+}
+
 // 兼容旧导出：设置层用 normalizeMemoryTagList 归一化标签列表，语义等同 normalizeTagRules。
 export { normalizeTagRules as normalizeMemoryTagList };
 export { normalizeTagNames };

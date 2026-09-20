@@ -11,7 +11,7 @@ import { validateCseGraph } from './cse-schema.js';
 import { assessMemoryCoverageFromHost, diagnosticsWithRealtimeOrigin, realtimeOriginFromReachable } from './memory-coverage.js';
 import { isHostNarratorMessage, selectAssistantMessage, selectUserStabilityAnchor } from './foundation-domain.js';
 import { normalizeStoryClockReferenceTags, parseStoryClockEvidence, storyClockSignature } from '../story-clock.js';
-import { sanitizeMemoryContent } from '../memory-content-sanitizer.js';
+import { sanitizeMemoryContent, extraOnlySanitizerOptions } from '../memory-content-sanitizer.js';
 import { buildEntityIdentityDirectory, entitiesThroughFloorIds, normalizeIdentityProjection } from './entity-identity.js';
 import { matchFloorCandidates } from './floor-binding.js';
 import { inspectMessageFloorAnchor } from './message-floor-anchor.js';
@@ -112,7 +112,7 @@ function capturePrecedingUserInputFromSnapshot(snapshot, floor, options) {
   const targetIndex = floor?.hostLocator?.messageIndex;
   if (!Number.isSafeInteger(targetIndex) || !selectAssistantMessage(snapshot.chat?.[targetIndex])) return null;
   const messages = [];
-  const userSanitizerOptions = { keepTags: '', extraTags: options?.extraTags ?? '' };
+  const userSanitizerOptions = extraOnlySanitizerOptions(options);
   for (let messageIndex = targetIndex - 1; messageIndex >= 0; messageIndex -= 1) {
     const selected = selectedUserInput(snapshot.chat?.[messageIndex], expectedChatId);
     if (!selected) break;

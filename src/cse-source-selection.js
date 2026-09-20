@@ -1,5 +1,5 @@
 import { sha256 } from './identity.js';
-import { sanitizeMemoryContent } from './memory-content-sanitizer.js';
+import { sanitizeMemoryContent, extraOnlySanitizerOptions } from './memory-content-sanitizer.js';
 import { scanWorldInfo } from './world-info-scanner.js';
 import { selectAssistantMessage } from './v3/foundation-domain.js';
 
@@ -14,8 +14,7 @@ const cseRawAssistantSanitizerOptions = options => ({
   ...(options && typeof options === 'object' ? options : {}),
   extraTags: [options?.extraTags, 'qqj-cse'].filter(Boolean).join(','),
 });
-const csePlainTextSanitizerOptions = options => ({
-  keepTags: '',
+const csePlainTextSanitizerOptions = options => extraOnlySanitizerOptions({
   extraTags: [options?.extraTags, 'qqj-cse'].filter(Boolean).join(','),
 });
 

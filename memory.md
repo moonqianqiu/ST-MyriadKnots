@@ -5,8 +5,7 @@
 当前在 main 上叠加了"moon"专属改动（标签清洗对齐 ST-SevenDaysCal）。
 
 > 用途：让其它 CLI / 会话在执行"合并上游""检查合并""改代码"等任务时，知道哪些本地改动是
-> fork 存在的意义、哪里会冲突、以及怎么确认合并没有吞掉本地改动。惯例参考同作者的
-> ST-SevenDaysCal/memory.md。
+> fork 存在的意义、哪里会冲突、以及怎么确认合并没有吞掉本地改动。
 
 ---
 
@@ -77,29 +76,65 @@ src 与 dist 均为干净版本。
 
 ### 1.5 验证状态
 
-- tests/v3-foundation.test.mjs：81/81 全绿；
-- tests/memory-content-sanitizer.test.mjs + tests/tag-sanitizer-golden.test.mjs：18/18 全绿
-  （金样 29 例与 SevenDaysCal 逐字节一致）；
-- tests/settings-modules.test.mjs：10/10 全绿；
-- 未跑完（单文件超 300s 被中断，用户要求不再尝试）：tests/v3-cse.test.mjs、
-  tests/v3-extractor-memory.test.mjs、tests/v3-recall.test.mjs、tests/v3-time-body.test.mjs、
-  tests/v3-floor-binding.test.mjs。这些文件依赖清洗器，后续如有需要应单独安排后台运行；
-- npm run build 成功，dist/qqj-app.js 1.32 MB 已确认包含新清洗器。
+- 全量 `node --experimental-vm-modules --test tests/*.test.mjs`：**1002/1002 全绿**（见 1.7）；
+- tests/memory-content-sanitizer.test.mjs + tests/tag-sanitizer-golden.test.mjs 全绿
+  （金样 29 例与 SevenDaysCal 逐字节一致；金样**不覆盖**本地三处偏差，见 1.6）；
+- npm run build 成功，dist/qqj-app.js 约 1.32 MB，已确认包含新清洗器与 extraOnlySanitizerOptions；
+- 提示：tests/chat-rename.test.mjs 在全量并行跑时偶发 ~1s 超时（`waitFor` 判据），单独运行
+  21/21 稳定；与本清洗器改动无关。
 
 ### 1.6 实现注意（改代码前必读）
 
-- 清洗器主体来自 SevenDaysCal；千千结额外修复了 M3 的 extra 恒优先边界，并保留中文逗号／换行
-  设置兼容。后续同步 SevenDaysCal 时，应把外层 extra、同名 keep/extra、双中括号和分隔符回归案例一并带回；
+- 清洗器主体来自 SevenDaysCal，但千千结有**三处自觉偏差**；金样文件与上游逐字节相同，因此**不覆盖**
+  这三处，合并上游时切勿按金样把它们"对齐"掉：
+  ① M3 的 extra 恒优先（collectKept / renderKeptInner 对 closed 节点先判 extra 再判 keep）；
+  ② keep 子树内的 self-closing extra 标记被删除（上游无条件保留 openRaw）；
+  ③ 属性部分引号感知 TAG_ATTR_SOURCE（双/单引号内允许 `>`）。上游仍是 `(?:\s[^>]*)?`，
+     M2 下会把 `<div title="a>b">正文</div>` 洗成 `b">正文` 残片；该修复应一并回灌上游才算真正对齐；
+- 保留千千结的中文逗号／换行分隔兼容。后续同步 SevenDaysCal 时，应把外层 extra、同名 keep/extra、
+  双中括号、引号属性与分隔符回归案例一并带回；
 - src/memory-content-sanitizer.js 里节点字段、解析器与渲染函数仍与 SevenDaysCal
   runtime/tag-sanitizer.js 基本对应（parseSanitizerTree / renderFlat / renderKeptInner /
   collectKept / residueAfterLastSameNameClose / toRuleSet），合并上游时需保留上述本地修复；
-- 本项目对外接口签名 sanitizeMemoryContent(raw, options) 与旧版一致，调用点
-  （cse-source-selection / v3/cse-engine / v3/foundation-domain / v3/memory-runtime /
-  v3/people-workspace / v3/recall-runtime）无需改动；
+- 本项目对外接口签名 sanitizeMemoryContent(raw, options) 与旧版一致。调用点分两类，**不可混淆**：
+  - 服从 keepTags（AI 正文）：v3/foundation-domain.js、v3/recall-runtime.js、
+    v3/memory-runtime.js:1047，以及经 scanAssistantCandidates 的 v3/time-body.js /
+    foundation-runtime.js / chat-branch-inheritance.js / memory-coverage.js；
+  - 必须 extra-only（非正文来源，用 extraOnlySanitizerOptions）：用户输入
+    （v3/memory-runtime.js 的 capturePrecedingUserInputFromSnapshot）、世界书条目
+    （v3/people-workspace.js 两处、v3/cse-engine.js 的 captureCseBaseline）、CSE 扫描窗的
+    canonical/用户行（cse-source-selection.js 的 csePlainTextSanitizerOptions）。
+    keep 白名单套到纯文本来源会把整条洗成空串——这是 2026-09-20 审计发现的漏改；
 - 测试里的标签字面量用 OT/CT 常量拼接（如 OT.think = '<' + 'think>'），
   避免在测试源码中出现与解析冲突的字面标签；
 - write_file / bash 补丁工具会把测试源码里的某些字面标签 token 吞掉或截断字符串——
   改这个测试文件时务必整体重写并立即用 node --test 验证可解析。
+
+---
+
+### 1.7 审计修复批次（47e7ca4 之后，2026-09-20）
+
+对 667879e / 47e7ca4 两个手工提交做功能审计后补齐的收尾改动：
+
+| 文件 | 改动性质 | 说明 |
+|---|---|---|
+| src/memory-content-sanitizer.js | 新增导出 | `extraOnlySanitizerOptions(options) => { keepTags:'', extraTags }`，供非 AI 正文来源复用 |
+| src/v3/people-workspace.js | 漏改修复 | 世界书条目内容改 extra-only。此前直接传 `options`，keepTags='content' 时纯文本/任意 HTML 条目被洗成空串，随后被 `.filter(item => item.content)` 丢弃 |
+| src/v3/cse-engine.js | 漏改修复 | `captureCseBaseline` 的世界书条目同样改 extra-only（与 people-workspace 一致） |
+| src/v3/memory-runtime.js | 收敛 | 局部 `userSanitizerOptions` 改用 helper（行为不变） |
+| src/cse-source-selection.js | 收敛 | `csePlainTextSanitizerOptions` 改用 helper（行为不变） |
+| tests/v3-people-workspace.test.mjs | 期望更新 | harness 的 sanitizerOptions 补 `extraTags:'secret'`（世界书走 extra-only 后由 extra 负责剔除 `<secret>`）；:153/:162/:559/:720/:757/:1006 同时成为世界书"不得被 keep 洗空"的回归锁 |
+| tests/v3-time-body.test.mjs | harness 扩展 | 新增 `bodyWrapper` 形参；:154 用例用 `<keep>` 包裹纯文本楼层，保留 M2 覆盖与"每批截止不是历史未来末楼"的判别力 |
+| tests/v3-extractor-memory.test.mjs | 期望更新 | :3373 harness 显式给 `sanitizerOptions: () => ({ keepTags:'content' })`，不再依赖清洗器缺省值 |
+| tests/v3-wiring.test.mjs | 期望更新 | manifest 版本断言 0.3.0 → 0.3.1（基线即红的陈旧断言） |
+| tests/v3-cse.test.mjs | 新增回归锁 | 「显式 keep=content 时世界书来源只做 extra 清洗，纯文本作者设定不被清空」 |
+| manifest.json | 产物缓存键 | 重建 bundle 后 digest 更新为 20260920.306-f9ae2192a8fc9772（**version 保持 0.3.1**） |
+| dist/qqj-app.js | 重新构建 | 含 extraOnlySanitizerOptions 与两处世界书 extra-only |
+
+未做的事（均为刻意决定）：
+
+- **不写 `sourceKeepTags` 存量迁移**：分支只面向新用户，视为新插件，不为"旧默认 'content'"做兼容；
+- **不改 ST-SevenDaysCal**：上游仍缺引号感知属性修复，需在本仓库保留 ③ 号偏差。
 
 ---
 
@@ -118,11 +153,15 @@ src 与 dist 均为干净版本。
 - tests/tag-sanitizer-golden.test.mjs 存在且金样全绿（node --test tests/tag-sanitizer-golden.test.mjs）；
 - src/settings.js 的 sourceKeepTags 默认为 ''（grep 确认无 "sourceKeepTags: 'content'"）；
 - src/memory-content-sanitizer.js 无旧版特征函数（grep rescueOnly 应为 0 结果）；
+- src/memory-content-sanitizer.js 保留上述三处与上游的自觉偏差（金样不覆盖，勿按金样删改）；
+- 世界书来源必须走 extra-only：v3/people-workspace.js、v3/cse-engine.js 用
+  extraOnlySanitizerOptions；tests/v3-cse.test.mjs 的「世界书来源只做 extra 清洗」用例存在且全绿；
+- 不做 sourceKeepTags 存量迁移（新插件前提，见 1.7）；
 - grep "sourceKeepTags ?? 'content'" src/ 应为 0 结果（prompts-settings.js 已改为 ?? ''）。
 
 ## 4. 当前状态（执行任务时以 git status / git log 为准）
 
-- main 基线：47c8ec1（0.3.1）+ 本次未提交的清洗器对齐与审计修复（18 文件，含 dist 与 manifest）；
-- dist 已用新代码重建，可直接部署到酒馆插件目录验证；
+- main 基线：47c8ec1（0.3.1）+ 清洗器对齐（667879e / 47e7ca4）+ 本次审计修复（未提交，见 1.7）；
+- 全量测试 1002/1002 全绿；dist 已用新代码重建，可直接部署到酒馆插件目录验证；
 - 用户计划：在 GitHub 重新 fork 自己的仓库（origin = moonqianqiu），并将
   atonal519/ST-MyriadKnots 设为 upstream；本次改动将是 fork 的第一批 moon 提交。

@@ -13,9 +13,9 @@ function backend() {
     async put(c,id,data,revision,{signal}={}) { if(signal?.aborted) throw new DOMException('abort','AbortError'); const key=`${c}/${id}`, old=records.get(key); assert.equal(old?.revision??0,revision); const result={data:structuredClone(data),revision:revision+1}; records.set(key,result); return structuredClone(result); } } };
 }
 const raw = (i, body='陌生人阿岚的手腕擦伤仍疼痛。') => `<!-- QQJ-start | date=2026-05-${String(i+1).padStart(2,'0')} | weekday=周一 | time=08:00 -->${body}<!-- QQJ-end | date=2026-05-${String(i+1).padStart(2,'0')} | weekday=周一 | time=09:00 -->`;
-async function harness({ count=2, unstable=false, generate=()=>({changes:[]}), sanitizer={}, tags='' }={}) {
+async function harness({ count=2, unstable=false, generate=()=>({changes:[]}), sanitizer={}, tags='', bodyWrapper=value=>value }={}) {
   let chatId=CHAT,on=true,calls=0,busy=true,cse=false,sync='idle', counter=0;
-  const chat=[]; for(let i=0;i<count;i++) { chat.push({is_user:false,mes:raw(i)}); if(!unstable||i<count-1) chat.push({is_user:true,mes:'继续'}); }
+  const chat=[]; for(let i=0;i<count;i++) { chat.push({is_user:false,mes:raw(i, bodyWrapper('陌生人阿岚的手腕擦伤仍疼痛。'))}); if(!unstable||i<count-1) chat.push({is_user:true,mes:'继续'}); }
   const source={status:'ready',root:{chatId:CHAT,narrativeGeneration:'gen',headCheckpointId:'head'},rootRevision:1,floors:[],floorMemories:[],stateDeltas:[],entities:[],capabilities:{}};
   async function seal() { const candidates=await scanAssistantCandidates(chat,{sanitizerOptions:sanitizer,chatId:CHAT}); source.floors=candidates.filter(candidate=>candidate.stabilityProof).map((candidate,i)=>createFloorRecord({candidate,id:`floor-${i+1}`,chatId:CHAT,narrativeGeneration:'gen'})); }
   await seal(); const back=backend(),store=createTimeStore(back),hostAdapter={snapshot:()=>({chat,chatId:'host',context:{chatMetadata:{qianqianjie:{chatId}}}})};
@@ -151,7 +151,8 @@ test('已确认范围不被新楼扩展；摘要/CSE普通root推进不丢批；
 });
 
 test('正文实际时间从raw自定义参考/嵌套保留取，不补现实年份；每批截止不是历史未来末楼',async()=>{
-  const h=await harness({count:22,tags:'SceneTime',sanitizer:{keepTags:['keep']}});h.chat[0].mes='<outer><keep>阿岚受伤。</keep></outer><SceneTime>5月10日 08:00 → 5月11日 09:00</SceneTime>';await h.seal();const source=await h.body();assert.match(source.bodyFloors[0].content,/阿岚/);assert.equal(source.bodyFloors[0].observationTime.monthDay,11);assert.equal(source.bodyFloors[0].observationTime.year,null);
+  const h=await harness({count:22,tags:'SceneTime',sanitizer:{keepTags:['keep']},bodyWrapper:body=>'<' + 'keep>' + body + '</' + 'keep>'});
+  h.chat[0].mes='<outer><keep>阿岚受伤。</keep></outer><SceneTime>5月10日 08:00 → 5月11日 09:00</SceneTime>';await h.seal();const source=await h.body();assert.match(source.bodyFloors[0].content,/阿岚/);assert.equal(source.bodyFloors[0].observationTime.monthDay,11);assert.equal(source.bodyFloors[0].observationTime.year,null);
   const plan=await h.runtime.prepareHistoryPlan();const first=await prepareTimeRequest(source,[],{fragments:plan.groups[0]});assert.deepEqual(first.request.currentTime,plan.groups[0].at(-1).observationTime);assert.notEqual(first.request.currentTime.date,source.bodyFloors.at(-1).observationTime.date);
 });
 

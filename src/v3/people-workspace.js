@@ -1,5 +1,5 @@
 import { isUuid } from '../host-context.js';
-import { sanitizeMemoryContent } from '../memory-content-sanitizer.js';
+import { sanitizeMemoryContent, extraOnlySanitizerOptions } from '../memory-content-sanitizer.js';
 import { scanWorldInfo, createWorldInfoSourceCandidates } from '../world-info-scanner.js';
 import { withBaseProcessingPrompt } from '../internal-processing-prompt.js';
 import { replaceCseSourceMacros } from '../cse-source-selection.js';
@@ -812,7 +812,7 @@ export function createPeopleWorkspaceRuntime({
       const candidates = await sourceCandidateFactory(catalog);
       const allowed = sourcePermissions.filterCandidates({ chatId: operation.identity.chatId, candidates });
       if (!Array.isArray(allowed)) throw errorWith('QQJ_PEOPLE_WORLDBOOK_FILTER_INVALID', '世界书许可过滤结果无效。');
-      const options = typeof sanitizerOptions === 'function' ? sanitizerOptions() : sanitizerOptions;
+      const options = extraOnlySanitizerOptions(typeof sanitizerOptions === 'function' ? sanitizerOptions() : sanitizerOptions);
       worldInfo = allowed.map(candidate => ({ source: candidate.world, label: candidate.label,
         content: macroText(sanitizeMemoryContent(candidate.content, options), macros) })).filter(item => item.content);
     }
@@ -832,7 +832,7 @@ export function createPeopleWorkspaceRuntime({
     const candidates = await sourceCandidateFactory(catalog);
     const allowed = sourcePermissions.filterCandidates({ chatId: operation.identity.chatId, candidates });
     if (!Array.isArray(allowed)) throw errorWith('QQJ_PEOPLE_WORLDBOOK_FILTER_INVALID', '世界书许可过滤结果无效。');
-    const options = typeof sanitizerOptions === 'function' ? sanitizerOptions() : sanitizerOptions;
+    const options = extraOnlySanitizerOptions(typeof sanitizerOptions === 'function' ? sanitizerOptions() : sanitizerOptions);
     const allowedWorldInfo = allowed.map(candidate => ({ source: candidate.world, label: candidate.label,
       content: macroText(sanitizeMemoryContent(candidate.content, options), macros) })).filter(item => item.content);
     const request = { task: '一次性整档重写已选人物的静态基础资料', people: peopleRequest, characterCards, allowedWorldInfo };
