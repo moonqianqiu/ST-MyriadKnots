@@ -64,10 +64,10 @@ function backendHarness({ conflictRootPut = null, beforeGet = null, beforePut = 
   } };
 }
 
-function runtimeHarness({ cse, extractor, host = 'official', backendOptions, sharedBackend = null, clock = () => new Date(NOW), chat = null, chatWorldInfo = null, filterWorldInfoSources = sources => sources, failureStorage = undefined, sanitizerOptions = { keepTags: '' } } = {}) {
+function runtimeHarness({ cse, extractor, host = 'official', backendOptions, sharedBackend = null, clock = () => new Date(NOW), chat = null, chatWorldInfo = null, currentWorldInfoContent = '启用作者设定', filterWorldInfoSources = sources => sources, failureStorage = undefined, sanitizerOptions = { keepTags: '' } } = {}) {
   const handlers = new Map(), calls = [], backend = sharedBackend ?? backendHarness(backendOptions);
   let enabled = true;
-  const books = new Map([['当前书', { entries: { 1: { uid: 1, constant: true, content: '启用作者设定' }, 2: { uid: 2, constant: true, content: '禁用支线', disable: true } } }], ['聊天书', { entries: { 4: { uid: 4, constant: true, content: '聊天书作者设定' } } }], ['未链接书', { entries: { 3: { uid: 3, constant: true, content: '不得进入基线' } } }]]);
+  const books = new Map([['当前书', { entries: { 1: { uid: 1, constant: true, content: currentWorldInfoContent }, 2: { uid: 2, constant: true, content: '禁用支线', disable: true } } }], ['聊天书', { entries: { 4: { uid: 4, constant: true, content: '聊天书作者设定' } } }], ['未链接书', { entries: { 3: { uid: 3, constant: true, content: '不得进入基线' } } }]]);
   const context = {
     name1: '林岚', name2: '裴晚生', personaId: 'persona-linlan', characterId: 0, groupId: null, chatId: 'host-chat',
     characters: [{ avatar: 'character.png', name: '裴晚生', data: { description: '角色描述', personality: '冷静克制', scenario: '雨夜', extensions: { world: '当前书' } } }],
@@ -209,16 +209,22 @@ test('显式 keep=content 时用户输入与 canonical 正文只做 extra 清洗
   assert.deepEqual(request.payload.currentUserInput, { source: 'currentUserInput', messages: [{ sourceSnapshotIndex: 0, messageIndex: 0, content: '请记住带伞' }] });
 });
 
-test('显式 keep=content 时世界书来源只做 extra 清洗，纯文本作者设定不被清空', async () => {
+test('显式 keep=content 时持久化 baseline 与每楼 CSE 世界书都只做 extra 清洗', async () => {
+  const hidden = '<' + 'secret>不应发送的内容</' + 'secret>';
   const h = runtimeHarness({
-    sanitizerOptions: { keepTags: 'content' },
+    currentWorldInfoContent: `${hidden}启用作者设定`,
+    sanitizerOptions: { keepTags: 'content', extraTags: 'secret' },
     chat: [user('请记住带伞'), assistant('<content>裴晚生提醒你带伞。</content>'), assistant('<content>用于确认上一楼稳定。</content>')],
   });
-  await h.runtime.start().then(() => h.runtime.extractNext());
+  const state = await h.runtime.start().then(() => h.runtime.extractNext());
+  const root = h.backend.records.get(`chat-${CHAT}/v3-root`).data;
+  const saved = h.backend.records.get(`chat-${CHAT}/v3-baseline-${root.baselineId}`).data;
+  assert.deepEqual(saved.worldInfoSources.map(entry => entry.content), ['启用作者设定'], '持久化 baseline 应保留纯文本并删除 extra 块');
+
   const request = JSON.parse(h.calls.find(call => call.systemPrompt === CSE_SYSTEM_PROMPT).taskMessages[0].content);
   const worldInfo = request.payload.relevantBaseline.worldInfo;
-  assert.equal(worldInfo.some(entry => entry.content === '启用作者设定'), true, '世界书纯文本作者设定不得被 keep 白名单清空');
-  assert.equal(worldInfo.every(entry => entry.content.length > 0), true);
+  assert.deepEqual(worldInfo.map(entry => entry.content), ['启用作者设定'], '每楼动态世界书应执行同样的 extra-only 清洗');
+  assert.doesNotMatch(JSON.stringify({ state: state.cseFloors, saved: saved.worldInfoSources, worldInfo }), /不应发送的内容|secret/);
 });
 
 test('CSE mixed tracked 首次预算优先缺记录人物，并能用合并旧名命中前情', async () => {

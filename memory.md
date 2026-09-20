@@ -76,7 +76,9 @@ src 与 dist 均为干净版本。
 
 ### 1.5 验证状态
 
-- 全量 `node --experimental-vm-modules --test tests/*.test.mjs`：**1002/1002 全绿**（见 1.7）；
+- `2d29d53` 批次曾完成全量 `node --experimental-vm-modules --test tests/*.test.mjs`：**1002/1002 全绿**；
+- 最新动态 CSE 世界书补漏后，相关短测试 **129/129 全绿**：v3-cse 65、清洗器 13、
+  people-workspace 42、v3-wiring 1、production-entry-load 8；本次未重复运行完整 1002 项套件；
 - tests/memory-content-sanitizer.test.mjs + tests/tag-sanitizer-golden.test.mjs 全绿
   （金样 29 例与 SevenDaysCal 逐字节一致；金样**不覆盖**本地三处偏差，见 1.6）；
 - npm run build 成功，dist/qqj-app.js 约 1.32 MB，已确认包含新清洗器与 extraOnlySanitizerOptions；
@@ -122,14 +124,14 @@ src 与 dist 均为干净版本。
 | src/v3/people-workspace.js | 漏改修复 | 世界书条目内容改 extra-only。此前直接传 `options`，keepTags='content' 时纯文本/任意 HTML 条目被洗成空串，随后被 `.filter(item => item.content)` 丢弃 |
 | src/v3/cse-engine.js | 漏改修复 | `captureCseBaseline` 的世界书条目同样改 extra-only（与 people-workspace 一致） |
 | src/v3/memory-runtime.js | 收敛 | 局部 `userSanitizerOptions` 改用 helper（行为不变） |
-| src/cse-source-selection.js | 收敛 | `csePlainTextSanitizerOptions` 改用 helper（行为不变） |
+| src/cse-source-selection.js | 漏改修复 | CSE 扫描窗的 canonical/用户行与每楼动态选择的世界书都走 extra-only；后者此前会绕过 `sourceExtraTags`，把用户要求排除的块继续发给模型 |
 | tests/v3-people-workspace.test.mjs | 期望更新 | harness 的 sanitizerOptions 补 `extraTags:'secret'`（世界书走 extra-only 后由 extra 负责剔除 `<secret>`）；:153/:162/:559/:720/:757/:1006 同时成为世界书"不得被 keep 洗空"的回归锁 |
 | tests/v3-time-body.test.mjs | harness 扩展 | 新增 `bodyWrapper` 形参；:154 用例用 `<keep>` 包裹纯文本楼层，保留 M2 覆盖与"每批截止不是历史未来末楼"的判别力 |
 | tests/v3-extractor-memory.test.mjs | 期望更新 | :3373 harness 显式给 `sanitizerOptions: () => ({ keepTags:'content' })`，不再依赖清洗器缺省值 |
 | tests/v3-wiring.test.mjs | 期望更新 | manifest 版本断言 0.3.0 → 0.3.1（基线即红的陈旧断言） |
-| tests/v3-cse.test.mjs | 新增回归锁 | 「显式 keep=content 时世界书来源只做 extra 清洗，纯文本作者设定不被清空」 |
-| manifest.json | 产物缓存键 | 重建 bundle 后 digest 更新为 20260920.306-f9ae2192a8fc9772（**version 保持 0.3.1**） |
-| dist/qqj-app.js | 重新构建 | 含 extraOnlySanitizerOptions 与两处世界书 extra-only |
+| tests/v3-cse.test.mjs | 新增回归锁 | 同时检查落盘 baseline 和每楼真实 CSE 请求：纯文本不被 keep 清空，配置的 extra 块不会进入存储或模型输入 |
+| manifest.json | 产物缓存键 | 重建 bundle 后 digest 更新为 20260920.307-10e5fa4098a654d0（**version 保持 0.3.1**） |
+| dist/qqj-app.js | 重新构建 | 含 extraOnlySanitizerOptions，并覆盖 baseline、人物工作区和每楼动态 CSE 世界书路径 |
 
 未做的事（均为刻意决定）：
 
@@ -154,14 +156,16 @@ src 与 dist 均为干净版本。
 - src/settings.js 的 sourceKeepTags 默认为 ''（grep 确认无 "sourceKeepTags: 'content'"）；
 - src/memory-content-sanitizer.js 无旧版特征函数（grep rescueOnly 应为 0 结果）；
 - src/memory-content-sanitizer.js 保留上述三处与上游的自觉偏差（金样不覆盖，勿按金样删改）；
-- 世界书来源必须走 extra-only：v3/people-workspace.js、v3/cse-engine.js 用
-  extraOnlySanitizerOptions；tests/v3-cse.test.mjs 的「世界书来源只做 extra 清洗」用例存在且全绿；
+- 世界书来源必须走 extra-only：v3/people-workspace.js、v3/cse-engine.js、cse-source-selection.js 用
+  extraOnlySanitizerOptions；tests/v3-cse.test.mjs 同时锁定落盘 baseline 与每楼真实 CSE 请求；
 - 不做 sourceKeepTags 存量迁移（新插件前提，见 1.7）；
 - grep "sourceKeepTags ?? 'content'" src/ 应为 0 结果（prompts-settings.js 已改为 ?? ''）。
 
 ## 4. 当前状态（执行任务时以 git status / git log 为准）
 
-- main 基线：47c8ec1（0.3.1）+ 清洗器对齐（667879e / 47e7ca4）+ 本次审计修复（未提交，见 1.7）；
-- 全量测试 1002/1002 全绿；dist 已用新代码重建，可直接部署到酒馆插件目录验证；
+- 清洗器对齐与世界书 extra-only 修复链已进入 main；精确提交与工作区状态始终以
+  `git log -5 --oneline`、`git status --short` 为准，避免在文档中维护会随下一次提交失效的“未提交”标记；
+- `2d29d53` 批次全量测试 1002/1002；最新补漏相关测试 129/129。dist 已用新代码重建，
+  manifest 缓存键与 bundle SHA-256 前 16 位一致，可直接部署到酒馆插件目录验证；
 - 用户计划：在 GitHub 重新 fork 自己的仓库（origin = moonqianqiu），并将
   atonal519/ST-MyriadKnots 设为 upstream；本次改动将是 fork 的第一批 moon 提交。

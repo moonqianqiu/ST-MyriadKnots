@@ -164,12 +164,14 @@ export async function captureCseRequestSources({ hostAdapter, baseline, floor, e
   const catalog = await scanWorldInfo(ctx, { bindings, strict: true, includeCatalog: false, filterBookNames });
   const macros = macroValues({ userName: latest.userPersona.name, characterName: latest.characterCard.name });
   const decisions = selectCseWorldInfoEntries({ entries: catalog.entries, scanText: window.scanText, defaults: catalog.defaults, macros });
+  const worldInfoSanitizerOptions = extraOnlySanitizerOptions(sanitizerOptions);
   const prepared = [];
   const reasonCounts = {};
   for (const { entry, decision } of decisions) {
     reasonCounts[decision.reason] = (reasonCounts[decision.reason] ?? 0) + 1;
     if (!decision.selected) continue;
-    const content = clean(replaceCseSourceMacros(entry.content, macros));
+    const sanitized = sanitizeMemoryContent(entry.content, worldInfoSanitizerOptions);
+    const content = clean(replaceCseSourceMacros(sanitized, macros));
     if (!content) continue;
     prepared.push(Object.freeze({
       sourceKind: 'worldbook', sourceName: entry.source, scope: entry.scope || 'unknown', locator: `${entry.source}:${entry.uid}`,

@@ -8916,11 +8916,11 @@ async function bs({ hostAdapter: e, baseline: t, floor: n, expectedChatId: r, fi
 		scanText: c.scanText,
 		defaults: f.defaults,
 		macros: p
-	}), h = [], g = {};
+	}), h = Ct(a), g = [], _ = {};
 	for (let { entry: e, decision: t } of m) {
-		if (g[t.reason] = (g[t.reason] ?? 0) + 1, !t.selected) continue;
-		let n = ns(us(e.content, p));
-		n && h.push(Object.freeze({
+		if (_[t.reason] = (_[t.reason] ?? 0) + 1, !t.selected) continue;
+		let n = ns(us(St(e.content, h), p));
+		n && g.push(Object.freeze({
 			sourceKind: "worldbook",
 			sourceName: e.source,
 			scope: e.scope || "unknown",
@@ -8933,29 +8933,29 @@ async function bs({ hostAdapter: e, baseline: t, floor: n, expectedChatId: r, fi
 			visibility: "authorial"
 		}));
 	}
-	let _ = i(h);
-	if (!Array.isArray(_)) {
+	let v = i(g);
+	if (!Array.isArray(v)) {
 		let e = /* @__PURE__ */ Error("世界书排除结果无效。");
 		throw e.code = "V3_CSE_WORLDBOOK_FILTER_INVALID", e;
 	}
-	let v = e.snapshot(), y = ns(v.context?.chatMetadata?.qianqianjie?.chatId, 200), b = await _s(v, n, a, o);
-	if (y !== r || !b || b.signature !== c.signature) throw ys();
-	let x = {
+	let y = e.snapshot(), b = ns(y.context?.chatMetadata?.qianqianjie?.chatId, 200), x = await _s(y, n, a, o);
+	if (b !== r || !x || x.signature !== c.signature) throw ys();
+	let S = {
 		userPersona: d.userPersona,
 		characterCard: d.characterCard,
 		authorNote: d.authorNote,
-		worldInfoSources: _.map((e) => ({
+		worldInfoSources: v.map((e) => ({
 			locator: e.locator,
 			fingerprint: e.fingerprint,
 			triggerReason: e.triggerReason
 		})),
 		targetWindowSignature: c.signature
-	}, S = `sha256:${await Ee(JSON.stringify(x))}`, C = Object.freeze({
+	}, C = `sha256:${await Ee(JSON.stringify(S))}`, w = Object.freeze({
 		catalogEntries: f.entries.length,
 		enabledEntries: f.entries.filter((e) => e.hostEnabled !== !1).length,
-		selectedEntries: _.length,
-		excludedSelectedEntries: h.length - _.length,
-		worldInfoCharacters: _.reduce((e, t) => e + t.content.length, 0),
+		selectedEntries: v.length,
+		excludedSelectedEntries: g.length - v.length,
+		worldInfoCharacters: v.reduce((e, t) => e + t.content.length, 0),
 		personaCharacters: d.userPersona.description.length,
 		characterCardCharacters: [
 			"description",
@@ -8964,15 +8964,15 @@ async function bs({ hostAdapter: e, baseline: t, floor: n, expectedChatId: r, fi
 		].reduce((e, t) => e + d.characterCard[t].length, 0),
 		authorNoteCharacters: d.authorNote.content.length,
 		scanCharacters: c.scanText.length,
-		triggerReasons: Object.freeze({ ...g }),
-		sourceFingerprint: S
+		triggerReasons: Object.freeze({ ..._ }),
+		sourceFingerprint: C
 	});
 	return Object.freeze({
 		...d,
-		worldInfoSources: Object.freeze([..._]),
+		worldInfoSources: Object.freeze([...v]),
 		targetWindow: c,
-		fingerprint: S,
-		diagnostics: C
+		fingerprint: C,
+		diagnostics: w
 	});
 }
 //#endregion
