@@ -4,6 +4,7 @@ import { DEFAULT_EXTRACTOR_GUIDANCE } from '../../v3/extractor.js';
 import { DEFAULT_CSE_GUIDANCE } from '../../v3/cse-engine.js';
 import { DEFAULT_PROFILE_GUIDANCE } from '../../v3/people-workspace.js';
 import { BASE_PROCESSING_PROMPT } from '../../internal-processing-prompt.js';
+import { normalizeMemoryTagList } from '../../memory-content-sanitizer.js';
 
 // 提示词与包裹符：字段 change 即存；业务指导可编辑，机器合同由运行时固定维护。
 export function createPromptsSettings({ settings, documentRef = globalThis.document, open = false, onToggle, onStoryClockChange } = {}) {
@@ -30,8 +31,33 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   const { drawer: cseDrawer, body: cseBody } = subDrawer({ title: 'CSE 内容指导', id: 'qqj-settings-cse-prompt' });
   const { drawer: profileDrawer, body: profileBody } = subDrawer({ title: '人物资料内容指导', id: 'qqj-settings-profile-prompt' });
 
-  keepTags.addEventListener('change', () => settings.update({ sourceKeepTags: keepTags.value }));
-  extraTags.addEventListener('change', () => settings.update({ sourceExtraTags: extraTags.value }));
+  // 保留/清洗两栏不得同名（对齐 ST-SevenDaysCal bindTagField 校验）：命中交集即拒绝落存、
+  // 回退输入框旧值并给行内错误提示（本项目无 toast 体系，沿用 settings-result error 模式）。
+  // [[...]] 字面量经 normalizeMemoryTagList 归一后参与比较，天然覆盖双中括号规则。
+  const tagClashHint = element('p', 'settings-result');
+  const setTagClashHint = names => {
+    if (!names) { tagClashHint.textContent = ''; tagClashHint.className = 'settings-result'; return; }
+    tagClashHint.textContent = `「保留包裹符」与「清洗包裹符」两栏不能填相同标签：${names.join(',')}。请先从另一栏移除。`;
+    tagClashHint.className = 'settings-result error';
+  };
+  const savedKeepTags = current.sourceKeepTags ?? '';
+  const savedExtraTags = current.sourceExtraTags ?? '';
+  const bindTagFieldWithClashCheck = (control, key, otherValue) => {
+    control.addEventListener('change', () => {
+      const normalized = normalizeMemoryTagList(control.value);
+      const other = normalizeMemoryTagList(otherValue());
+      const clash = normalized.filter(name => other.includes(name));
+      if (clash.length) {
+        control.value = key === 'sourceKeepTags' ? savedKeepTags : savedExtraTags;
+        setTagClashHint(clash);
+        return;
+      }
+      setTagClashHint(null);
+      settings.update({ [key]: control.value });
+    });
+  };
+  bindTagFieldWithClashCheck(keepTags, 'sourceKeepTags', () => settings.get().sourceExtraTags ?? '');
+  bindTagFieldWithClashCheck(extraTags, 'sourceExtraTags', () => settings.get().sourceKeepTags ?? '');
   const refreshClock = () => {
     const result = onStoryClockChange?.() ?? null;
     storyClockStatus.textContent = result?.label ?? '时间戳状态会在下一次正文生成前刷新。';
@@ -69,7 +95,7 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   promptEditor({ body: cseBody, control: csePrompt, key: 'csePrompt', defaultText: DEFAULT_CSE_GUIDANCE, label: 'CSE 推演要求' });
   promptEditor({ body: profileBody, control: profilePrompt, key: 'profilePrompt', defaultText: DEFAULT_PROFILE_GUIDANCE, label: '人物资料整理要求' });
 
-  wrapperBody.append(field('保留包裹符', keepTags), field('清洗包裹符', extraTags));
+  wrapperBody.append(field('保留包裹符', keepTags), field('清洗包裹符', extraTags), tagClashHint);
   body.append(
     wrapperDrawer,
     storyClockDrawer,

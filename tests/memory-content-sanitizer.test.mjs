@@ -96,6 +96,15 @@ test('属性引号内 > 不截断 token：M0 逐字节保留，M2 keep 取内无
   assert.equal(sanitizeMemoryContent(`前言${open}正文${close}尾`, { keepTags: '', extraTags: 'div' }), '前言尾');
 });
 
+test('未闭合引号兜底（对齐 ST-SevenDaysCal bc06be1）：宽松分支接管，噪音不泄漏', () => {
+  // M1：引号未闭合 + 后续 > → 兜底 token 止于首个 >，extra 照吞（旧实现此处整段泄漏）
+  assert.equal(sanitizeMemoryContent('前' + OT.think.slice(0, -1) + ' data-x="oops>噪音尾巴', { keepTags: '', extraTags: 'think' }), '前');
+  // M3：keep 子树内未闭合引号 extra → dropUnclosed 吞掉，keep 空块不产出
+  assert.equal(sanitizeMemoryContent(OT.content + OT.think.slice(0, -1) + ' data-x="a>b噪音' + CT.content + '正文', { keepTags: 'content', extraTags: 'think' }), '');
+  // 无后续 >（EOF）：不成 token、按原文保留（与 SevenDaysCal 一致）
+  assert.equal(sanitizeMemoryContent('eguard habit' + OT.think.slice(0, -1) + ' data-x="oops tail', { keepTags: '', extraTags: 'think' }), 'eguard habit' + OT.think.slice(0, -1) + ' data-x="oops tail');
+});
+
 test('显式 sourceKeepTags=content 时正文格式不再被吞（回归案例）', () => {
   const raw = [
     '<erii_draft>思考</erii_draft>',

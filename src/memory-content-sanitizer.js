@@ -15,11 +15,17 @@ const OPEN_NAME_RX = new RegExp(`^<\\/?(?:(${TAG_NAME_SOURCE}))`, 'u');
 const SELF_CLOSING_RX = /\/\s*>$/u;
 const COMMENT_RX = /<!--[\s\S]*?-->/g;
 // 属性部分：引号感知（双/单引号内允许 `>`），避免 `<div title="a>b">` 被提前截断。
-// 未闭合引号视为残缺标签、不成 token（回落为文本，由 M0 保留 / M2 丢弃）。
+// 交替顺序安全（自 ST-SevenDaysCal bc06be1 回灌）：兜底分支 [^>]* 永不跨过 `>`，引号感知分支可跨过
+// 引号内 `>`，两者同时命中时后者不长于前者，故兜底仅在引号感知整体失配（未闭合引号 + 后续 `>`）时接管，
+// 等价于旧宽松正则的截断行为（token 止于首个 `>`，extra 仍被吞、噪音不泄漏；无后续 `>` 时按文本保留）。
 const TAG_ATTR_SOURCE = String.raw`(?:\s+[^\s=>\/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>"']+))?)*`;
+const TAG_ATTR_FALLBACK_SOURCE = String.raw`(?:\s[^>]*)?`;
 
 function freshTokenRx() {
-    return new RegExp(`<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_SOURCE}\\s*\\/?>|\\[\\[([\\s\\S]*?)\\]\\]`, 'gu');
+    return new RegExp(
+        `<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_SOURCE}\\s*\\/?>`
+        + `|<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_FALLBACK_SOURCE}\\/?>`
+        + `|\\[\\[([\\s\\S]*?)\\]\\]`, 'gu');
 }
 
 // 单遍解析：标签 token / 双中括号 token 建树；文本段原样入 children。

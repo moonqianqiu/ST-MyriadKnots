@@ -1,6 +1,7 @@
 // runtime/tag-sanitizer.js 四模式清洗器测试
 // 1) 金样比对：runtime/tag-sanitizer.golden.json 由重构前的本地 stripTags（栈式实现，
-//    memory.js @ merge dde98d9）生成，29 例逐条锁定行为不变。
+//    memory.js @ merge dde98d9）生成 29 例锁定行为不变；2026-09 与 ST-SevenDaysCal bc06be1
+//    对齐新增 11 例（引号属性/自闭合 extra/未闭合引号兜底/extra 恒优先），29→40。
 // 2) 语义探针：四模式合同的关键行为显式断言（dropUnclosed 噪音围堵、keep 顺序无关、
 //    keep 内部逐字保留、extra 穿透、双中括号规则）。
 import { test } from 'node:test';
@@ -12,9 +13,9 @@ import { sanitizeMemoryContent as stripTags } from '../src/memory-content-saniti
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-test('golden baseline: 29 cases byte-identical to pre-refactor implementation', () => {
+test('golden baseline: 40 cases byte-identical (29 pre-refactor + 11 SDC-alignment)', () => {
     const golden = JSON.parse(readFileSync(join(here, '..', 'src', 'tag-sanitizer.golden.json'), 'utf8'));
-    assert.ok(golden.cases.length >= 29);
+    assert.ok(golden.cases.length >= 40);
     for (const c of golden.cases) {
         const got = stripTags(c.input, { ...c.opts });
         assert.equal(got, c.oldOutput, `case ${c.id}: input=${JSON.stringify(c.input)} opts=${JSON.stringify(c.opts)}`);
