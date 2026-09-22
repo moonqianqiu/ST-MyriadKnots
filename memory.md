@@ -78,7 +78,11 @@
   在保留/清洗两栏输入失焦保存时，自动对两栏标签进行归一化交集计算（含 `[[...]]`）。若检测到同名标签冲突，**拒绝落存、输入框回退旧值**，并在下方显示 `settings-result error` 行内红色警告提示，从源头上阻止非法配置存盘。
 
 ### 3.4 召回回执重新生成（Regenerate）秒级复用机制与架构定性
-- **核心文件**：`src/v3/recall-runtime.js`
+- **核心文件清单**：
+  - `src/v3/recall-runtime.js`（见证截断、密封点版本重对齐、`invalidate` 增加 `clearPersisted` 支持与 `saveChat` 落盘）；
+  - `src/ui/v3-foundation-view.js`（单楼记忆编辑保存与完全重构成功后触发主动失效）；
+  - `src/ui/people-profiles-view.js`（人物资料手动保存成功后触发主动失效）；
+  - `src/bootstrap.js`（向 `peopleProfilesViewFactory` 注入 `recallRuntime` 引用通道）。
 - **深层痛点与双重致错源头**（此前曾片面归因于“后台自动摘要推进版本”）：
   实测表明：**即便上一楼摘要早已归档落盘，只要用户执行“删除当前用户楼 → 重新输入发送 → 点击重新生成”，该问题依然 100% 稳定必现！** 经排查，背后存在两大致命源头：
   1. **并发盖错公章（时序倒挂）**：推进全局 Root 的不仅是高层摘要，重新发送消息触发的底层地基扫描（`foundationRuntime.scan()` -> `commitRoot()`）也会对齐新消息节点。在选材 LLM 耗费 20+ 秒的窗口期内 Root 被推进，而原代码在开收据时依然盖了选材开始时的旧公章，导致收据存盘即过期；
@@ -86,13 +90,18 @@
 - **上游 0.4.3 应对机制与本地治本修复的客观定性**：
   - **上游 0.4.3 的取舍（无条件冻结复用）**：
     上游在 0.4.0~0.4.3 引入了 `commitFrozenReceiptIfCurrent`，立下严格的 `root: 0` 零 I/O 极速通道合同。为追求极致性能与消除等待症状，上游在复用阶段故意不再比对 `headCheckpointId`/`rootRevision`，直接信任冻结收据。其代价是放宽了校验，导致用户在面板手动修改记忆后重新生成时无法被灵敏感知；
-  - **本地修复（`09f2b59`）的不可替代价值**：
+  - **本地修复体系（`09f2b59` + `5edef87`）的不可替代价值**：
     1. **见证楼层向前截断 (`captureCoreBodyWitness`) —— 绝对必要**：
        传入触发用户楼 `userMessage` 严格向前逆向采集。它不仅用于重新生成复用，还在全新生成（normal）及 `commitPromptIfCurrent` 的 `captureCoveredBodyGuards` 终检时发挥决定性保护作用，彻底消除了“删楼重发”及尾部临时 AI 楼层残留导致的见证漂移与意外 Abort；
     2. **密封点活版本重对齐 (`commitPromptIfCurrent`) —— 落盘数据治本保障**：
        选材结束后持久化前，重新读取活档案头，将收据的 Checkpoint、Revision 及签名自动重对齐为最新版本。使落盘到聊天记录 `extra` 中的收据天然自洽真实，消除了历史归档与分支继承中的失真假报警；即使上游后续收紧版本核验，本地收据也能平滑无缝兼容；
-    3. **主动失效闭环 (`invalidate({ clearPersisted: true })`) —— 完美守护用户心智**：
-       为解决上游 0.4.3 冻结通道在“用户在面板手动修改记忆后重新生成被静默无视”的缺陷，在 `recall-runtime.js` 的 `invalidate` 中增加了清除当前最新用户楼持久化收据并同步调用 `context.saveChat()` 落盘的能力；并在 `v3-foundation-view.js` 的单楼记忆保存（`manualMemoryEdit`）与完全重构（`foundationFullRebuild`）成功后显式联动触发。既遵守了上游日常重新生成时的 `root: 0` 极速通道，又在用户手动修改记忆时实现了精确的缓存清除与重新选材；
+    3. **三端联动主动失效闭环 (`invalidate({ clearPersisted: true })`) —— 完美守护用户心智**：
+       在 `recall-runtime.js` 的 `invalidate` 中增加了清除当前最新用户楼持久化收据并同步调用 `context.saveChat()` 落盘的能力（防止 F5 刷新后旧收据死灰复燃）。
+       并在三大核心人工修改入口完成联动：
+       - `v3-foundation-view.js` 单楼记忆保存（`manualMemoryEdit`）；
+       - `v3-foundation-view.js` 完全重构完成（`foundationFullRebuild`）；
+       - `people-profiles-view.js` 人物资料保存（`peopleProfileSaved`）。
+       既遵守了上游日常重新生成时的 `root: 0` 极速通道，又在用户手动修改记忆时实现了精确的缓存清除与重新选材；
     4. **共存效果**：本地修复零性能开销、1067 项测试全绿，使插件在完美继承上游 0.4.3 毫秒级闪电复用的同时，守住了底层数据的真实性与鲁棒性。
 
 ---
@@ -110,7 +119,7 @@
    ```bash
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
-   *标准*：9/9 全部全绿（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
+   *标准*：8/8 全部通过（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
 3. **全量测试套件自动化运行**：
    ```bash
    npm test
@@ -125,8 +134,9 @@
 
 - **当前分支**：`main`
 - **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.4.3`，提交 `64db02a`）；
-- **当前产物版本**：`manifest.json` 版本号 `0.4.3`，缓存键 `20260922.327-0bb4701a9bdb8915`；
+- **当前产物版本**：`manifest.json` 版本号 `0.4.3`，缓存键 `20260922.329-a6cea2841f711d28`；
 - **最近提交记录**：
+  - `5edef87`：千结/千人面板记忆与人物修改的主动失效联动（心智守护闭环）；
   - `09f2b59`：召回回执重新生成失效的治本修复（密封点活版本重对齐 + 见证截断）；
   - `63a382f`：合并上游 v0.4.3 官方发布（引入千事图谱、白鸟存储管理等特性）；
-  - `3b8ed8f`：清洗器与 ST-SevenDaysCal 40 例金样字节级对齐与同名 UI 校验；
+  - `3b8ed8f`：清洗器与 ST-SevenDaysCal 40 例金样字节级对齐与同名 UI 校验。
