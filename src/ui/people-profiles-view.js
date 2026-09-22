@@ -18,7 +18,7 @@ function fieldsFrom(person) {
 }
 function sameFields(left, right) { return PEOPLE_PROFILE_FIELDS.every(field => String(left?.[field] ?? '') === String(right?.[field] ?? '')); }
 
-export function createPeopleProfilesView({ runtime, sessionStateProvider = null, prepareSession = null, dialog = null, documentRef = globalThis.document, imageFactory = () => new Image(), urlApi = globalThis.URL } = {}) {
+export function createPeopleProfilesView({ runtime, recallRuntime = null, sessionStateProvider = null, prepareSession = null, dialog = null, documentRef = globalThis.document, imageFactory = () => new Image(), urlApi = globalThis.URL } = {}) {
   if (!runtime || ['getState', 'refresh', 'setSelectedEntityIds', 'setPersonOrderEntityIds', 'saveProfile', 'saveAvatar', 'mergePeople', 'deletePerson', 'generateMissingProfiles', 'rewriteSelectedProfiles', 'regenerateProfile'].some(name => typeof runtime[name] !== 'function')) throw new TypeError('千人人物资料 runtime 无效');
   if (!documentRef?.createElement) throw new TypeError('千人人物资料 documentRef 无效');
   let container = null, active = false, epoch = 0, unsubscribe = null, state = runtime.getState(), chatId = state.chatId ?? null, feedback = '人物资料状态已显示。';
@@ -125,6 +125,7 @@ export function createPeopleProfilesView({ runtime, sessionStateProvider = null,
       } else {
         const saved = fieldsFrom(updated);
         drafts.set(token.entityId, { ...saved, original: { ...saved }, dirtyFields: new Set(), wasProfiled: true, dirty: false, saving: false, editing: false, error: '', notice: '已保存' });
+        try { recallRuntime?.invalidate?.('peopleProfileSaved', { clearPersisted: true }); } catch { /* non-fatal */ }
       }
       if (active) { render(next); if (updated?.profiled) scrollProfileToTop(token.entityId); }
     }, error => {

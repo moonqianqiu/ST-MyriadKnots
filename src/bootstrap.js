@@ -50,7 +50,7 @@ export function bootstrap({
   const dialog = dialogFactory({ documentRef, $: globalThis.jQuery ?? globalThis.$, subscribeContextChange: subscribeDialogContextChange });
   if (dialog?.host) (documentRef.documentElement ?? documentRef.body).append(dialog.host);
   const foundationView = v3FoundationViewFactory({ runtime: v3FoundationRuntime, recallRuntime: v3RecallRuntime, peopleRuntime: peopleWorkspaceRuntime, timeRuntime, memoryManagement: chatMemoryManagement, sessionStateProvider, backendDiagnosticProvider, pluginVersion, uiDiagnosticProvider: () => panel?.getUiDiagnostic?.() ?? '{}', documentRef, confirmImpl: options => dialog.confirm(options), chooseImpl: options => dialog.choose?.(options) ?? null, infoImpl: options => dialog.info(options), customImpl: options => dialog.custom(options) });
-  const peopleProfilesView = peopleProfilesViewFactory({ runtime: peopleWorkspaceRuntime, sessionStateProvider, prepareSession, documentRef, dialog });
+  const peopleProfilesView = peopleProfilesViewFactory({ runtime: peopleWorkspaceRuntime, recallRuntime: v3RecallRuntime, sessionStateProvider, prepareSession, documentRef, dialog });
   const storageManagementView = storageManagementViewFactory({ manager: storageManagement, documentRef, confirmImpl: options => dialog.confirm(options) });
   const syncAppearance = value => { fab?.setAppearance?.(value); inlineRenderer?.setAppearance?.(value); };
   let pluginEnabled = settings?.isEnabled?.() !== false;
