@@ -1395,8 +1395,21 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     return getState();
   }
 
-  function invalidate(reason = 'invalidated') {
+  function invalidate(reason = 'invalidated', { clearPersisted = false } = {}) {
     epoch += 1; active?.controller.abort(FINAL_REASONS.has(reason) ? reason : 'superseded'); active = null; sessionReceipt = null; generationQueue.length = 0; stoppedEndDebt = 0; clearSlot();
+    if (clearPersisted && typeof hostAdapter?.snapshot === 'function') {
+      try {
+        const snapshot = hostAdapter.snapshot();
+        const user = latestUser(snapshot);
+        if (user?.message?.extra && Object.hasOwn(user.message.extra, RECALL_RECEIPT_KEY)) {
+          const nextExtra = { ...user.message.extra };
+          delete nextExtra[RECALL_RECEIPT_KEY];
+          user.message.extra = nextExtra;
+          const context = snapshot.context ?? hostAdapter.snapshot?.()?.context;
+          context?.saveChat?.();
+        }
+      } catch { /* non-fatal */ }
+    }
     lastRecall = null; lastPrequel = null; lastRecallBinding = null; lastError = null; notify();
   }
 

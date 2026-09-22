@@ -19233,22 +19233,22 @@ function ig({ runtime: e, recallRuntime: t = null, peopleRuntime: n = null, time
 			mustReplace: n || t?.pluginEnabled === !1 || !r
 		};
 	}
-	function Fe(t, n) {
-		let r = `${n.chatId ?? "no-chat"}:${t.floorId}`, i = ue(J("details", `qqj-memory-card status-${t.status}`), `memory:${r}`, !1);
-		i.setAttribute("data-qqj-floor-id", t.floorId);
-		let a = J("summary", "qqj-memory-card-head"), o = t.memory, s = Yh(o?.chronology, t.timeFallback) || "时间未明确", c = J("span", "qqj-floor-time", s);
-		c.setAttribute("title", s);
-		let l = t.summarySource === "user" && t.status === "ready" ? "人工修订" : ch(t.status), u = J("span", `v3-memory-status${t.summarySource === "user" && t.status === "ready" ? " is-user" : ""}`, l), f = J("span", "qqj-memory-chevron", "›");
-		f.setAttribute("aria-hidden", "true"), a.append(J("strong", "qqj-floor-number", fh(n, t)), c, u, f), i.append(a);
-		let p = J("div", "qqj-memory-card-body"), m = te.get(r);
-		if (m) {
-			let i = J("div", "v3-memory-edit qqj-manual-editor"), a = (e, t) => {
+	function Fe(n, r) {
+		let i = `${r.chatId ?? "no-chat"}:${n.floorId}`, a = ue(J("details", `qqj-memory-card status-${n.status}`), `memory:${i}`, !1);
+		a.setAttribute("data-qqj-floor-id", n.floorId);
+		let o = J("summary", "qqj-memory-card-head"), s = n.memory, c = Yh(s?.chronology, n.timeFallback) || "时间未明确", l = J("span", "qqj-floor-time", c);
+		l.setAttribute("title", c);
+		let u = n.summarySource === "user" && n.status === "ready" ? "人工修订" : ch(n.status), f = J("span", `v3-memory-status${n.summarySource === "user" && n.status === "ready" ? " is-user" : ""}`, u), p = J("span", "qqj-memory-chevron", "›");
+		p.setAttribute("aria-hidden", "true"), o.append(J("strong", "qqj-floor-number", fh(r, n)), l, f, p), a.append(o);
+		let m = J("div", "qqj-memory-card-body"), _ = te.get(i);
+		if (_) {
+			let a = J("div", "v3-memory-edit qqj-manual-editor"), o = (e, t) => {
 				let n = J("label", "qqj-memory-edit-field");
 				return n.append(J("span", "", e), t), n;
-			}, o = J("input", "settings-input");
-			o.value = m.timeText, o.placeholder = "日期、时间范围或相对时间", o.addEventListener("input", () => {
-				m.timeText = o.value;
-			}), i.append(a("时间", o)), i.append(((e, t, n, r, i) => {
+			}, s = J("input", "settings-input");
+			s.value = _.timeText, s.placeholder = "日期、时间范围或相对时间", s.addEventListener("input", () => {
+				_.timeText = s.value;
+			}), a.append(o("时间", s)), a.append(((e, t, n, r, i) => {
 				let a = J("div", "qqj-memory-edit-group");
 				a.append(J("strong", "", e)), t.forEach((e, r) => {
 					let i = J("div", "qqj-memory-edit-row");
@@ -19267,84 +19267,91 @@ function ig({ runtime: e, recallRuntime: t = null, peopleRuntime: n = null, time
 				return o.type = "button", o.addEventListener("click", () => {
 					t.push({ ...i }), lt(D);
 				}), a.append(o), a;
-			})("地点", m.locations, [["name", "地点名称"]], "添加地点", {
+			})("地点", _.locations, [["name", "地点名称"]], "添加地点", {
 				itemId: null,
 				name: ""
 			}));
-			let s = J("textarea", "settings-input");
-			s.value = m.peopleText, s.placeholder = "张三、李四、路人甲", s.addEventListener("input", () => {
-				m.peopleText = s.value;
-			}), i.append(a("人物", s));
 			let c = J("textarea", "settings-input");
-			c.value = m.summary, c.placeholder = "输入用户修订摘要", c.addEventListener("input", () => {
-				m.summary = c.value;
-			}), i.append(a("摘要", c));
-			let l = J("input", "settings-input");
-			l.value = m.note, l.placeholder = "修订说明（可选）", l.addEventListener("input", () => {
-				m.note = l.value;
+			c.value = _.peopleText, c.placeholder = "张三、李四、路人甲", c.addEventListener("input", () => {
+				_.peopleText = c.value;
+			}), a.append(o("人物", c));
+			let l = J("textarea", "settings-input");
+			l.value = _.summary, l.placeholder = "输入用户修订摘要", l.addEventListener("input", () => {
+				_.summary = l.value;
+			}), a.append(o("摘要", l));
+			let u = J("input", "settings-input");
+			u.value = _.note, u.placeholder = "修订说明（可选）", u.addEventListener("input", () => {
+				_.note = u.value;
 			});
-			let u = J("div", "v3-foundation-actions");
-			m.saveError && i.append(J("p", "v3-foundation-feedback error", m.saveError));
-			let d = J("button", "primary-action", m.saving ? "保存中…" : "保存");
-			d.type = "button", d.disabled = m.saving === !0 || wh(n);
-			let f = J("button", "secondary-action", "取消");
-			f.type = "button", f.disabled = m.saving === !0 || wh(n), m.controls = [d, f], d.addEventListener("click", () => {
-				let i = {
-					summary: m.summary,
-					timeText: m.timeText,
-					originalTimeText: m.originalTimeText,
-					timeChanged: String(m.timeText ?? "").trim() !== String(m.originalTimeText ?? "").trim(),
-					locations: m.locations,
-					participantNames: Kh(m.peopleText),
-					revisionNote: m.note
+			let d = J("div", "v3-foundation-actions");
+			_.saveError && a.append(J("p", "v3-foundation-feedback error", _.saveError));
+			let f = J("button", "primary-action", _.saving ? "保存中…" : "保存");
+			f.type = "button", f.disabled = _.saving === !0 || wh(r);
+			let p = J("button", "secondary-action", "取消");
+			p.type = "button", p.disabled = _.saving === !0 || wh(r), _.controls = [f, p], f.addEventListener("click", () => {
+				let a = {
+					summary: _.summary,
+					timeText: _.timeText,
+					originalTimeText: _.originalTimeText,
+					timeChanged: String(_.timeText ?? "").trim() !== String(_.originalTimeText ?? "").trim(),
+					locations: _.locations,
+					participantNames: Kh(_.peopleText),
+					revisionNote: _.note
 				};
-				if (Qh(m, i)) {
-					te.delete(r), v = "未修改内容。", lt(D), ce(`[data-qqj-floor-id="${t.floorId}"]`);
+				if (Qh(_, a)) {
+					te.delete(i), v = "未修改内容。", lt(D), ce(`[data-qqj-floor-id="${n.floorId}"]`);
 					return;
 				}
-				let a = {};
-				m.saveIdentity = a, m.saving = !0, m.saveError = "", d.textContent = "保存中…", d.disabled = !0, f.disabled = !0;
-				let o = () => {
-					let i = e.getState?.() ?? D, o = i?.floors?.find((e) => e.floorId === t.floorId);
-					return te.get(r) === m && m.saveIdentity === a && i?.chatId === n.chatId && o?.floorId === m.floorId;
-				}, s = typeof e.editMemory == "function" ? () => e.editMemory(t.floorId, i) : () => e.editSummary(t.floorId, i.summary, i.revisionNote), c = !1;
-				Oe("保存本楼记忆", s, {
-					after: () => o() ? (te.delete(r), c = !0, !0) : !1,
-					failed: (e) => o() ? (m.saving = !1, m.saveError = `保存失败：${Y(e, { fallback: "本楼记忆没有保存，请重试。" })}`, !0) : !1
+				let o = {};
+				_.saveIdentity = o, _.saving = !0, _.saveError = "", f.textContent = "保存中…", f.disabled = !0, p.disabled = !0;
+				let s = () => {
+					let t = e.getState?.() ?? D, a = t?.floors?.find((e) => e.floorId === n.floorId);
+					return te.get(i) === _ && _.saveIdentity === o && t?.chatId === r.chatId && a?.floorId === _.floorId;
+				}, c = typeof e.editMemory == "function" ? () => e.editMemory(n.floorId, a) : () => e.editSummary(n.floorId, a.summary, a.revisionNote), l = !1;
+				Oe("保存本楼记忆", c, {
+					after: () => {
+						if (!s()) return !1;
+						te.delete(i), l = !0;
+						try {
+							t?.invalidate?.("manualMemoryEdit", { clearPersisted: !0 });
+						} catch {}
+						return !0;
+					},
+					failed: (e) => s() ? (_.saving = !1, _.saveError = `保存失败：${Y(e, { fallback: "本楼记忆没有保存，请重试。" })}`, !0) : !1
 				}).then(() => {
-					c && g && h && ce(`[data-qqj-floor-id="${t.floorId}"]`);
+					l && g && h && ce(`[data-qqj-floor-id="${n.floorId}"]`);
 				});
-			}), f.addEventListener("click", () => {
-				te.delete(r), v = "已取消编辑。", lt(D);
-			}), u.append(d, f), i.append(a("修订说明（可选）", l), u), p.append(i), c.focus?.();
+			}), p.addEventListener("click", () => {
+				te.delete(i), v = "已取消编辑。", lt(D);
+			}), d.append(f, p), a.append(o("修订说明（可选）", u), d), m.append(a), l.focus?.();
 		} else {
-			if (o) {
-				let e = (o.locations ?? []).map((e) => e.name).filter(Boolean).join("、") || "未提取", r = new Map((n.memoryEntities ?? []).map((e) => [e.entityId, e.displayName]));
-				for (let [e, n] of Object.entries(t.memoryEntityNames ?? {})) r.set(e, n);
-				let i = (o.participants ?? []).map((e) => r.get(e.entityId) ?? "未知人物").join("、") || "未提取";
-				p.append(J("p", "qqj-memory-main", t.summary || "暂无摘要。"));
-				let a = J("div", "qqj-memory-meta"), s = (e, t) => {
+			if (s) {
+				let e = (s.locations ?? []).map((e) => e.name).filter(Boolean).join("、") || "未提取", t = new Map((r.memoryEntities ?? []).map((e) => [e.entityId, e.displayName]));
+				for (let [e, r] of Object.entries(n.memoryEntityNames ?? {})) t.set(e, r);
+				let i = (s.participants ?? []).map((e) => t.get(e.entityId) ?? "未知人物").join("、") || "未提取";
+				m.append(J("p", "qqj-memory-main", n.summary || "暂无摘要。"));
+				let a = J("div", "qqj-memory-meta"), o = (e, t) => {
 					let n = J("span", "qqj-memory-meta-item");
 					return n.append(J("strong", "", e), J("span", "", t)), n;
 				};
-				a.append(s("人物", i), s("地点", e)), p.append(a);
-			} else p.append(J("p", "qqj-memory-main is-empty", t.summary || (t.status === "unprocessed" ? "这一楼尚未生成摘要。" : "暂无摘要。")));
-			let i = ae.register(J("details", "qqj-memory-menu")), a = J("summary", "qqj-memory-menu-toggle", "⋮");
-			a.setAttribute("aria-label", `${fh(n, t)}操作`), a.setAttribute("title", "本楼操作");
-			let s = J("div", "qqj-memory-menu-pop");
-			if (t.memoryId) {
-				let i = J("button", "qqj-memory-menu-action", "编辑");
-				i.type = "button", i.disabled = wh(n), i.addEventListener("click", () => {
-					let e = t.memory, i = new Map((n.memoryEntities ?? []).map((e) => [e.entityId, e.displayName])), a = Yh(e?.chronology, t.timeFallback), o = (e?.locations ?? []).map((e) => ({
+				a.append(o("人物", i), o("地点", e)), m.append(a);
+			} else m.append(J("p", "qqj-memory-main is-empty", n.summary || (n.status === "unprocessed" ? "这一楼尚未生成摘要。" : "暂无摘要。")));
+			let t = ae.register(J("details", "qqj-memory-menu")), a = J("summary", "qqj-memory-menu-toggle", "⋮");
+			a.setAttribute("aria-label", `${fh(r, n)}操作`), a.setAttribute("title", "本楼操作");
+			let o = J("div", "qqj-memory-menu-pop");
+			if (n.memoryId) {
+				let t = J("button", "qqj-memory-menu-action", "编辑");
+				t.type = "button", t.disabled = wh(r), t.addEventListener("click", () => {
+					let e = n.memory, t = new Map((r.memoryEntities ?? []).map((e) => [e.entityId, e.displayName])), a = Yh(e?.chronology, n.timeFallback), o = (e?.locations ?? []).map((e) => ({
 						itemId: e.itemId,
 						name: e.name ?? ""
-					})), s = (e?.participants ?? []).map((e) => i.get(e.entityId)).filter(Boolean);
-					te.set(r, {
-						floorId: t.floorId,
-						canonicalFingerprint: t.canonicalFingerprint,
-						rawFingerprint: t.rawFingerprint,
-						summary: t.summary,
-						originalSummary: t.summary,
+					})), s = (e?.participants ?? []).map((e) => t.get(e.entityId)).filter(Boolean);
+					te.set(i, {
+						floorId: n.floorId,
+						canonicalFingerprint: n.canonicalFingerprint,
+						rawFingerprint: n.rawFingerprint,
+						summary: n.summary,
+						originalSummary: n.summary,
 						timeText: a,
 						originalTimeText: a,
 						locations: o,
@@ -19357,28 +19364,28 @@ function ig({ runtime: e, recallRuntime: t = null, peopleRuntime: n = null, time
 					}), lt(D);
 				});
 				let a = J("button", "qqj-memory-menu-action", "重新提取");
-				a.type = "button", a.disabled = wh(n) || typeof e.extractFloor != "function", a.addEventListener("click", async () => {
-					let r = (t.sourceFloorIds?.length ?? 0) > 1;
+				a.type = "button", a.disabled = wh(r) || typeof e.extractFloor != "function", a.addEventListener("click", async () => {
+					let t = (n.sourceFloorIds?.length ?? 0) > 1;
 					if (!await Promise.resolve(d({
-						title: r ? "重新提取整段压缩记忆" : "重新提取本楼摘要",
-						body: r ? `${fh(n, t)}会作为一个整体重新压缩并替换这一张范围记忆；已保存的人物状态与其他范围记忆保持不变。` : "重新提取只会替换本楼摘要；已保存的人物状态与其他楼记录保持不变。",
+						title: t ? "重新提取整段压缩记忆" : "重新提取本楼摘要",
+						body: t ? `${fh(r, n)}会作为一个整体重新压缩并替换这一张范围记忆；已保存的人物状态与其他范围记忆保持不变。` : "重新提取只会替换本楼摘要；已保存的人物状态与其他楼记录保持不变。",
 						confirmText: "重新提取",
 						cancelText: "取消"
 					}))) {
 						v = "已取消重新提取。", lt(D);
 						return;
 					}
-					Oe("重新提取", () => e.extractFloor(t.floorId), { resultCopy: ke("重新提取", t.floorId) });
-				}), s.append(i, a);
+					Oe("重新提取", () => e.extractFloor(n.floorId), { resultCopy: ke("重新提取", n.floorId) });
+				}), o.append(t, a);
 			} else {
-				let r = J("button", "qqj-memory-menu-action", "提取摘要");
-				r.type = "button", r.disabled = wh(n) || typeof e.extractFloor != "function", r.addEventListener("click", () => {
-					Oe("提取摘要", () => e.extractFloor(t.floorId), { resultCopy: ke("提取摘要", t.floorId) });
-				}), s.append(r);
+				let t = J("button", "qqj-memory-menu-action", "提取摘要");
+				t.type = "button", t.disabled = wh(r) || typeof e.extractFloor != "function", t.addEventListener("click", () => {
+					Oe("提取摘要", () => e.extractFloor(n.floorId), { resultCopy: ke("提取摘要", n.floorId) });
+				}), o.append(t);
 			}
-			i.append(a, s), p.append(i);
+			t.append(a, o), m.append(t);
 		}
-		return t.error && p.append(J("p", "v3-foundation-feedback error", t.error)), i.append(p), i;
+		return n.error && m.append(J("p", "v3-foundation-feedback error", n.error)), a.append(m), a;
 	}
 	function Ie(e, t) {
 		let n = `${t.chatId ?? "no-chat"}:waiting:${e.messageIndex}`, r = ue(J("details", "qqj-memory-card status-pending"), `memory:${n}`, !1), i = J("summary", "qqj-memory-card-head"), a = J("span", "v3-memory-status", yh(e.reason)), o = J("span", "qqj-memory-chevron", "›");
@@ -20486,66 +20493,69 @@ function ig({ runtime: e, recallRuntime: t = null, peopleRuntime: n = null, time
 		let t = (v || ve(e) || "状态已显示。").replace("；历史召回回执已独立处理。", ""), n = ve(e) || t.startsWith("记忆读取失败") || t.startsWith("刷新状态未完成");
 		N.className = `v3-foundation-feedback qqj-management-feedback${n ? " error" : ""}`, N.textContent = t;
 	}
-	function at(t) {
-		let n = J("section", "qqj-page qqj-management-page");
-		n.append(Ce("记忆管理", "管理当前聊天的现有记忆任务。", t)), ([
+	function at(n) {
+		let r = J("section", "qqj-page qqj-management-page");
+		r.append(Ce("记忆管理", "管理当前聊天的现有记忆任务。", n)), ([
 			"pendingRebuild",
 			"paused",
 			"failed",
 			"partial"
-		].includes(t.rebuildStatus) || t.rebuildStatus === "waitingRealtime" && t.rebuildHasActionableWork) && n.append(J("p", "qqj-management-notice", "记忆尚未完整。“补齐缺失”会保留已有结果，只处理摘要或人物状态缺口；刷新页面不会自动续跑旧档。"));
-		let r = A?.status === "deleting", o = A?.status === "failed", s = J("div", "v3-foundation-actions qqj-management-actions"), c = wh(t) || A?.workBusy || r || o, l = J("button", "secondary-action", "刷新状态");
-		l.type = "button", l.disabled = c, l.addEventListener("click", () => {
+		].includes(n.rebuildStatus) || n.rebuildStatus === "waitingRealtime" && n.rebuildHasActionableWork) && r.append(J("p", "qqj-management-notice", "记忆尚未完整。“补齐缺失”会保留已有结果，只处理摘要或人物状态缺口；刷新页面不会自动续跑旧档。"));
+		let o = A?.status === "deleting", s = A?.status === "failed", c = J("div", "v3-foundation-actions qqj-management-actions"), l = wh(n) || A?.workBusy || o || s, u = J("button", "secondary-action", "刷新状态");
+		u.type = "button", u.disabled = l, u.addEventListener("click", () => {
 			Oe("正在刷新状态", () => e.refreshStatus({
 				preferCached: !1,
 				recoverTailDeletion: !0,
 				reconcileFoundation: !0
 			}), { resultCopy: Me });
-		}), s.append(l);
-		let u = t.rebuildHasActionableWork ?? !["caughtUp", "waitingRealtime"].includes(t.rebuildStatus);
-		if (t.rebuildStatus === "rebuilding" && typeof e.pauseHistoricalRebuild == "function") {
-			let n = J("button", "primary-action", "暂停补齐");
-			n.type = "button", n.disabled = !t.activeAutoMemory, n.addEventListener("click", () => {
+		}), c.append(u);
+		let f = n.rebuildHasActionableWork ?? !["caughtUp", "waitingRealtime"].includes(n.rebuildStatus);
+		if (n.rebuildStatus === "rebuilding" && typeof e.pauseHistoricalRebuild == "function") {
+			let t = J("button", "primary-action", "暂停补齐");
+			t.type = "button", t.disabled = !n.activeAutoMemory, t.addEventListener("click", () => {
 				Oe("暂停补齐", () => e.pauseHistoricalRebuild(), { resultCopy: Ae("补齐缺失") });
-			}), s.append(n);
-		} else if (!["paused", "failed"].includes(t.cseRebuildStatus)) {
-			let n = e.startHistoricalRebuild ?? e.retryAutomation, r = [
+			}), c.append(t);
+		} else if (!["paused", "failed"].includes(n.cseRebuildStatus)) {
+			let t = e.startHistoricalRebuild ?? e.retryAutomation, r = [
 				"paused",
 				"failed",
 				"partial"
-			].includes(t.rebuildStatus) ? "继续补齐" : "补齐缺失", i = J("button", "primary-action", c ? Dh(t) : r);
-			i.type = "button", i.disabled = c || typeof n != "function" || !u, i.addEventListener("click", async () => {
-				let t = await oe();
-				if (!t) {
+			].includes(n.rebuildStatus) ? "继续补齐" : "补齐缺失", i = J("button", "primary-action", l ? Dh(n) : r);
+			i.type = "button", i.disabled = l || typeof t != "function" || !f, i.addEventListener("click", async () => {
+				let n = await oe();
+				if (!n) {
 					v = `已取消${r}。`, lt(D);
 					return;
 				}
-				Oe(r, () => n === e.startHistoricalRebuild ? n.call(e, t) : n.call(e), { resultCopy: Ae(r) });
-			}), s.append(i);
+				Oe(r, () => t === e.startHistoricalRebuild ? t.call(e, n) : t.call(e), { resultCopy: Ae(r) });
+			}), c.append(i);
 		}
-		let f = J("button", "secondary-action", "完全重构");
-		f.type = "button", f.disabled = c || typeof i?.fullRebuild != "function", f.addEventListener("click", async () => {
+		let p = J("button", "secondary-action", "完全重构");
+		p.type = "button", p.disabled = l || typeof i?.fullRebuild != "function", p.addEventListener("click", async () => {
 			let e = await oe({ fullRebuild: !0 });
 			if (!e) {
 				v = "已取消完全重构。", lt(D);
 				return;
 			}
-			let n = ne;
-			Oe("完全重构", () => i.fullRebuild(t.chatId, e), {
+			let r = ne;
+			Oe("完全重构", () => i.fullRebuild(n.chatId, e), {
 				after: () => {
-					ne === n && (ne = null, b = "");
+					ne === r && (ne = null, b = "");
+					try {
+						t?.invalidate?.("foundationFullRebuild", { clearPersisted: !0 });
+					} catch {}
 				},
 				resultCopy: Ae("完全重构")
 			});
-		}), s.append(f);
-		let p = t.cseRebuildStatus === "running" && t.activeAutoMemory?.mode === "cseRebuild", m = ["paused", "failed"].includes(t.cseRebuildStatus), h = J("button", "secondary-action", p ? "暂停人物状态重构" : m ? "继续人物状态重构" : "人物状态重构");
-		h.type = "button", h.disabled = p ? typeof e.pauseCseRebuild != "function" || r : c || typeof e.rebuildCse != "function" || (t.rememberedCount ?? 0) < 1, h.addEventListener("click", async () => {
-			if (p) {
+		}), c.append(p);
+		let m = n.cseRebuildStatus === "running" && n.activeAutoMemory?.mode === "cseRebuild", h = ["paused", "failed"].includes(n.cseRebuildStatus), g = J("button", "secondary-action", m ? "暂停人物状态重构" : h ? "继续人物状态重构" : "人物状态重构");
+		g.type = "button", g.disabled = m ? typeof e.pauseCseRebuild != "function" || o : l || typeof e.rebuildCse != "function" || (n.rememberedCount ?? 0) < 1, g.addEventListener("click", async () => {
+			if (m) {
 				Oe("暂停人物状态重构", () => e.pauseCseRebuild(), { resultCopy: je("人物状态重构") });
 				return;
 			}
-			if (m) {
-				Oe("继续人物状态重构", () => e.resumeCseRebuild(t.chatId), { resultCopy: je("人物状态重构") });
+			if (h) {
+				Oe("继续人物状态重构", () => e.resumeCseRebuild(n.chatId), { resultCopy: je("人物状态重构") });
 				return;
 			}
 			if (!await Promise.resolve(d({
@@ -20557,37 +20567,37 @@ function ig({ runtime: e, recallRuntime: t = null, peopleRuntime: n = null, time
 				v = "已取消人物状态重构。", lt(D);
 				return;
 			}
-			Oe("人物状态重构", () => e.rebuildCse(t.chatId), { resultCopy: je("人物状态重构") });
-		}), s.append(h);
-		let g = J("div", "qqj-management-progress");
-		t.cseRebuildStatus !== "idle" && g.append(J("span", "settings-hint", `人物状态${t.cseRebuildStatus === "completed" ? "已完成" : t.cseRebuildStatus === "failed" ? "失败" : t.cseRebuildStatus === "paused" ? "已暂停" : "重构中"} · ${t.cseRebuildCompletedCount ?? 0}/${t.cseRebuildTotalCount ?? 0}`));
-		let _ = `摘要待补 ${t.unprocessedCount ?? 0} 楼 · CSE 待分析 ${t.csePendingCount ?? 0} 楼`, y = o ? "上次删除尚未完成，请先继续删除当前聊天记忆。" : c ? `${Dh(t)}，完成后可继续操作。` : ["needsReview", "error"].includes(lh(t)) || he() ? `当前${he() ? "记忆读取失败" : ch(lh(t))}；请先点击“刷新状态”。若仍无法确认真实归属，现有记忆会保留、正文可继续，可复制诊断反馈。` : ge(t) || (t.chatId ? u ? "可用“补齐缺失”保留已有结果；“完全重构”会替换全部摘要与人物状态。" : "当前没有需要补齐的稳定楼。" : "当前记忆状态尚未载入，请点击“刷新状态”。");
-		g.append(J("span", "settings-hint", `${_}。${y}`));
-		let x = J("div", "qqj-management-delete");
+			Oe("人物状态重构", () => e.rebuildCse(n.chatId), { resultCopy: je("人物状态重构") });
+		}), c.append(g);
+		let _ = J("div", "qqj-management-progress");
+		n.cseRebuildStatus !== "idle" && _.append(J("span", "settings-hint", `人物状态${n.cseRebuildStatus === "completed" ? "已完成" : n.cseRebuildStatus === "failed" ? "失败" : n.cseRebuildStatus === "paused" ? "已暂停" : "重构中"} · ${n.cseRebuildCompletedCount ?? 0}/${n.cseRebuildTotalCount ?? 0}`));
+		let y = `摘要待补 ${n.unprocessedCount ?? 0} 楼 · CSE 待分析 ${n.csePendingCount ?? 0} 楼`, x = s ? "上次删除尚未完成，请先继续删除当前聊天记忆。" : l ? `${Dh(n)}，完成后可继续操作。` : ["needsReview", "error"].includes(lh(n)) || he() ? `当前${he() ? "记忆读取失败" : ch(lh(n))}；请先点击“刷新状态”。若仍无法确认真实归属，现有记忆会保留、正文可继续，可复制诊断反馈。` : ge(n) || (n.chatId ? f ? "可用“补齐缺失”保留已有结果；“完全重构”会替换全部摘要与人物状态。" : "当前没有需要补齐的稳定楼。" : "当前记忆状态尚未载入，请点击“刷新状态”。");
+		_.append(J("span", "settings-hint", `${y}。${x}`));
+		let S = J("div", "qqj-management-delete");
 		if (i) {
-			let e = Te(a), n = !!(t.chatId || e?.status === "ready" && e.identity?.chatId), s = J("button", "primary-action", r ? "删除中…" : o ? "继续删除当前聊天记忆" : "删除当前聊天记忆");
-			s.type = "button", s.disabled = r || A?.blockedByOtherChat === !0 || !o && (A?.workBusy === !0 || !n), s.addEventListener("click", async () => {
+			let e = Te(a), t = !!(n.chatId || e?.status === "ready" && e.identity?.chatId), r = J("button", "primary-action", o ? "删除中…" : s ? "继续删除当前聊天记忆" : "删除当前聊天记忆");
+			r.type = "button", r.disabled = o || A?.blockedByOtherChat === !0 || !s && (A?.workBusy === !0 || !t), r.addEventListener("click", async () => {
 				if (!await Promise.resolve(d({
 					title: "删除当前聊天记忆",
 					body: "将删除本聊天的摘要、人物状态、人物资料、召回记录及历史派生版本。聊天正文、手动前情和全局 API、提示词设置会保留；手动前情可在“前情”中另行清空。下次建档需要从头开始。",
 					note: "后端数据会移入回收站；这不代表永久擦除。",
-					confirmText: o ? "继续删除" : "删除记忆",
+					confirmText: s ? "继续删除" : "删除记忆",
 					cancelText: "取消"
 				}))) {
 					v = "已取消删除当前聊天记忆。", lt(D);
 					return;
 				}
-				Oe(o ? "继续删除当前聊天记忆" : "删除当前聊天记忆", () => i.deleteCurrent(), {
+				Oe(s ? "继续删除当前聊天记忆" : "删除当前聊天记忆", () => i.deleteCurrent(), {
 					after: () => (A = i.getState(), v = "当前聊天记忆已删除；聊天正文、手动前情与全局设置均已保留。手动前情可在“前情”中清空。", !0),
 					failed: () => (A = i.getState(), !0)
 				});
-			}), x.append(s);
+			}), S.append(r);
 		}
-		o && A.error ? n.append(J("p", "v3-foundation-feedback error", `上次删除未完成：${A.error} 已保留原聊天身份，可继续删除剩余记录。`)) : A?.status === "completed" && n.append(J("p", "v3-foundation-feedback", "当前聊天记忆已清空；聊天正文、手动前情和全局设置仍保留。手动前情可在“前情”中清空。"));
-		let S = (["paused", "failed"].includes(t.cseRebuildStatus) ? me(t.cseRebuildError) || me(t.lastCseError) : "").replace(/[。；\s]+$/u, "");
-		S && g.append(J("span", "settings-hint error", `上次人物状态分析失败：${S}；可继续人物状态重构。`)), N = J("p"), it(t), n.append(s, g, N);
-		let C = nt();
-		return C && n.append(C), n.append(tt(), rt(t)), i && n.append(x), n;
+		s && A.error ? r.append(J("p", "v3-foundation-feedback error", `上次删除未完成：${A.error} 已保留原聊天身份，可继续删除剩余记录。`)) : A?.status === "completed" && r.append(J("p", "v3-foundation-feedback", "当前聊天记忆已清空；聊天正文、手动前情和全局设置仍保留。手动前情可在“前情”中清空。"));
+		let C = (["paused", "failed"].includes(n.cseRebuildStatus) ? me(n.cseRebuildError) || me(n.lastCseError) : "").replace(/[。；\s]+$/u, "");
+		C && _.append(J("span", "settings-hint error", `上次人物状态分析失败：${C}；可继续人物状态重构。`)), N = J("p"), it(n), r.append(c, _, N);
+		let w = nt();
+		return w && r.append(w), r.append(tt(), rt(n)), i && r.append(S), r;
 	}
 	function ot(e) {
 		if (!h) return;
@@ -32928,8 +32938,15 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 			createdAt: rb(_)
 		}), O = null, q(e), W()), ie();
 	}
-	function ge(e = "invalidated") {
-		b += 1, C?.controller.abort(db.has(e) ? e : "superseded"), C = null, P = null, N.length = 0, S = 0, K(), D = null, O = null, A = null, k = null, W();
+	function ge(e = "invalidated", { clearPersisted: n = !1 } = {}) {
+		if (b += 1, C?.controller.abort(db.has(e) ? e : "superseded"), C = null, P = null, N.length = 0, S = 0, K(), n && typeof t?.snapshot == "function") try {
+			let e = t.snapshot(), n = fb(e);
+			if (n?.message?.extra && Object.hasOwn(n.message.extra, "qqj_v3_recall_receipt")) {
+				let r = { ...n.message.extra };
+				delete r[Vy], n.message.extra = r, (e.context ?? t.snapshot?.()?.context)?.saveChat?.();
+			}
+		} catch {}
+		D = null, O = null, A = null, k = null, W();
 	}
 	function _e(e, t, n) {
 		if (n === !0) return;
