@@ -176,7 +176,13 @@ src 与 dist 均为干净版本。
 - 清洗器对齐与世界书 extra-only 修复链已进入 main；精确提交与工作区状态始终以
   `git log -5 --oneline`、`git status --short` 为准，避免在文档中维护会随下一次提交失效的“未提交”标记；
 - 2026-09-22 完成与 ST-SevenDaysCal `bc06be1` 的清洗器全量对齐（三分支兜底正则 + 金样 40 +
-  UI 同名拦截 + dist/manifest 重建），全量测试 1003/1003 全绿，可直接部署到酒馆插件目录验证；
+  UI 同名拦截 + dist/manifest 重建），清洗器测试 20/20 全绿；
+- 2026-09-22 成功合入上游 `upstream/main`（`64db02a`，v0.4.3）：
+  - 包含 v0.4.0 ~ v0.4.3 的千事图谱、白鸟存储管理等新特性；
+  - 成功解决 `manifest.json`、`dist/qqj-app.js` 与测试文件版本号冲突（版本升级为 0.4.3）；
+  - 重新构建生产 bundle，manifest 缓存键更新为 `20260922.326-861f95384f343d01`；
+  - 40 例金样与清洗器测试 20/20 保持全绿，入口测试 9/9 全绿；
+  - 未 push 到 remote，未触碰 `issue-recall-receipt-invalidation.md`。
 - `issue-recall-receipt-invalidation.md`（召回回执被自动批次作废问题报告，2026-09-21）：
   已定位根因（receiptValid 把 headCheckpointId/rootRevision 当硬条件，同周期 commitRoot 推进即作废）、
   修复方案 A 已论证（REUSE_TYPES 放行版本号，内容性校验保留），**未实现**；hotfix 分支

@@ -77,6 +77,21 @@ test('自动隐藏默认关闭并保留最近 3 个 AI 楼，数量只接受合�
   assert.equal(settings.get().autoHideKeepAiCount, 3);
 });
 
+test('存储自动清理默认关闭，只保存合法的逐聊天稳定楼进度', () => {
+  const extensionSettings = {};
+  const { settings, saves } = setup(extensionSettings);
+  assert.equal(settings.get().storageAutoCleanupEnabled, false);
+  assert.deepEqual(settings.get().storageAutoCleanupProgress, {});
+  settings.update({ storageAutoCleanupEnabled: true, storageAutoCleanupProgress: {
+    '123e4567-e89b-42d3-a456-426614174000': 20,
+    invalid: 10,
+    '223e4567-e89b-42d3-a456-426614174000': -1,
+  } });
+  assert.equal(settings.get().storageAutoCleanupEnabled, true);
+  assert.deepEqual(settings.get().storageAutoCleanupProgress, { '123e4567-e89b-42d3-a456-426614174000': 20 });
+  assert.equal(saves(), 1);
+});
+
 test('时间戳功能默认开启，参考标签独立规范化，五类自定义提示词保留用户原文', () => {
   const extensionSettings = {};
   const { settings } = setup(extensionSettings);
