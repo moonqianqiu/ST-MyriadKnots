@@ -180,13 +180,10 @@ src 与 dist 均为干净版本。
 - 2026-09-22 成功合入上游 `upstream/main`（`64db02a`，v0.4.3）：
   - 包含 v0.4.0 ~ v0.4.3 的千事图谱、白鸟存储管理等新特性；
   - 成功解决 `manifest.json`、`dist/qqj-app.js` 与测试文件版本号冲突（版本升级为 0.4.3）；
-  - 重新构建生产 bundle，manifest 缓存键更新为 `20260922.326-861f95384f343d01`；
   - 40 例金样与清洗器测试 20/20 保持全绿，入口测试 9/9 全绿；
   - 未 push 到 remote，未触碰 `issue-recall-receipt-invalidation.md`。
-- `issue-recall-receipt-invalidation.md`（召回回执被自动批次作废问题报告，2026-09-21）：
-  已定位根因（receiptValid 把 headCheckpointId/rootRevision 当硬条件，同周期 commitRoot 推进即作废）、
-  修复方案 A 已论证（REUSE_TYPES 放行版本号，内容性校验保留），**未实现**；hotfix 分支
-  `hotfix/regenerate-receipt-reuse`（manifest 已到 309）上有部分相关提交，合并回 main 时注意
-  缓存键序号冲突处理（main 本次用 310，若 hotfix 先合则再顺延）；
-- 用户计划：在 GitHub 重新 fork 自己的仓库（origin = moonqianqiu），并将
-  atonal519/ST-MyriadKnots 设为 upstream。
+- 2026-09-22 彻底解决 `issue-recall-receipt-invalidation.md`（重新生成时召回回执作废重跑 API）：
+  - **治本修复**：摒弃破坏一致性防御的方案 A（无条件豁免版本校验会导致用户在面板手动修改记忆后被静默无视）；
+  - **实现密封点活版本重对齐**：在 `commitPromptIfCurrent` 选材完成、持久化收据前，若后台自动记忆已推进 Root 且材料兼容，将收据的 Checkpoint/Revision/Signature 更新为活的最新档案头；使收据诞生即匹配当前最新世界状态，第 1 次重新生成即秒级复用；用户手动修改记忆时因版本号不匹配依然能灵敏触发重跑；
+  - **见证楼层向前截断**：`captureCoreBodyWitness` 严格向前逆向采集至触发用户楼，消除重新生成时宿主移除尾部 AI 楼层引起的 `bodyMatchFingerprint` 敏感波动；
+  - **验证**：全量测试套件 **1067/1067 全部全绿**，专项召回测试 186/186 全绿，重新构建 bundle 并更新缓存键为 `20260922.327-0bb4701a9bdb8915`。

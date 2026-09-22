@@ -560,10 +560,19 @@ export async function projectHistoricalRecallReceipt(message, { chatId, userMess
   return legacyStateFromReceipt(receipt, { chatId: chatId.trim(), userIndex: userMessageIndex });
 }
 
-async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint) {
+async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint, userMessage = null) {
   const chat = Array.isArray(coreChat) ? coreChat : [];
+  let triggerIndex = -1;
+  if (userMessage) {
+    for (let index = chat.length - 1; index >= 0; index -= 1) {
+      const message = chat[index];
+      if (message === userMessage) { triggerIndex = index; break; }
+      if (message && message.is_user !== false && typeof message.mes === 'string' && message.mes === userMessage.mes) { triggerIndex = index; break; }
+    }
+  }
   const selected = [];
-  for (let index = chat.length - 1; index >= 0 && selected.length < 3; index -= 1) {
+  const startIndex = (triggerIndex >= 0 ? triggerIndex : chat.length) - 1;
+  for (let index = startIndex; index >= 0 && selected.length < 3; index -= 1) {
     const message = chat[index];
     if (!message || message.is_system === true || message.is_hidden === true || message.hidden === true) continue;
     if (message.is_user !== false || typeof message.mes !== 'string') continue;
@@ -1057,6 +1066,15 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     const bodyGuardSanitizer = currentSanitizerOptions();
     const coveredBodyGuards = await captureCoveredBodyGuards(source, currentSource, before, bodyGuardSanitizer, fingerprint);
     if (coveredBodyGuards === null) return { ok: false, reason: 'narrativeChanged' };
+    if (!sameRoot && currentSource?.status === 'ready') {
+      finalReceipt = {
+        ...finalReceipt,
+        headCheckpointId: currentSource.headCheckpointId,
+        rootRevision: currentSource.rootRevision,
+        bodyMatchFingerprint: currentSource.bodyMatch?.fingerprint ?? finalReceipt.bodyMatchFingerprint,
+      };
+      finalReceipt.receiptFingerprint = await fingerprint(JSON.stringify(receiptMaterial(finalReceipt)));
+    }
     if (operation.token !== epoch || operation.controller.signal.aborted) return { ok: false, reason: abortReason(operation) };
     // This is the final synchronous commit point. No promise/microtask boundary may be
     // inserted between the host-visible snapshot checks and setExtensionPrompt.
@@ -1173,7 +1191,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       }
       const sanitizerSnapshot = currentSanitizerOptions();
       const [coreBodyWitness, baseQueryFingerprint] = await Promise.all([
-        captureCoreBodyWitness(coreInput, sanitizerSnapshot, fingerprint),
+        captureCoreBodyWitness(coreInput, sanitizerSnapshot, fingerprint, user?.message),
         fingerprint(queryContext.text),
       ]);
       operation.coreBodyWitness = coreBodyWitness;

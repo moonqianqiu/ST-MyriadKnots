@@ -31803,24 +31803,36 @@ async function Wb(e, { chatId: t, userMessageIndex: n, fingerprint: r = ob } = {
 		userIndex: n
 	});
 }
-async function Gb(e, t, n) {
-	let r = Array.isArray(e) ? e : [], i = [];
-	for (let e = r.length - 1; e >= 0 && i.length < 3; --e) {
-		let a = r[e];
-		if (!a || a.is_system === !0 || a.is_hidden === !0 || a.hidden === !0 || a.is_user !== !1 || typeof a.mes != "string") continue;
-		let o = a.mes.replace(/\r\n?/g, "\n");
-		if (!o.trim()) continue;
-		let s = Tt(o, t);
-		s && i.push(Object.freeze({
+async function Gb(e, t, n, r = null) {
+	let i = Array.isArray(e) ? e : [], a = -1;
+	if (r) for (let e = i.length - 1; e >= 0; --e) {
+		let t = i[e];
+		if (t === r) {
+			a = e;
+			break;
+		}
+		if (t && t.is_user !== !1 && typeof t.mes == "string" && t.mes === r.mes) {
+			a = e;
+			break;
+		}
+	}
+	let o = [], s = (a >= 0 ? a : i.length) - 1;
+	for (let e = s; e >= 0 && o.length < 3; --e) {
+		let r = i[e];
+		if (!r || r.is_system === !0 || r.is_hidden === !0 || r.hidden === !0 || r.is_user !== !1 || typeof r.mes != "string") continue;
+		let a = r.mes.replace(/\r\n?/g, "\n");
+		if (!a.trim()) continue;
+		let s = Tt(a, t);
+		s && o.push(Object.freeze({
 			coreIndex: e,
-			message: a,
-			rawContent: o,
+			message: r,
+			rawContent: a,
 			canonicalContent: s,
-			rawFingerprint: await n(o),
+			rawFingerprint: await n(a),
 			canonicalFingerprint: await n(s)
 		}));
 	}
-	return Object.freeze(i.reverse());
+	return Object.freeze(o.reverse());
 }
 async function Kb(e, t, n, r, i) {
 	let a = [...new Set(e.readiness?.visibleSummaryFloorIds ?? [])].sort(), o = new Set(a), s = [];
@@ -32332,8 +32344,8 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 		};
 		let C = r.readiness !== null && r.readiness !== void 0, w = typeof e.readRoot == "function", T = w ? await e.readRoot() : null, E = w ? B(T) : null;
 		if (E) throw E;
-		let D = r;
-		if (T?.status !== "ready" || T.revision !== r.rootRevision || T.data?.chatId !== r.chatId || T.data?.narrativeGeneration !== r.narrativeGeneration || T.data?.headCheckpointId !== r.headCheckpointId) {
+		let D = r, O = T?.status === "ready" && T.revision === r.rootRevision && T.data?.chatId === r.chatId && T.data?.narrativeGeneration === r.narrativeGeneration && T.data?.headCheckpointId === r.headCheckpointId;
+		if (!O) {
 			if (D = w ? await V(C ? x : null, I(), {
 				fresh: !0,
 				operation: n,
@@ -32405,32 +32417,37 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 			ok: !1,
 			reason: "selectedRefsChanged"
 		};
-		let O = gb({
+		let k = gb({
 			selectedFloors: a,
 			selectedStates: o,
 			selectedCseChanges: s
 		}, D, x);
-		if (O === null) return {
+		if (k === null) return {
 			ok: !1,
 			reason: "selectedRefsChanged"
 		};
-		let k = I(), A = await Jb(r, D, x, k, f);
-		if (A === null) return {
+		let A = I(), j = await Jb(r, D, x, A, f);
+		if (j === null) return {
 			ok: !1,
 			reason: "narrativeChanged"
 		};
-		if (n.token !== b || n.controller.signal.aborted) return {
+		if (!O && D?.status === "ready" && (g = {
+			...g,
+			headCheckpointId: D.headCheckpointId,
+			rootRevision: D.rootRevision,
+			bodyMatchFingerprint: D.bodyMatch?.fingerprint ?? g.bodyMatchFingerprint
+		}, g.receiptFingerprint = await f(JSON.stringify(yb(g)))), n.token !== b || n.controller.signal.aborted) return {
 			ok: !1,
 			reason: re(n)
 		};
-		let j = t.snapshot(), M = fb(j), N = _b(O, r.chatId, j);
-		if (!(n.token === b && !n.controller.signal.aborted && cb(j) === n.hostChatId && sb(j) === r.chatId && M?.index === u && M.message === p.userMessage && M.message === S.message && M.message.mes === p.userText && pb(j) === n.liveFrameKey && N && Yb(A, j, k))) return n.token !== b || n.controller.signal.aborted ? {
+		let M = t.snapshot(), N = fb(M), P = _b(k, r.chatId, M);
+		if (!(n.token === b && !n.controller.signal.aborted && cb(M) === n.hostChatId && sb(M) === r.chatId && N?.index === u && N.message === p.userMessage && N.message === S.message && N.message.mes === p.userText && pb(M) === n.liveFrameKey && P && Yb(j, M, A))) return n.token !== b || n.controller.signal.aborted ? {
 			ok: !1,
 			reason: re(n)
-		} : sb(j) === r.chatId ? M?.index !== u || M?.message !== p.userMessage || M?.message?.mes !== p.userText ? {
+		} : sb(M) === r.chatId ? N?.index !== u || N?.message !== p.userMessage || N?.message?.mes !== p.userText ? {
 			ok: !1,
 			reason: "userChanged"
-		} : N ? {
+		} : P ? {
 			ok: !1,
 			reason: "narrativeChanged"
 		} : {
@@ -32441,8 +32458,8 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 			reason: "chatChanged"
 		};
 		if (v?.currentBodyWitness) {
-			let e = v.currentBodyWitness, t = j.chat?.[e.hostLocator.messageIndex];
-			if (!t || t.is_system === !0 || t.is_hidden === !0 || t.hidden === !0 || !Yb([e], j, k)) {
+			let e = v.currentBodyWitness, t = M.chat?.[e.hostLocator.messageIndex];
+			if (!t || t.is_system === !0 || t.is_hidden === !0 || t.hidden === !0 || !Yb([e], M, A)) {
 				if (g = Fb(g, D, null), !g) return {
 					ok: !1,
 					reason: "selectedRefsChanged"
@@ -32450,14 +32467,14 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 				m = g.injectionText;
 			}
 		}
-		let P = {
+		let F = {
 			chatId: r.chatId,
 			hostChatId: n.hostChatId
 		};
-		return m && G(m, n.token, j.context, P), n.prequelSelection?.injectionText && (te(n.prequelSelection.injectionText, n.token, j.context, P), n.prequelCommitted = !0), {
+		return m && G(m, n.token, M.context, F), n.prequelSelection?.injectionText && (te(n.prequelSelection.injectionText, n.token, M.context, F), n.prequelCommitted = !0), {
 			ok: !0,
-			snapshot: j,
-			user: M,
+			snapshot: M,
+			user: N,
 			receipt: g
 		};
 	}
@@ -32584,7 +32601,7 @@ function Xb({ store: e, hostAdapter: t, generateUtilityTask: n = null, isEnabled
 						...fe(l, u)
 					}), l.prequelCommitted && (O = se(l)), ne(e.snapshot, e.user), k = null, C = null, W(), ie()) : p(e.reason);
 				}
-				let T = I(), [E, A] = await Promise.all([Gb(m, T, f), f(g.text)]);
+				let T = I(), [E, A] = await Promise.all([Gb(m, T, f, h?.message), f(g.text)]);
 				l.coreBodyWitness = E, l.sanitizerOptions = T, l.phase = i.phase = "source", W();
 				let j = Date.now(), M = await U(r, T, {
 					fresh: e > 0,
