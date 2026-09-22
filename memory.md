@@ -40,6 +40,13 @@
 > - `src/settings.js`：本地添加的 `sourceKeepTags: ''` 与上游存储自动清理字段位于不同区域，自动合入；
 > - `src/v3/cse-engine.js` 与 `src/v3/memory-runtime.js`：本地添加的 `extraOnlySanitizerOptions` 清洗拦截与上游新提示词/千事调度正交，自动合入。
 
+> **本地已修改的上游产权文件（未来合并的潜在冲突热区）**：
+> - `src/v3/recall-runtime.js`（上游所有，本地叠加三处增强：见证截断 / 密封点版本重对齐 / `invalidate` 支持 `clearPersisted`）——
+>   上游 v0.4.4+ 若重写召回链路，须以本地增强为产权逐项回植，并重跑 `tests/v3-recall.test.mjs` 全绿；
+> - `src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构的 `invalidate` 联动点）、
+>   `src/ui/people-profiles-view.js`（`saveProfile` 联动点）、`src/bootstrap.js`（`recallRuntime` 注入）——
+>   上游若重排这几处 UI 装配代码，须保住三处 `invalidate` 联动调用。
+
 ---
 
 ## 3. 必须保住的本地核心定制资产（Fork 存在的价值，合并时逐项复核）
@@ -89,7 +96,9 @@
   2. **正文见证指纹漂移（`bodyMatchFingerprint` 敏感失效）**：原 `captureCoreBodyWitness` 缺乏锚定，直接从数组末尾逆向采集 3 条 AI 楼层。点击重新生成时，宿主传来的数组尾部可能短暂残留刚被撤下的 AI 楼层，导致见证楼层从 `[#52, #50]` 漂移成 `[#54, #52, #50]`，指纹分歧无情击穿回执。
 - **上游 0.4.3 应对机制与本地治本修复的客观定性**：
   - **上游 0.4.3 的取舍（无条件冻结复用）**：
-    上游在 0.4.0~0.4.3 引入了 `commitFrozenReceiptIfCurrent`，立下严格的 `root: 0` 零 I/O 极速通道合同。为追求极致性能与消除等待症状，上游在复用阶段故意不再比对 `headCheckpointId`/`rootRevision`，直接信任冻结收据。其代价是放宽了校验，导致用户在面板手动修改记忆后重新生成时无法被灵敏感知；
+    上游在 0.4.0~0.4.3 引入了 `commitFrozenReceiptIfCurrent`，立下严格的 `root: 0` 零 I/O 极速通道合同
+    （上游测试 `tests/v3-recall.test.mjs:4338` 明确断言复用时 `root: 0`，禁止任何 `store.readRoot` 调用）。
+    为追求极致性能与消除等待症状，上游在复用阶段故意不再比对 `headCheckpointId`/`rootRevision`，直接信任冻结收据。其代价是放宽了校验，导致用户在面板手动修改记忆后重新生成时无法被灵敏感知；
   - **本地修复体系（`09f2b59` + `5edef87`）的不可替代价值**：
     1. **见证楼层向前截断 (`captureCoreBodyWitness`) —— 绝对必要**：
        传入触发用户楼 `userMessage` 严格向前逆向采集。它不仅用于重新生成复用，还在全新生成（normal）及 `commitPromptIfCurrent` 的 `captureCoveredBodyGuards` 终检时发挥决定性保护作用，彻底消除了“删楼重发”及尾部临时 AI 楼层残留导致的见证漂移与意外 Abort；
@@ -125,6 +134,11 @@
    npm test
    ```
    *标准*：全量 1067+ 测试用例全部全绿（耗时约 50s，0 失败）。
+   > **已知上游偶发用例（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5178`
+   > 「切聊天及正文结构事件会撤销提前武装，迟到 token 不得写入或调用模型」存在**负载敏感的时序偶发**：
+   > 空闲快速机器上后台自动化任务会在 10ms 断言窗口内漏入，报 `MESSAGE_DELETED 后不得触发旧楼任务 1 !== 0`；
+   > 高负载或重跑时可通过。**已在纯 `upstream/main` worktree（零本地改动）中复现同样失败**，实证与本地产权无关。
+   > 合并或维护时见此用例失败，先跑纯上游对照，切勿据此回滚本地资产。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：
    运行 40 例金样跨仓比对脚本，验证与 `ST-SevenDaysCal/runtime/tag-sanitizer.js` 输出 **0 差异、100% 逐字节一致**。
 
@@ -136,7 +150,8 @@
 - **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.4.3`，提交 `64db02a`）；
 - **当前产物版本**：`manifest.json` 版本号 `0.4.3`，缓存键 `20260922.329-a6cea2841f711d28`；
 - **最近提交记录**：
-  - `5edef87`：千结/千人面板记忆与人物修改的主动失效联动（心智守护闭环）；
+  - `0c45608`：千人面板接入主动失效（`bootstrap.js` 注入 `recallRuntime` + `saveProfile` 成功后联动清理）；
+  - `5edef87`：召回失效联动接入千结面板（单楼记忆编辑 `manualMemoryEdit` / 完全重构 `foundationFullRebuild`）；
   - `09f2b59`：召回回执重新生成失效的治本修复（密封点活版本重对齐 + 见证截断）；
   - `63a382f`：合并上游 v0.4.3 官方发布（引入千事图谱、白鸟存储管理等特性）；
   - `3b8ed8f`：清洗器与 ST-SevenDaysCal 40 例金样字节级对齐与同名 UI 校验。
