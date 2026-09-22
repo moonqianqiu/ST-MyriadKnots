@@ -1,189 +1,128 @@
-# 千千结 · Moon 定制版 — 项目记忆（供 CLI 参考）
+# 千千结 · Moon 定制版 — 项目记忆（供维护与 CLI 参考）
 
-本仓库将作为 atonal519/ST-MyriadKnots 的 fork 基础
-（origin 计划指向 moonqianqiu/ST-MyriadKnots，upstream = atonal519/ST-MyriadKnots）。
-当前在 main 上叠加了"moon"专属改动（标签清洗对齐 ST-SevenDaysCal）。
+本仓库是 [`atonal519/ST-MyriadKnots`](https://github.com/atonal519/ST-MyriadKnots) 的 fork（作者 moon 定制版）。
+当前在 `main` 分支上跟踪上游最新基线，并叠加了“moon”专属改动。`origin = moonqianqiu/ST-MyriadKnots`，`upstream = atonal519/ST-MyriadKnots`。
 
-> 用途：让其它 CLI / 会话在执行"合并上游""检查合并""改代码"等任务时，知道哪些本地改动是
-> fork 存在的意义、哪里会冲突、以及怎么确认合并没有吞掉本地改动。
+> **用途**：供后续会话/开发者在执行“合并上游”、“升级维护”、“排查改动”时，迅速掌握本 fork 的核心定制、版本惯例、冲突裁决规则以及架构设计决策，确保合并上游时不丢弃本地核心资产。
 
 ---
 
-## 1. 本次改动：标签清洗器整体对齐 ST-SevenDaysCal（2026-09-19）
+## 1. 仓库定位与版本构建惯例
 
-### 1.1 背景与根因（为什么必须改）
-
-用户真实正文格式为多层嵌套标签：
-
-- erii_draft（思考链）→ scene_card → HTML 注释（SDC 时间戳）→ content（story / time / now_plot）→
-  meanwhile / erii_memo / erii_whisper / options / disclaimer。
-
-真正的剧情正文在 content 内层的 now_plot 里。
-
-旧清洗器（旧 memory-content-sanitizer.js）的合同是：keep（默认 content）块剥壳后**内部二次清洗**，
-"已闭合但不保留"的子标签**连同内容整块丢弃**。结果：content 里的 now_plot 正文被整块吞掉，
-4854 字正文洗成 0 字 → 扫描器得到 0 个候选楼 → 界面永远"尚未开始记录"、
-"补齐缺失 / 完全重构 / 人物状态重构"全部报"后端数据尚未就绪"。
-
-排查过程中曾加过调试日志（前缀 qqj-scan / qqj-foundation / qqj-host），**现已全部移除**，
-src 与 dist 均为干净版本。
-
-### 1.2 改动清单（18 个文件）
-
-| 文件 | 改动性质 | 说明 |
-|---|---|---|
-| src/utils/tag-names.js | 新增 | 逐字节复用 SevenDaysCal utils/tag-names.js：TAG_NAME_SOURCE / TAG_NAME_RE / LITERAL_DOUBLE_BRACKET_RULE / normalizeTagNames / normalizeTagRules |
-| src/memory-content-sanitizer.js | 整体重写 | 换成 SevenDaysCal runtime/tag-sanitizer.js 的四模式树形实现（逐字节同算法），仅保留本项目对外函数名 sanitizeMemoryContent(raw, { keepTags, extraTags })，并 re-export normalizeMemoryTagList（= normalizeTagRules 别名，settings 层依赖不变） |
-| src/tag-sanitizer.golden.json | 新增 | 直接复制 SevenDaysCal 的 29 例金样（锁定行为逐字节一致） |
-| tests/tag-sanitizer-golden.test.mjs | 新增 | 金样比对 + 四模式语义探针；import 指向 ../src/memory-content-sanitizer.js，金样路径 ../src/tag-sanitizer.golden.json |
-| tests/memory-content-sanitizer.test.mjs | 重写 | 旧测试锁定的是旧行为（keep 内二次删噪声、块外裸文本抢救），正是吞正文的根因；新测试按四模式合同重写，全部断言与 SevenDaysCal stripTags 逐例对拍核实 |
-| src/settings.js | 默认值 | sourceKeepTags: 'content' → ''（对齐 SevenDaysCal：两栏皆空 = M0 不清洗；全库不得残留 keepTags: 'content' 默认） |
-| src/ui/settings/prompts-settings.js | 文案 | 保留标签输入框回填改为空串，placeholder 改为"留空＝不清洗；示例：content" |
-| src/v3/foundation-domain.js | 指纹缺省值 | sanitizerFingerprint 内 options.keepTags 缺省 'content' → ''（与新设置默认一致；该指纹参与 foundationInputSnapshot → checkpointId → runId → floorId 级联，改缺省值会使旧档楼 id 全部变化，见 1.4） |
-| src/cse-source-selection.js | CSE 隔离 | 无论默认清洗模式如何，CSE 扫描窗都强制剔除历史 qqj-cse 块，防止旧 CSE 自激活 |
-| src/v3/memory-runtime.js | 用户输入隔离 | 前置用户输入只应用 extra 清洗，不使用 AI 正文的 keep 白名单，避免 keep=content 时普通用户文本变空 |
-| tests/v3-foundation.test.mjs | 期望更新 | ① 纯扫描测试：M0 下含 content 标签的楼直通保留（canonicalContent 为原文）；② 53 楼测试：legacyIndexPuts 更新为 141（清洗器 v2 指纹使楼 id 与 reverseRef 分桶变化）；③ 冷读 GET 硬编码改为自洽公式 3 + floors + indexes；④ 尾部孤儿测试的 sanitizerOptions 从 keepTags:'content' 改 ''（M2 下裸文本楼会洗成空导致 uninitialized） |
-| tests/settings-api.test.mjs | 跨仓测试路径 | SevenDaysCal 设置模块改为按相邻仓库相对路径读取，兼容当前 Windows 工作区 |
-| tests/production-entry-load.test.mjs | 版本断言 | manifest 版本断言与当前 0.3.1 对齐 |
-| tests/cse-source-selection.test.mjs | 来源回归 | 锁定原始 AI 使用完整规则、用户与 canonical 正文只用 extra，并继续阻止旧 CSE 自激活 |
-| tests/v3-cse.test.mjs | 集成回归 | 测试默认清洗模式对齐 M0，并显式覆盖 keep=content 下用户输入与 canonical 正文不被二次清空 |
-| manifest.json | 产物缓存键 | 重建 bundle 后更新日期、序号与内容哈希 |
-| dist/qqj-app.js | 重新构建 | 已验证旧清洗器特征（rescueOnly / renderSanitizerChildren / 旧 TAG_NAME_PATTERN）消失、新特征（Unicode \p{M} 正则、[[...]] 规则）存在 |
-| memory.md | 项目记忆 | 记录本地合同、审计修复、验证结果与后续同步注意事项 |
-
-### 1.3 四模式合同（主体源自 SevenDaysCal，并强化 extra 恒优先，后续维护以此为准）
-
-- M0 两栏皆空 = 不清洗：配对块逐字节保留，仅删注释/孤立标记/自闭合标记/折空行；
-- M1 仅 extra：extra 配对块连内容删；未闭合 extra 吞至最后同名闭合或 EOF（噪音不泄漏）；其余原样；
-- M2 仅 keep：keep 配对块剥壳、**内部逐字保留（不再二次清洗）**；keep 块之外的一切（含裸文本）丢弃；
-  多个 keep 块以空行连接；
-- M3 混合：M2 基础上 extra 穿透 keep 子树（恒优先），双中括号 [[...]] extra 同样穿透。
-
-关键行为差异（易踩坑）：
-
-- M2 下 content 内嵌 now_plot（keep=content）→ 正文保留（旧版在此输出空，即本次修复的根因）；
-- M2 下 keep 块外的裸文本也丢弃："前文 has-content 正文"只剩 content 块内部；
-- [[...]] 是配置字面量（LITERAL_DOUBLE_BRACKET_RULE），不属于标签名正则，不要当无效规则删改；
-- 未闭合 keep 块（"前 content 开 标签 正文"无闭合）内容随外层丢弃 → 输出空。
-
-### 1.4 对用户聊天档案的实际影响
-
-- 用户的龙族档格式在新 M2（keep=content）下能完整洗出 now_plot 正文；默认 M0 下全部原样建档；
-- 旧档分歧（预期行为，不是 bug）：sanitizerFingerprint 缺省值变化 → 旧档楼的
-  sanitizerFingerprint / foundationInputSnapshot.fingerprint / checkpointId / floorId 全部级联变化，
-  打开旧档可能出现 canonical 分歧或 needsReview。处理方式：记忆管理点"刷新状态"按提示核对；
-  **不要直接完全重构**（会删光旧摘要/CSE/人物资料）。
-
-### 1.5 验证状态（2026-09-22 对齐批次后更新）
-
-- 2026-09-22 与 ST-SevenDaysCal `bc06be1` 全量对齐后：全量 `npm test` **1003/1003 全绿**
-  （含新增的未闭合引号兜底探针）；清洗器测试 20/20（金样 40 例 + 语义探针）；
-- 金样 40 例（29 例重构基线 + 11 例 SDC 对齐），与 SevenDaysCal `runtime/tag-sanitizer.golden.json`
-  **逐字节一致**（两仓对拍脚本验证：含 2 例未闭合引号兜底用例，无任何例外）；
-- npm run build 成功，manifest 缓存键 20260922.310-a1b312b1b2d3b678 与 bundle SHA-256 前 16 位一致；
-- 提示：tests/chat-rename.test.mjs 在全量并行跑时偶发 ~1s 超时（`waitFor` 判据），单独运行
-  21/21 稳定；与本清洗器改动无关。
-
-### 1.6 实现注意（改代码前必读；2026-09-22 重写——原"三处自觉偏差"已全部对齐完毕）
-
-- **历史背景**：2026-09-19 本仓库清洗器曾领先 SevenDaysCal 三处（extra 恒优先 / self-closing extra 删 /
-  引号感知），彼时文档要求"勿被金样对齐掉"。2026-09-22 SevenDaysCal `bc06be1` 已吸收全部三处并**反超**：
-  新增三分支 token 正则（引号感知 + 未闭合引号宽松兜底 `TAG_ATTR_FALLBACK_SOURCE`）、
-  闭合/`[[...]]` extra 包裹 keep 的整块拦截、同名 keep/extra 走 extra 优先 + 设置保存校验、金样 29→40。
-  本仓库已于 2026-09-22 把三分支正则同步回来，**两边清洗器自此逐字节一致**（对拍验证无例外）；
-- 现存唯一合法差异：`src/utils/tag-names.js` 分隔符——千千结接受 `[,，\n]`（中文逗号/换行兼容），
-  SevenDaysCal 只接受 `,`。这是本仓库保留的本地增强，合并时勿丢；
-- src/memory-content-sanitizer.js 里节点字段、解析器与渲染函数与 SevenDaysCal
-  runtime/tag-sanitizer.js 对应（parseSanitizerTree / renderFlat / renderKeptInner /
-  collectKept / residueAfterLastSameNameClose / toRuleSet）；后续若 SevenDaysCal 再改清洗器，
-  **优先整段搬 SDC 实现并跑两边对拍**（勿再手工保持偏差）；
-- 本项目对外接口签名 sanitizeMemoryContent(raw, options) 与旧版一致。调用点分两类，**不可混淆**：
-  - 服从 keepTags（AI 正文）：v3/foundation-domain.js、v3/recall-runtime.js、
-    v3/memory-runtime.js:1047，以及经 scanAssistantCandidates 的 v3/time-body.js /
-    foundation-runtime.js / chat-branch-inheritance.js / memory-coverage.js；
-  - 必须 extra-only（非正文来源，用 extraOnlySanitizerOptions）：用户输入
-    （v3/memory-runtime.js 的 capturePrecedingUserInputFromSnapshot）、世界书条目
-    （v3/people-workspace.js 两处、v3/cse-engine.js 的 captureCseBaseline）、CSE 扫描窗的
-    canonical/用户行（cse-source-selection.js 的 csePlainTextSanitizerOptions）。
-    keep 白名单套到纯文本来源会把整条洗成空串——这是 2026-09-20 审计发现的漏改；
-- 设置面板同名拦截（对齐 SDC bindTagField）：src/ui/settings/prompts-settings.js 的
-  `bindTagFieldWithClashCheck` 在 change 时对保留/清洗两栏求归一化交集，命中即拒绝落存、
-  回退输入框旧值并显示 `settings-result error` 行内提示（本项目无 toast 体系）。上游没有，勿"对齐"掉；
-- 未闭合 extra 的围堵语义与未闭合引号兜底的设计依据见 SevenDaysCal 侧 memory.md §3
-  （金样锁定，有意设计，勿当 bug 改）；
-- 测试里的标签字面量用 OT/CT 常量拼接（如 OT.think = '<' + 'think>'），
-  避免在测试源码中出现与解析冲突的字面标签；
-- write_file / bash 补丁工具会把测试源码里的某些字面标签 token 吞掉或截断字符串——
-  改这个测试文件时务必整体重写并立即用 node --test 验证可解析（2026-09-22 对拍时临时脚本
-  再次复现：内联字符串里的 `<content>…</content>` 被吞导致假 MISMATCH，正式测试文件无此问题）。
+1. **版本声明 (`manifest.json`)**：
+   - 跟随上游官方发布版本号（当前已同步至 **`0.4.3`**）。
+2. **打包构建与产物约束 (`dist/qqj-app.js`)**：
+   - 生产单文件由 `npm run build`（Vite + Rolldown）编译生成；
+   - 源码发生任何变动后，**必须重新构建 bundle**，否则入口加载测试会失败。
+3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：
+   - 格式强制规范：`dist/qqj-app.js?v=YYYYMMDD.<递增序号>-<bundle SHA-256 前16位>`；
+   - `tests/production-entry-load.test.mjs` 会严格校验该哈希是否与实际 `dist/qqj-app.js` 的文件摘要一致；
+   - 序号随打包批次全局递增（当前批次为 **`20260922.327`**）。
+4. **分支与同步策略**：
+   - 合并上游前先建立备份分支：`git branch backup/main-before-upstream-vX.Y.Z main`；
+   - 在 `main` 分支执行 `--no-ff` 合并：`git merge --no-ff upstream/main`；
+   - 本地合并验证完整前，不直接向远程 force push。
 
 ---
 
-### 1.7 审计修复批次（47e7ca4 之后，2026-09-20）
+## 2. 合并冲突热区与解决规则（合并上游必查）
 
-对 667879e / 47e7ca4 两个手工提交做功能审计后补齐的收尾改动：
+每次合并上游发布版本时，通常仅在以下 4 个文件产生常规版本与产物冲突，业务代码绝大部分均可 Git 3-way 自动平滑合并：
 
-| 文件 | 改动性质 | 说明 |
-|---|---|---|
-| src/memory-content-sanitizer.js | 新增导出 | `extraOnlySanitizerOptions(options) => { keepTags:'', extraTags }`，供非 AI 正文来源复用 |
-| src/v3/people-workspace.js | 漏改修复 | 世界书条目内容改 extra-only。此前直接传 `options`，keepTags='content' 时纯文本/任意 HTML 条目被洗成空串，随后被 `.filter(item => item.content)` 丢弃 |
-| src/v3/cse-engine.js | 漏改修复 | `captureCseBaseline` 的世界书条目同样改 extra-only（与 people-workspace 一致） |
-| src/v3/memory-runtime.js | 收敛 | 局部 `userSanitizerOptions` 改用 helper（行为不变） |
-| src/cse-source-selection.js | 漏改修复 | CSE 扫描窗的 canonical/用户行与每楼动态选择的世界书都走 extra-only；后者此前会绕过 `sourceExtraTags`，把用户要求排除的块继续发给模型 |
-| tests/v3-people-workspace.test.mjs | 期望更新 | harness 的 sanitizerOptions 补 `extraTags:'secret'`（世界书走 extra-only 后由 extra 负责剔除 `<secret>`）；:153/:162/:559/:720/:757/:1006 同时成为世界书"不得被 keep 洗空"的回归锁 |
-| tests/v3-time-body.test.mjs | harness 扩展 | 新增 `bodyWrapper` 形参；:154 用例用 `<keep>` 包裹纯文本楼层，保留 M2 覆盖与"每批截止不是历史未来末楼"的判别力 |
-| tests/v3-extractor-memory.test.mjs | 期望更新 | :3373 harness 显式给 `sanitizerOptions: () => ({ keepTags:'content' })`，不再依赖清洗器缺省值 |
-| tests/v3-wiring.test.mjs | 期望更新 | manifest 版本断言 0.3.0 → 0.3.1（基线即红的陈旧断言） |
-| tests/v3-cse.test.mjs | 新增回归锁 | 同时检查落盘 baseline 和每楼真实 CSE 请求：纯文本不被 keep 清空，配置的 extra 块不会进入存储或模型输入 |
-| manifest.json | 产物缓存键 | 重建 bundle 后 digest 更新为 20260920.307-10e5fa4098a654d0（**version 保持 0.3.1**） |
-| dist/qqj-app.js | 重新构建 | 含 extraOnlySanitizerOptions，并覆盖 baseline、人物工作区和每楼动态 CSE 世界书路径 |
+| 文件路径 | 冲突性质 | 解决裁决方式 |
+| :--- | :--- | :--- |
+| `manifest.json` | 版本号行与构建指纹行冲突 | 采纳上游发布的版本号（如 `0.4.3`）；构建完成后填入最新缓存键 |
+| `dist/qqj-app.js` | 编译混淆产物冲突 | 冲突产生后直接执行 `npm run build` 覆盖重建即可消除 |
+| `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock 冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
+| `tests/v3-wiring.test.mjs` | 架构装配接口导出与版本断言冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
 
-未做的事（均为刻意决定）：
-
-- **不写 `sourceKeepTags` 存量迁移**：分支只面向新用户，视为新插件，不为"旧默认 'content'"做兼容；
-- ~~不改 ST-SevenDaysCal~~（已过时）：SevenDaysCal `bc06be1`（2026-09-22）已吸收引号感知并新增
-  兜底/拦截/同名校验，两边清洗器已逐字节对齐，见 1.6。
+> **业务文件自动合并注意**：
+> - `src/settings.js`：本地添加的 `sourceKeepTags: ''` 与上游存储自动清理字段位于不同区域，自动合入；
+> - `src/v3/cse-engine.js` 与 `src/v3/memory-runtime.js`：本地添加的 `extraOnlySanitizerOptions` 清洗拦截与上游新提示词/千事调度正交，自动合入。
 
 ---
 
-## 2. 同步与版本惯例（沿用 SevenDaysCal 惯例）
+## 3. 必须保住的本地核心定制资产（Fork 存在的价值，合并时逐项复核）
 
-- 合并上游前：git branch backup/main-before-upstream-vX.Y.Z main 备份，再在
-  integrate/upstream-vX.Y.Z 上 git merge --no-ff vX.Y.Z，最后快进合回 main。
-- 版本号：manifest.json 的 version = 上游版本号 + moon 后缀。每次合并 manifest.json 必然冲突，按此惯例解决。
-- 冲突热区预测：manifest.json（version 行）、src/memory-content-sanitizer.js（上游若重写清洗器，
-  取本地树形版）、src/settings.js（sourceKeepTags 默认值，保持 ''）。其余文件通常能自动合并。
+合并上游或重构时，以下 4 大定制模块为本地产权核心，**严禁被上游旧代码覆盖或对齐掉**：
 
-## 3. 必须保住的本地定制（合并时逐项复核）
+### 3.1 四模式标签清洗器（与 ST-SevenDaysCal 逐字节一致）
+- **核心文件**：
+  - `src/memory-content-sanitizer.js`（树形单遍解析，`sanitizeMemoryContent` 接口）；
+  - `src/tag-sanitizer.golden.json`（40 组锁定金样，LF 行尾）；
+  - `tests/tag-sanitizer-golden.test.mjs` 与 `tests/memory-content-sanitizer.test.mjs`（20 组测试全绿）。
+- **核心合同**：
+  - **M0（两栏皆空）**：直通不清洗，保留正文，仅做注释/孤立标记清理；
+  - **M1（仅 extra）**：成对删除 extra 标签及内容，未闭合 extra 吞至同名闭合或文末（噪音不泄漏）；
+  - **M2（仅 keep）**：剥壳保留 keep 块内容（内部不再二次清洗，嵌套标签原样保留），块外裸文本丢弃；
+  - **M3（混合）**：extra 恒优先，无论在外层、包裹 keep 还是嵌套在 keep 子树内一律整块剔除；
+  - **三分支 token 正则**：`TAG_ATTR_SOURCE`（引号感知，属性内 `>` 不截断）+ `TAG_ATTR_FALLBACK_SOURCE`（未闭合引号宽松兜底回退旧行为，防止思维链泄漏）+ `[[...]]`；
+  - **自闭合标记**：keep 子树内自闭合 extra 标记连标记删除，非 extra 原样保留 openRaw。
+- **合法差异保留**：
+  `src/utils/tag-names.js` 接受 `[,，\n]` 分隔符（中文逗号与换行兼容）。
 
-- src/utils/tag-names.js 与 src/tag-sanitizer.golden.json 存在；标签名主体合同与 SevenDaysCal 一致，
-  并保留千千结的中文逗号／换行分隔兼容（`[,，\n]`，现存唯一合法差异）；
-- tests/tag-sanitizer-golden.test.mjs 存在且金样 40 例全绿（node --test tests/tag-sanitizer-golden.test.mjs）；
-- src/settings.js 的 sourceKeepTags 默认为 ''（grep 确认无 "sourceKeepTags: 'content'"）；
-- src/memory-content-sanitizer.js 无旧版特征函数（grep rescueOnly 应为 0 结果）；
-- src/memory-content-sanitizer.js 与 SevenDaysCal runtime/tag-sanitizer.js **逐字节一致的行为合同**
-  （三分支 token 正则含兜底分支、extra 恒优先、self-closing 处理、40 例金样）；
-  若 SevenDaysCal 再更新清洗器，整段搬实现 + 两仓对拍，勿手工维持偏差；
-- 设置面板同名拦截：src/ui/settings/prompts-settings.js 的 bindTagFieldWithClashCheck +
-  settings-result error 行内提示（SDC 对齐产物，上游没有）；
-- 世界书来源必须走 extra-only：v3/people-workspace.js、v3/cse-engine.js、cse-source-selection.js 用
-  extraOnlySanitizerOptions；tests/v3-cse.test.mjs 同时锁定落盘 baseline 与每楼真实 CSE 请求；
-- 不做 sourceKeepTags 存量迁移（新插件前提，见 1.7）；
-- grep "sourceKeepTags ?? 'content'" src/ 应为 0 结果（prompts-settings.js 已改为 ?? ''）。
+### 3.2 非 AI 正文来源 extra-only 隔离清洗（防止世界书/用户输入被洗空）
+- **核心辅助函数**：
+  `export function extraOnlySanitizerOptions(options = {}) => { keepTags: '', extraTags: options?.extraTags ?? '' }`
+- **保护场景与调用点**：
+  - `src/v3/cse-engine.js`：`captureCseBaseline` 遍历世界书条目时；
+  - `src/v3/people-workspace.js`：人物工作区扫描世界书时；
+  - `src/cse-source-selection.js`：动态世界书与扫描窗纯文本；
+  - `src/v3/memory-runtime.js`：`capturePrecedingUserInputFromSnapshot` 用户输入快照处理。
+- **设计依据**：
+  `keepTags`（如 `'content'`）是 AI 正文专属提取白名单；普通用户输入或未加自定义标签的世界书条目若流经 `keepTags` 会被直接清空为 0 字。非正文来源必须强制走 extra-only 清洗。
 
-## 4. 当前状态（执行任务时以 git status / git log 为准）
+### 3.3 提示词与标签设置 UI 校验 (`src/ui/settings/prompts-settings.js`)
+- **默认值配置**：`src/settings.js` 中 `sourceKeepTags: ''`（默认留空直通，全库不应残留 `'content'` 默认）；
+- **保存拦截器 (`bindTagFieldWithClashCheck`)**：
+  在保留/清洗两栏输入失焦保存时，自动对两栏标签进行归一化交集计算（含 `[[...]]`）。若检测到同名标签冲突，**拒绝落存、输入框回退旧值**，并在下方显示 `settings-result error` 行内红色警告提示，从源头上阻止非法配置存盘。
 
-- 清洗器对齐与世界书 extra-only 修复链已进入 main；精确提交与工作区状态始终以
-  `git log -5 --oneline`、`git status --short` 为准，避免在文档中维护会随下一次提交失效的“未提交”标记；
-- 2026-09-22 完成与 ST-SevenDaysCal `bc06be1` 的清洗器全量对齐（三分支兜底正则 + 金样 40 +
-  UI 同名拦截 + dist/manifest 重建），清洗器测试 20/20 全绿；
-- 2026-09-22 成功合入上游 `upstream/main`（`64db02a`，v0.4.3）：
-  - 包含 v0.4.0 ~ v0.4.3 的千事图谱、白鸟存储管理等新特性；
-  - 成功解决 `manifest.json`、`dist/qqj-app.js` 与测试文件版本号冲突（版本升级为 0.4.3）；
-  - 40 例金样与清洗器测试 20/20 保持全绿，入口测试 9/9 全绿；
-  - 未 push 到 remote，未触碰 `issue-recall-receipt-invalidation.md`。
-- 2026-09-22 彻底解决 `issue-recall-receipt-invalidation.md`（重新生成时召回回执作废重跑 API）：
-  - **治本修复**：摒弃破坏一致性防御的方案 A（无条件豁免版本校验会导致用户在面板手动修改记忆后被静默无视）；
-  - **实现密封点活版本重对齐**：在 `commitPromptIfCurrent` 选材完成、持久化收据前，若后台自动记忆已推进 Root 且材料兼容，将收据的 Checkpoint/Revision/Signature 更新为活的最新档案头；使收据诞生即匹配当前最新世界状态，第 1 次重新生成即秒级复用；用户手动修改记忆时因版本号不匹配依然能灵敏触发重跑；
-  - **见证楼层向前截断**：`captureCoreBodyWitness` 严格向前逆向采集至触发用户楼，消除重新生成时宿主移除尾部 AI 楼层引起的 `bodyMatchFingerprint` 敏感波动；
-  - **验证**：全量测试套件 **1067/1067 全部全绿**，专项召回测试 186/186 全绿，重新构建 bundle 并更新缓存键为 `20260922.327-0bb4701a9bdb8915`。
+### 3.4 召回回执重新生成（Regenerate）秒级复用治本机制
+- **核心文件**：`src/v3/recall-runtime.js`
+- **解决痛点**：
+  点击重新生成时，回执因后台自动记忆批次推进了档案头 Checkpoint 而作废，导致第 1 次重新生成必然耗时 20~28 秒重新选材（第 2 次才复用）。
+- **治本架构设计**：
+  1. **密封点活版本重对齐 (`commitPromptIfCurrent`)**：
+     选材 LLM 耗费 20 多秒返回后，在持久化回执前重新读取活的档案头 `store.readRoot()`；当检测到并发推进且已选材料依然兼容时，直接将收据内部盖章的 `headCheckpointId`、`rootRevision` 和签名 `receiptFingerprint` 自动重对齐为当前最新的档案版本；使收据在写入数据库时天然与当前世界状态一致，第 1 次重新生成即可秒级复用（95ms）；
+  2. **正文见证楼层向前截断 (`captureCoreBodyWitness`)**：
+     传入触发用户楼 `userMessage`，见证楼层严格从该用户楼之前逆向采集，消除重新生成时宿主移除尾部临时 AI 楼层引起的 `bodyMatchFingerprint` 敏感分歧；
+  3. **严谨的 OCC 一致性保留**：
+     坚决不在 `receiptValid` 校验端盲目放行版本号；当用户在千结面板手动修改或删除前序记忆时，版本号变动依然能够灵敏地作废旧收据并重新触发选材，心智模型完全一致。
+
+---
+
+## 4. 验证清单与验收标准
+
+执行合并、升级或改动后，必须依序通过以下 4 项硬性门禁：
+
+1. **清洗器金样与单元测试**：
+   ```bash
+   node --experimental-vm-modules --test tests/tag-sanitizer-golden.test.mjs tests/memory-content-sanitizer.test.mjs
+   ```
+   *标准*：20/20 全部全绿（40 例金样逐字节一致）。
+2. **生产构建与入口装配测试**：
+   ```bash
+   node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
+   ```
+   *标准*：9/9 全部全绿（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
+3. **全量测试套件自动化运行**：
+   ```bash
+   npm test
+   ```
+   *标准*：全量 1067+ 测试用例全部全绿（耗时约 50s，0 失败）。
+4. **与 ST-SevenDaysCal 跨仓终验对拍**：
+   运行 40 例金样跨仓比对脚本，验证与 `ST-SevenDaysCal/runtime/tag-sanitizer.js` 输出 **0 差异、100% 逐字节一致**。
+
+---
+
+## 5. 当前仓库状态底数（基线备忘）
+
+- **当前分支**：`main`
+- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.4.3`，提交 `64db02a`）；
+- **当前产物版本**：`manifest.json` 版本号 `0.4.3`，缓存键 `20260922.327-0bb4701a9bdb8915`；
+- **最近提交记录**：
+  - `09f2b59`：召回回执重新生成失效的治本修复（密封点活版本重对齐 + 见证截断）；
+  - `63a382f`：合并上游 v0.4.3 官方发布（引入千事图谱、白鸟存储管理等特性）；
+  - `3b8ed8f`：清洗器与 ST-SevenDaysCal 40 例金样字节级对齐与同名 UI 校验；
+- **独立存档**：
+  `issue-recall-receipt-invalidation.md` 为回执失效问题的原始诊断报告存档（保持未跟踪状态）。
