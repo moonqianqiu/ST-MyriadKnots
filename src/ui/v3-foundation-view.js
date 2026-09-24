@@ -3,6 +3,7 @@ import { createOperationMenuController } from './operation-menu-controller.js';
 import { bindHorizontalStrip, openPeopleOrderDialog } from './people-interactions.js';
 import { scrollManualEditorToTop } from './manual-editor-scroll.js';
 import { publicErrorMessage } from '../public-error.js';
+import { formatStoryTime } from '../v3/time-engine.js';
 
 function text(value, fallback = '—') { return value === null || value === undefined || value === '' ? fallback : String(value); }
 
@@ -376,7 +377,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
     const memoryKnown = memory !== null, identityKnown = identity !== null, recallKnown = recall !== null, managementKnown = management !== null;
     const deleting = management?.status === 'deleting', deletePending = management?.status === 'failed';
     return {
-      formatVersion: 2,
+        formatVersion: 2,
       pluginVersion: diagnosticVersion(pluginVersion),
       capturedAt: new Date().toISOString(),
       backend: readDiagnosticState(backendDiagnosticProvider),
@@ -631,10 +632,11 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
   }
   function updateRecentItems() {
     if (!active || page !== 'memories' || !recentItemsUi) return;
-    const { toggle, body, status, organize, retryRead, reason, list, stoppedToggle, stop, batchEntry, batchControls, batchAll, batchProblems, batchActions } = recentItemsUi;
-    const state = timeRuntime?.getState?.(), result = state?.last, tracked = state?.trackedItems, annual = state?.annualItems;
-    const trackedById = new Map((tracked ?? []).map(item => [item.id, item]));
-    for (const [id, key] of selectedRecentItems) if (trackedById.get(id)?.observationKey !== key) selectedRecentItems.delete(id);
+    const { toggle, body, status, organize, retryRead, reason, list, stoppedToggle, stop, batchEntry, batchControls, batchAll, batchProblems, batchActions, batchDelete } = recentItemsUi;
+    const state = timeRuntime?.getState?.(), result = state?.last, tracked = state?.trackedItems, stopped = state?.stoppedItems, annual = state?.annualItems;
+    const selectable = new Map(((showStoppedItems ? stopped : tracked) ?? []).map(item => [item.id, item]));
+    if (state?.pendingDeletionCount > 0) selectedRecentItems.clear();
+    for (const [id, key] of selectedRecentItems) if (selectable.get(id)?.observationKey !== key) selectedRecentItems.delete(id);
     toggle.textContent = `近期事项${Array.isArray(tracked) ? `（${tracked.length + (annual?.length ?? 0)}）` : ''}`;
     toggle.className = `secondary-action qqj-profile-more${recentItemsOpen ? ' active' : ''}`;
     toggle.disabled = false;
@@ -647,18 +649,20 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
     organize.disabled = state?.canOrganize !== true || result?.reason === 'read' || Boolean(recentItemsUi.pendingAction);
     if (stop) { stop.hidden = !state?.active || state.phase === 'saving'; stop.disabled = !state?.active; }
     retryRead.hidden = result?.reason !== 'read'; retryRead.disabled = state?.active === true || state?.status === 'disabled' || state?.status === 'waiting';
-    const stopped = state?.stoppedItems;
     stoppedToggle.textContent = showStoppedItems ? '返回追踪中事项' : `查看停止项${Array.isArray(stopped) ? `（${stopped.length}）` : ''}`;
     stoppedToggle.setAttribute('aria-pressed', String(showStoppedItems));
     stoppedToggle.disabled = recentItemDraft !== null || Boolean(recentItemsUi.pendingAction);
-    batchEntry.hidden = showStoppedItems;
     batchEntry.textContent = recentBatchMode ? '取消批量' : '批量管理';
-    batchEntry.disabled = recentItemDraft !== null || Boolean(recentItemsUi.pendingAction) || !Array.isArray(tracked);
-    batchControls.hidden = !recentBatchMode || showStoppedItems;
+    batchEntry.disabled = recentItemDraft !== null || Boolean(recentItemsUi.pendingAction) || !Array.isArray(showStoppedItems ? stopped : tracked);
+    batchControls.hidden = !recentBatchMode;
     const batchBusy = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction);
-    batchAll.disabled = batchBusy || !tracked?.length;
+    batchAll.disabled = batchBusy || state?.pendingDeletionCount > 0 || !selectable.size;
+    batchProblems.hidden = showStoppedItems;
     batchProblems.disabled = batchBusy || !(tracked ?? []).some(item => item.failureReason || item.assessmentReason || item.reviewStatus === 'unanswered');
-    for (const control of batchActions) control.disabled = batchBusy || selectedRecentItems.size === 0;
+    for (const control of batchActions) { control.hidden = showStoppedItems; control.disabled = batchBusy || selectedRecentItems.size === 0; }
+    batchDelete.hidden = !showStoppedItems;
+    batchDelete.textContent = state?.pendingDeletionCount ? '继续永久删除' : '批量永久删除';
+    batchDelete.disabled = batchBusy || selectedRecentItems.size === 0 && !state?.pendingDeletionCount;
     reason.textContent = state?.disabledReason || recentItemsUi.planFeedback || `${state?.coverage?.startAssistantSeq ? `从 AI 第 ${state.coverage.startAssistantSeq} 楼开始追踪；${state.coverage.earlierUnchecked > 0 ? `此前 ${state.coverage.earlierUnchecked} 楼正文未检查` : '此前正文已检查'}。` : '等待当前 AI 楼成为追踪起点。'}${state?.coverage?.pendingFloors ? `另有 ${state.coverage.pendingFloors} 楼等待稳定绑定，正文未检查。` : ''}直接读取正文，摘要和人物状态可为空。补查历史会先确认楼数、批次与摘要 API 调用量；成功批次保留，可停止后继续。`;
     if (recentItemDraft) {
       for (const control of recentItemDraft.controls) control.disabled = recentItemDraft.saving || state?.canOrganize !== true;
@@ -672,7 +676,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
     const displayItems = (Array.isArray(visibleItems) ? visibleItems : []).map(item => {
       const stopped = item.status && item.status !== 'active';
       const stoppedLabel = { completed: '已完成', paused: '已暂停', cancelled: '已移除' }[item.status];
-      const formatTime = value => value?.date ? `${value.date}${value.clock ? ` ${value.clock}` : ''}` : value?.raw || '时间未知';
+      const formatTime = value => formatStoryTime(value);
       const elapsed = item.elapsedHours !== null && item.elapsedHours >= 0 ? `发生后已过 ${Math.round(item.elapsedHours * 10) / 10} 小时`
         : item.elapsedDays !== null && item.elapsedDays >= 0 ? `发生后已过 ${item.elapsedDays} 天`
           : item.observationElapsedHours !== null && item.observationElapsedHours >= 0 ? `观察后已过 ${Math.round(item.observationElapsedHours * 10) / 10} 小时`
@@ -691,8 +695,8 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
     if (!showStoppedItems) for (const item of annual ?? []) displayItems.push([`${item.person} · ${item.label} · ${item.status}`, `原日期：${item.originalDate}`,
       item.nextDate ? `下次日期：${item.nextDate}${Number.isInteger(item.distance) ? item.distance === 0 ? '；已到本日' : `；还有 ${item.distance} 天` : '；当前休眠'}` : '日期待明确：保留原设定，不自动套用公历。',
       `${item.note ? `年度含义：${item.note}；` : ''}只读事项，请在千人基础资料或用户人设中修改。`]), titleIssues.push(false);
-    const signature = JSON.stringify([displayItems.length ? displayItems : message, titleIssues, recentBatchMode, [...selectedRecentItems], (visibleItems ?? []).map(item => [item.id, item.observationKey]), (annual ?? []).map(item => [item.id, item.status, item.nextDate])]);
-    if (recentItemsUi.listSignature === signature) { for (const control of recentItemsUi.itemControls) control.disabled = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction); return; }
+    const signature = JSON.stringify([displayItems.length ? displayItems : message, titleIssues, recentBatchMode, [...selectedRecentItems], state?.pendingDeletionCount ?? 0, (visibleItems ?? []).map(item => [item.id, item.observationKey]), (annual ?? []).map(item => [item.id, item.status, item.nextDate])]);
+    if (recentItemsUi.listSignature === signature) { for (const control of recentItemsUi.itemControls) control.disabled = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction) || showStoppedItems && state?.pendingDeletionCount > 0; return; }
     recentItemsUi.listSignature = signature;
     list.replaceChildren();
     recentItemsUi.itemControls = [];
@@ -701,10 +705,11 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
       const entry = element('div', 'settings-field');
       const head = element('div', 'qqj-recent-item-head');
       const item = visibleItems[index];
-      if (recentBatchMode && !showStoppedItems && item) {
+      if (recentBatchMode && item) {
         const select = element('input', 'qqj-recent-item-select'); select.type = 'checkbox'; select.checked = selectedRecentItems.get(item.id) === item.observationKey;
         select.setAttribute('aria-label', `选择${item.label}`); select.disabled = batchBusy;
         select.addEventListener('change', () => { if (select.checked) selectedRecentItems.set(item.id, item.observationKey); else selectedRecentItems.delete(item.id); recentItemsUi.listSignature = null; updateRecentItems(); });
+        select.disabled = batchBusy || showStoppedItems && state?.pendingDeletionCount > 0;
         head.append(select); recentItemsUi.itemControls.push(select);
       }
       head.append(element('span', `qqj-recent-item-title${titleIssues[index] ? ' error' : ''}`, title));
@@ -755,6 +760,29 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
       if (!currentUi()) return;
       selectedRecentItems.clear(); recentBatchMode = false;
     } catch (error) { if (currentUi()) actionFeedback.textContent = `保存失败：${publicErrorMessage(error, { fallback: '事项未保存，请重试。' })}`; }
+    finally { if (ui.pendingAction === pending) ui.pendingAction = null; updateRecentItems(); }
+  }
+  async function deleteRecentItems(actionFeedback) {
+    const ui = recentItemsUi, originalChatId = chatId, mine = epoch;
+    const selected = [...selectedRecentItems].map(([itemId, observationKey]) => ({ itemId, observationKey }));
+    const currentUi = () => active && page === 'memories' && recentItemsUi === ui && chatId === originalChatId && epoch === mine && runtime.getState()?.chatId === originalChatId;
+    const canDelete = () => {
+      const state = timeRuntime.getState(), current = new Map((state.stoppedItems ?? []).map(item => [item.id, item]));
+      return currentUi() && showStoppedItems && recentBatchMode && !recentItemDraft && state.canOrganize === true
+        && (state.pendingDeletionCount > 0 || selected.length > 0 && selected.every(item => current.get(item.itemId)?.observationKey === item.observationKey));
+    };
+    if (ui.pendingAction || typeof timeRuntime?.deleteItems !== 'function' || !canDelete()) return;
+    const pending = {}; ui.pendingAction = pending; actionFeedback.textContent = ''; updateRecentItems();
+    try {
+      if (!timeRuntime.getState().pendingDeletionCount) {
+        const confirmed = await Promise.resolve(confirmImpl({ title: '批量永久删除时间事项',
+          body: `确认永久删除已选的 ${selected.length} 项及其全部时间历史？删除后不可恢复；其他事项、摘要与千事保留，本操作不调用模型。`, confirmText: '永久删除', cancelText: '取消' }));
+        if (!confirmed || !canDelete()) return;
+      }
+      await timeRuntime.deleteItems(timeRuntime.getState().pendingDeletionCount ? [] : selected);
+      if (!currentUi()) return;
+      selectedRecentItems.clear(); recentBatchMode = false;
+    } catch (error) { if (currentUi()) actionFeedback.textContent = `永久删除未完成：${publicErrorMessage(error, { fallback: '旧历史记录尚未清理完，可在同一入口继续。' })}`; }
     finally { if (ui.pendingAction === pending) ui.pendingAction = null; updateRecentItems(); }
   }
   function startRecentEdit(item, entry) {
@@ -811,14 +839,15 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
     const batchControls = element('div', 'qqj-recent-batch-controls'); batchControls.hidden = true;
     const batchAll = element('button', 'secondary-action', '选择当前列表'), batchProblems = element('button', 'secondary-action', '选择问题项'); batchAll.type = 'button'; batchProblems.type = 'button';
     const batchActions = [['批量完成', 'completed'], ['批量暂停', 'paused'], ['批量移除', 'cancelled']].map(([label, value]) => { const button = element('button', `secondary-action${value === 'cancelled' ? ' danger' : ''}`, label); button.type = 'button'; button.addEventListener('click', () => changeRecentStatuses(value, batchFeedback)); return button; });
+    const batchDelete = element('button', 'secondary-action danger', '批量永久删除'); batchDelete.type = 'button'; batchDelete.addEventListener('click', () => deleteRecentItems(batchFeedback));
     const batchFeedback = element('p', 'settings-result error');
-    batchControls.append(batchAll, batchProblems, ...batchActions); listActions.append(batchControls);
+    batchControls.append(batchAll, batchProblems, ...batchActions, batchDelete); listActions.append(batchControls);
     stoppedToggle.addEventListener('click', () => { if (stoppedToggle.disabled) return; showStoppedItems = !showStoppedItems; recentBatchMode = false; selectedRecentItems.clear(); updateRecentItems(); });
     batchEntry.addEventListener('click', () => { if (batchEntry.disabled) return; recentBatchMode = !recentBatchMode; if (!recentBatchMode) selectedRecentItems.clear(); recentItemsUi.listSignature = null; updateRecentItems(); });
-    batchAll.addEventListener('click', () => { if (batchAll.disabled) return; selectedRecentItems.clear(); for (const item of timeRuntime.getState().trackedItems ?? []) selectedRecentItems.set(item.id, item.observationKey); recentItemsUi.listSignature = null; updateRecentItems(); });
+    batchAll.addEventListener('click', () => { if (batchAll.disabled) return; selectedRecentItems.clear(); for (const item of showStoppedItems ? timeRuntime.getState().stoppedItems ?? [] : timeRuntime.getState().trackedItems ?? []) selectedRecentItems.set(item.id, item.observationKey); recentItemsUi.listSignature = null; updateRecentItems(); });
     batchProblems.addEventListener('click', () => { if (batchProblems.disabled) return; selectedRecentItems.clear(); for (const item of timeRuntime.getState().trackedItems ?? []) if (item.failureReason || item.assessmentReason || item.reviewStatus === 'unanswered') selectedRecentItems.set(item.id, item.observationKey); recentItemsUi.listSignature = null; updateRecentItems(); });
     copy.append(status, reason); row.append(copy, buttons); body.append(row, listActions, batchFeedback, list); actions.append(memorySearch, toggle); section.append(actions, body);
-    recentItemsUi = { section, toggle, body, status, organize, retryRead, reason, list, stoppedToggle, stop, batchEntry, batchControls, batchAll, batchProblems, batchActions, itemControls: [], listSignature: null };
+    recentItemsUi = { section, toggle, body, status, organize, retryRead, reason, list, stoppedToggle, stop, batchEntry, batchControls, batchAll, batchProblems, batchActions, batchDelete, itemControls: [], listSignature: null };
     toggle.addEventListener('click', () => { recentItemsOpen = !recentItemsOpen; updateRecentItems(); if (recentItemsOpen) void timeRuntime?.refreshStatus?.(); });
     organize.addEventListener('click', async () => {
       if (organize.disabled) return;

@@ -11,13 +11,14 @@ import { validateCseGraph } from './cse-schema.js';
 import { assessMemoryCoverageFromHost, diagnosticsWithRealtimeOrigin, realtimeOriginFromReachable } from './memory-coverage.js';
 import { isHostNarratorMessage, selectAssistantMessage, selectUserStabilityAnchor } from './foundation-domain.js';
 import { normalizeStoryClockReferenceTags, parseStoryClockEvidence, storyClockSignature } from '../story-clock.js';
+import { parseJsonOutput } from '../compact-api-client.js';
 import { sanitizeMemoryContent, extraOnlySanitizerOptions } from '../memory-content-sanitizer.js';
 import { buildEntityIdentityDirectory, entitiesThroughFloorIds, normalizeIdentityProjection } from './entity-identity.js';
 import { matchFloorCandidates } from './floor-binding.js';
 import { inspectMessageFloorAnchor } from './message-floor-anchor.js';
 import { captureFloorVariableReference } from './floor-variable-reference.js';
 import { publicErrorMessage } from '../public-error.js';
-import { compileQianshiDelta, pendingQianshiDelta, prepareQianshiCandidates, projectQianshiRecall, publicQianshiSnapshot, QIANSHI_CANDIDATE_CHARACTER_BUDGET, QIANSHI_HISTORY_INPUT_TOKENS, QIANSHI_HISTORY_OUTPUT_TOKENS, QIANSHI_RECALL_PROJECTION_VERSION } from './qianshi-domain.js';
+import { compileQianshiDelta, pendingQianshiDelta, prepareQianshiCandidates, prepareQianshiRecallCandidates, projectQianshiCandidateSelection, projectQianshiRecall, publicQianshiSnapshot, QIANSHI_CANDIDATE_CHARACTER_BUDGET, QIANSHI_HISTORY_INPUT_TOKENS, QIANSHI_HISTORY_OUTPUT_TOKENS, QIANSHI_RECALL_PROJECTION_VERSION } from './qianshi-domain.js';
 import { estimateRecallTokens } from './recall-selector.js';
 import { markPreparationFailure, preparationFailureDiagnostic, preparationStepFor, storedPreparationDiagnostic } from './preparation-diagnostic.js';
 
@@ -156,6 +157,16 @@ const FLOOR_FAILURE_STORAGE_PREFIX = 'qqj_v3_floor_failures:';
 const normalizeAutoBatchSize = () => 1;
 const floorFailureStorageKey = chatId => `${FLOOR_FAILURE_STORAGE_PREFIX}${chatId}`;
 
+export function createQianshiSnapshotMemo(projector = publicQianshiSnapshot) {
+  let cache = null;
+  return (reachable, identityProjection, history) => {
+    if (cache?.reachable !== reachable || cache.identityProjection !== identityProjection) {
+      cache = { reachable, identityProjection, value: projector(reachable, null, identityProjection) };
+    }
+    return { ...cache.value, history };
+  };
+}
+
 export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, generateAnalysisTask, generateUtilityTask, isEnabled = true, automationSettings = () => ({ enabled: false, batchSize: 1 }), notifyUser = null, isMainGenerationActive = () => false, onAutomaticSummaryCommitted = () => {}, onMemoryBatchCommitted = () => {}, extractorPromptGuidance = () => '', csePromptGuidance = () => '', processingPrompt = () => '', storyClockReferenceTags = () => '', filterWorldInfoSources = sources => sources, sanitizerOptions = () => ({}), persistAnchors = null, identityProjectionProvider = null, qianshiCandidatePreparer = prepareQianshiCandidates, failureStorage = undefined, now = () => new Date(), newUuid = newIdentityUuid, logger = console } = {}) {
   if (!foundationRuntime || ['start', 'refreshStatus', 'confirmLatest', 'setEnabled', 'bind', 'getState'].some(name => typeof foundationRuntime[name] !== 'function')) throw new TypeError('V3 memory foundation runtime 无效');
   if (!store || ['readReachable', 'readRecord', 'putRecord', 'commitRoot', 'recordKey', 'invalidate'].some(name => typeof store[name] !== 'function')) throw new TypeError('V3 memory store 无效');
@@ -209,6 +220,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
   let qianshiHistoryPlan = null;
   let qianshiHistoryRun = null;
   let qianshiHistoryState = Object.freeze({ status: 'idle', jobId: null, processedFloors: 0, totalFloors: 0, calls: 0, message: '' });
+  const qianshiSnapshotMemo = createQianshiSnapshotMemo();
   const subscribers = new Set();
   const currentReferenceTags = () => normalizeStoryClockReferenceTags(typeof storyClockReferenceTags === 'function' ? storyClockReferenceTags() : storyClockReferenceTags);
   const currentClockSignature = floor => clockEvidence(currentRawSelection(hostAdapter, floor), currentReferenceTags()).signature;
@@ -384,7 +396,10 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
         }
         bindings.push({ messageIndex: binding.candidate.hostLocator.messageIndex, floorId: floor.id });
       }
-      if (!bindings.length) return true;
+      if (!bindings.length) {
+        if (lastFailure?.phase === 'anchor') lastFailure = null;
+        return true;
+      }
       await persistAnchors({ hostAdapter, chatId: value.root.chatId, bindings });
       if (expectedEpoch !== epoch || currentHostChatId() !== value.root.chatId) return false;
       if (lastFailure?.phase === 'anchor') lastFailure = null;
@@ -729,18 +744,31 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
     memorySyncError = null;
     if (!reachable) memorySnapshotStatus = 'syncing';
     notify();
-    let foundation = reconcileFoundation && typeof foundationRuntime.refreshStatus === 'function'
+    let foundation = !recoverTailDeletion && reconcileFoundation && typeof foundationRuntime.refreshStatus === 'function'
       ? await foundationRuntime.refreshStatus('manualRefresh', { verifyRoot: true })
       : typeof foundationRuntime.inspect === 'function'
       ? await foundationRuntime.inspect('memoryRefresh', { allowCached: preferCached })
       : await foundationRuntime.refreshStatus();
+    if (recoverTailDeletion && reconcileFoundation && foundation.status === 'error') {
+      if (expectedEpoch !== epoch || expectedChatId !== currentHostChatId()) return getState();
+      memorySyncStatus = 'error';
+      memorySyncError = foundation.lastError ? Object.freeze({ code: 'V3_FOUNDATION_NOT_READY', message: safeErrorMessage(foundation.lastError) }) : null;
+      if (!reachable) memorySnapshotStatus = 'error';
+      return notify();
+    }
     if (!preferCached && foundation.status === 'needsReview' && foundation.reviewReason?.code === 'markerMismatch'
       && foundation.reviewReason?.bindingIssue === 'markerConflict'
       && typeof foundationRuntime.recoverOrphanTailAnchor === 'function') {
       foundation = await foundationRuntime.recoverOrphanTailAnchor();
     }
+    let tailRecovered = false;
     if (recoverTailDeletion && foundation.status === 'needsReview' && typeof foundationRuntime.recoverTailDeletion === 'function') {
+      const beforeRecovery = foundation;
       foundation = await foundationRuntime.recoverTailDeletion();
+      tailRecovered = beforeRecovery.status === 'needsReview' && foundation.status === 'ready';
+    }
+    if (recoverTailDeletion && reconcileFoundation && typeof foundationRuntime.refreshStatus === 'function') {
+      foundation = await foundationRuntime.refreshStatus('manualRefresh', { verifyRoot: true });
     }
     if (expectedEpoch !== epoch || expectedChatId !== currentHostChatId()) return getState();
     if (!enabled() || foundation.status === 'disabled') { reachable = null; memorySnapshotStatus = 'unavailable'; memorySyncStatus = 'idle'; return notify(); }
@@ -755,11 +783,12 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
       if (!reachable) memorySnapshotStatus = foundation.status === 'error' ? 'error' : 'unavailable';
       return notify();
     }
+    const retryRecoveredAnchors = tailRecovered && lastFailure?.phase === 'anchor';
     const reusable = !reachable || !foundationReachable
       || Number(foundationReachable.rootRevision ?? 0) >= Number(reachable.rootRevision ?? 0)
       ? foundationReachable
       : null;
-    return load(expectedEpoch, reusable, { skipSavedAnchors: recoverTailDeletion });
+    return load(expectedEpoch, reusable, { skipSavedAnchors: recoverTailDeletion && !retryRecoveredAnchors });
   }
   function refreshStatus(options = {}) {
     const preferCached = options.preferCached === true;
@@ -827,7 +856,6 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
     if (requestedEpoch !== epoch || requestedChatId !== currentHostChatId()) return getState();
     return startHistoricalRebuild();
   }
-
   async function persistRecords(records, signal, { concurrency = PREPARED_WRITE_CONCURRENCY } = {}) {
     let cursor = 0;
     let firstError = null;
@@ -2500,7 +2528,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
 
   function qianshiSnapshot() {
     if (!reachable?.root) return Object.freeze({ status: 'not-ready', message: '千事后端尚未准备好当前聊天。' });
-    return publicQianshiSnapshot(reachable, qianshiHistoryState, identityProjection);
+    return qianshiSnapshotMemo(reachable, identityProjection, qianshiHistoryState);
   }
 
   async function prepareQianshiHistory({ maxInputTokens = QIANSHI_HISTORY_INPUT_TOKENS, maxOutputTokens = QIANSHI_HISTORY_OUTPUT_TOKENS } = {}) {
@@ -2606,13 +2634,16 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
           }
         }
         const request = buildHistoryRequest();
-        const systemPrompt = `你是“千千结”的千事历史提取器。只输出 JSON：{\"floors\":[{\"floorKey\":\"floor-N\",\"qianshi\":{\"events\":[],\"order\":[]}}]}。顶层 qianshiCandidates 是本批共享旧事项池，每楼只能使用其 qianshiCandidateKeys 列出的键。逐楼提取事件；一次性日常事件 matter=false；计划、持续事项 matter=true。links 使用 candidateKey 和 kind=progress|context，倒叙补证必须用 context。可让后楼引用同批更早楼事件，candidateKey 写“更早floorKey:该事件key”。storyTime 是发生时间，scheduledTime 是预计时间。不得改写摘要，不得输出人物资料。`;
+        const systemPrompt = `你是“千千结”的千事历史提取器。只输出 JSON：{\"floors\":[{\"floorKey\":\"floor-N\",\"qianshi\":{\"events\":[],\"order\":[]}}]}。每个 qianshi.order 必须是对象数组，例如 [{\"before\":\"event-1\",\"after\":\"event-2\",\"certainty\":\"explicit\"}]；只写材料明确支持的先后关系，引用键沿用本楼和候选键合同。顶层 qianshiCandidates 是本批共享旧事项池，每楼只能使用其 qianshiCandidateKeys 列出的键。每个事件正文必须放在 description 字段，事件对象示例：{\"key\":\"event-1\",\"title\":\"事件标题\",\"description\":\"事件正文\",\"status\":\"occurred\",\"matter\":false}；不得用 chatSummary 等自造字段替代 description。每个事件最多关联一个旧事项候选（links 中最多一个 candidateKey）；同一叙事影响多个旧事项时，按事项分别写成独立事件，每个事件只链接对应的一个候选。逐楼提取，但每楼按对后续叙事有用的事件单位整理，不按每个动作逐条拆分；同一场景同一事项的连续动作合成一件完整事件，没有新增事实、关系变化或事项进展的重复日常不另立事件。新计划、事项实质推进、完成、取消和关键变化仍须记录。只有计划、持续事项 matter=true；带来新事实或变化的一次性事件可为 matter=false。links 使用 candidateKey 和 kind=progress|context，倒叙补证必须用 context。可让后楼引用同批更早楼事件，candidateKey 写“更早floorKey:该事件key”，不得跨 floorKey 合并事件来源。storyTime 是发生时间，scheduledTime 是预计时间；材料已有故事年份或纪年时必须保留，只有月日或相对时间时不得猜当前故事年或现实年份。不得改写摘要，不得输出人物资料。`;
         let packet = null;
         try {
           calls += 1;
           const result = await generateUtilityTask({ systemPrompt, taskMessages: [{ role: 'user', content: JSON.stringify(request) }],
             maxTokens: plan.maxOutputTokens, temperature: 0, signal: controller.signal, includeCharacterCard: false, worldInfoSource: 'none', parseMode: 'semantic' });
-          packet = result?.jsonData ?? result?.data ?? (typeof result?.responseText === 'string' ? JSON.parse(result.responseText) : null);
+          const finishReason = result?.taskMetadata?.finishReason;
+          packet = result?.jsonData ?? result?.data
+            ?? (typeof result?.responseText === 'string' ? parseJsonOutput(result.responseText, { finishReason }) : null)
+            ?? (typeof result?.textData === 'string' ? parseJsonOutput(result.textData, { finishReason }) : null);
         } catch (error) {
           if (error?.name === 'AbortError' || controller.signal.aborted) break;
           failures += prepared.length;
@@ -2678,10 +2709,20 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
   }
 
   return Object.freeze({ bind, start, setEnabled, refreshAutomation, startHistoricalRebuild, pauseHistoricalRebuild, retryAutomation, rebuildCse, resumeCseRebuild, pauseCseRebuild, invalidate, refreshStatus, prepareCurrent, confirmLatest, confirmConsecutiveAssistants, extractNext, extractFloor, analyzeNextState, retryStateAnalysis, correctSubjectState, editSummary, editMemory, restoreAi, markError, copySafeDiagnostic, copyFullDiagnostic, shouldBlockMainGeneration, allowsRealtimeTailFromEmpty, setIdentityProjection,
-    getQianshiSnapshot: () => structuredClone(qianshiSnapshot()), getQianshiRecall: ({ queryContext = null, currentTime = null, recentStoryTimes = [] } = {}) => {
+    getQianshiSnapshot: () => structuredClone(qianshiSnapshot()), getQianshiRecall: ({ queryContext = null, currentTime = null, selectedEventIds = null, selectedMatterIds = null } = {}) => {
       if (!reachable?.root) return { projectionVersion: QIANSHI_RECALL_PROJECTION_VERSION, text: '', eventIds: [], matterIds: [], anchor: null };
-      const recall = projectQianshiRecall(reachable, { queryContext, currentTime, recentStoryTimes, identityProjection });
-      return structuredClone({ ...recall, anchor: { narrativeGeneration: reachable.root.narrativeGeneration, headCheckpointId: reachable.root.headCheckpointId, rootRevision: reachable.rootRevision } });
+      const anchor = { narrativeGeneration: reachable.root.narrativeGeneration, headCheckpointId: reachable.root.headCheckpointId, rootRevision: reachable.rootRevision };
+      if (Array.isArray(selectedEventIds) || Array.isArray(selectedMatterIds)) {
+        const recall = projectQianshiRecall(reachable, { identityProjection, selectedEventIds: selectedEventIds ?? [], selectedMatterIds: selectedMatterIds ?? [] });
+        return structuredClone({ ...recall, anchor });
+      }
+      const prepared = prepareQianshiRecallCandidates(reachable, { queryContext, identityProjection });
+      const recall = projectQianshiCandidateSelection(prepared.candidates);
+      const storyDate = typeof currentTime?.date === 'string' && currentTime.date.trim() ? currentTime.date.trim()
+        : typeof currentTime?.raw === 'string' && currentTime.raw.trim() ? currentTime.raw.trim() : '';
+      const storyClock = typeof currentTime?.clock === 'string' && currentTime.clock.trim() && !storyDate.includes(currentTime.clock.trim()) ? currentTime.clock.trim() : '';
+      return structuredClone({ ...recall, candidates: prepared.candidates, candidateStats: prepared.stats,
+        currentStoryTime: [storyDate, storyClock].filter(Boolean).join(' ') || null, anchor });
     },
     prepareQianshiHistory, startQianshiHistory, stopQianshiHistory, getState, subscribe(listener) { subscribers.add(listener); return () => subscribers.delete(listener); } });
 }
