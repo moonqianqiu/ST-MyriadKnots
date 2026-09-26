@@ -10,14 +10,14 @@
 ## 1. 仓库定位与版本构建惯例
 
 1. **版本声明 (`manifest.json`)**：
-   - 跟随上游官方发布版本号（当前已同步至 **`0.5.1`**）。
+   - 跟随上游官方发布版本号（当前已同步至 **`0.5.2`**）。
 2. **打包构建与产物约束 (`dist/qqj-app.js`)**：
    - 生产单文件由 `npm run build`（Vite + Rolldown）编译生成；
    - 源码发生任何变动后，**必须重新构建 bundle**，否则入口加载测试会失败。
 3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：
    - 格式强制规范：`dist/qqj-app.js?v=YYYYMMDD.<递增序号>-<bundle SHA-256 前16位>`；
    - `tests/production-entry-load.test.mjs` 会严格校验该哈希是否与实际 `dist/qqj-app.js` 的文件摘要一致；
-   - 序号随打包批次全局递增（当前批次为 **`20260925.361`**）。
+   - 序号随打包批次全局递增（当前批次为 **`20260926.381`**）。
 4. **分支与同步策略**：
    - 合并上游前先建立备份分支：`git branch backup/main-before-upstream-vX.Y.Z main`；
    - 在 `main` 分支执行 `--no-ff` 合并：`git merge --no-ff upstream/main`；
@@ -128,13 +128,13 @@
    ```bash
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
-   *标准*：8/8 全部通过（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
+   *标准*：9/9 全部通过（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
 3. **全量测试套件自动化运行**：
    ```bash
    npm test
    ```
-   *标准*：全量 1067+ 测试用例全部全绿（耗时约 50s，0 失败）。
-   > **已知上游偶发用例（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5178`
+   *标准*：全量 1215+ 测试用例全部全绿（耗时约 57s，0 失败）。
+   > **已知上游偶发用例（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5242`
    > 「切聊天及正文结构事件会撤销提前武装，迟到 token 不得写入或调用模型」存在**负载敏感的时序偶发**：
    > 空闲快速机器上后台自动化任务会在 10ms 断言窗口内漏入，报 `MESSAGE_DELETED 后不得触发旧楼任务 1 !== 0`；
    > 高负载或重跑时可通过。**已在纯 `upstream/main` worktree（零本地改动）中复现同样失败**，实证与本地产权无关。
@@ -146,12 +146,15 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **当前工作分支**：`main`（合并提交 `9d52b78`）；
-- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.1`，提交 `e4e2d14`）；
-- **当前产物版本**：`manifest.json` 版本号 `0.5.1`，缓存键 `20260925.361-df8acb64d1297d26`（bundle SHA-256 前 16 位）；
-- **v0.5.1 上游能力**：千事断链精确诊断与修复、聚合记忆关系归属保护、候选索引增量更新、终结事项按明确正文重提、自动时间失败可见；v0.5.0 的千事时间线/永久删除/存储暖快照能力及本地清洗器和召回失效闭环均已保留；
-- **本次验证**：针对性测试 461/461 通过；全量测试 1164/1164 通过；
+- **当前工作分支**：`main`（合并提交 `c6b0446`）；
+- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.2`，提交 `5c54153`）；
+- **当前产物版本**：`manifest.json` 版本号 `0.5.2`，缓存键 `20260926.381-b24befc873550bd1`（bundle SHA-256 前 16 位）；
+- **v0.5.2 上游能力**：千事历史回顾与批量封口；v0.5.1 的千事断链精确诊断与修复、聚合记忆关系归属保护、候选索引增量更新、终结事项按明确正文重提、自动时间失败可见，以及 v0.5.0 的千事时间线/永久删除/存储暖快照能力，本地清洗器与召回失效闭环均已保留；
+- **本次合并实况**：真冲突仅 `manifest.json` 与 `dist/qqj-app.js` 两处（均为版本/产物文件）；`src/v3/memory-runtime.js`、`src/ui/v3-foundation-view.js`、`tests/v3-extractor-memory.test.mjs` 三方自动平滑合并，本地 `extraOnlySanitizerOptions`、两处 `invalidate({clearPersisted:true})`、召回测试 keepTags 加固均自动保住；12 项本地核心资产上游零触碰（`recall-runtime.js` v0.5.2 完全未动）；
+- **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1215/1215 通过；跨仓 40 例金样对拍 0 差异；
 - **最近提交记录**：
+  - `c6b0446`：审计并合并上游 v0.5.2，重建生产 bundle；
+  - `392715c`：记录上游 v0.5.1 基线；
   - `9d52b78`：审计并合并上游 v0.5.1，重建生产 bundle；
   - `03cfb52`：审计并合并上游 v0.5.0，重建生产 bundle；
   - `0c45608`：千人面板接入主动失效（`bootstrap.js` 注入 `recallRuntime` + `saveProfile` 成功后联动清理）；
