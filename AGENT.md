@@ -151,7 +151,7 @@
 - **当前产物版本**：`manifest.json` 版本号 `0.5.4`，缓存键 `20260927.382-8757143bad8c4757`（bundle SHA-256 前 16 位）；
 - **v0.5.3/v0.5.4 上游能力**：v0.5.3 简化时间与千事归档（时间引擎/年度事项日期推断文案重写、千事图 `repairableQianshiDelta`/`qianshiHistoryMatch` 等旧机制删除、文本签名规范化 `qianshiText` 引入、`reviewDecisionPreservesGraph` 宽限分支移除）；v0.5.4 千事时间线文本编辑（`qianshi-timeline-view.js` 编辑入口 + `memory-runtime.js` 对应处理）；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
 - **本次合并实况**：真冲突仅 `manifest.json` 与 `dist/qqj-app.js` 两处（均为版本/产物文件）；`src/v3/memory-runtime.js`（本地 `extraOnlySanitizerOptions` import 与 `capturePrecedingUserInputFromSnapshot` 触点和上游大重构区域零重叠）、`src/ui/v3-foundation-view.js`（上游仅改年度事项展示文案 ~695 行，本地两处 invalidate 钩子在 582/1480 行）、`tests/v3-extractor-memory.test.mjs`（本地 keepTags 加固 +2 行，上游 1600+ 行重构未触及该区域）均三方自动平滑合并；`src/v3/recall-runtime.js`、`src/bootstrap.js`、`src/ui/people-profiles-view.js`、`src/settings.js`、`src/memory-content-sanitizer.js` 上游零触碰，12 项本地核心资产完整保留；
-- **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1214/1214 通过（已知上游时序偶发用例首轮单文件复现 1 次、重跑即过，属 memory.md 第 4 节记载的负载敏感项，与本地产权无关）；跨仓 40 例金样对拍 0 差异；
+- **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1214/1214 通过（已知上游时序偶发用例首轮单文件复现 1 次、重跑即过，属本文件第 4 节记载的负载敏感项，与本地产权无关）；跨仓 40 例金样对拍 0 差异；
 - **最近提交记录**：
   - `ead1a6c`：审计并合并上游 v0.5.4（含 v0.5.3），重建生产 bundle；
   - `c6b0446`：审计并合并上游 v0.5.2，重建生产 bundle；
