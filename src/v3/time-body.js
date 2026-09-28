@@ -4,6 +4,28 @@ import { parseSharedStoryClock, parseStoryClockReference } from '../story-clock.
 import { projectTime, projectTimeSource, storyTimes, timeFingerprint, timeBodyReads, createTimeBodyRequest, TIME_INPUT_TOKENS, TIME_BODY_AUXILIARY_TOKENS, TIME_SYSTEM_PROMPT } from './time-engine.js';
 import { inferCanonicalCurrentTime } from './extractor.js';
 import { estimateRecallTokens } from './recall-selector.js';
+import { normalizeStoryClockReferenceTags } from '../story-clock.js';
+
+export async function clockContentFingerprint(rawContent, referenceTags = '') {
+  const raw = String(rawContent ?? '');
+  const clocks = [...raw.matchAll(/<!--\s*(?:QQJ|SDC|myknots)-(?:start|end)\b[\s\S]*?-->/giu)].map(match => match[0]);
+  const configured = new Set(normalizeStoryClockReferenceTags(referenceTags).map(name => name.toLocaleLowerCase('en-US')));
+  const open = new Map(), references = [];
+  const tagPattern = /<\s*(\/?)\s*(\p{L}[\p{L}\p{N}_-]*~?)(?=[\s/>])[^>]*>/giu;
+  for (const token of raw.matchAll(tagPattern)) {
+    const key = token[2].toLocaleLowerCase('en-US');
+    if (!configured.has(key)) continue;
+    const closing = token[1] === '/';
+    if (!closing && !/\/\s*>$/u.test(token[0])) {
+      const stack = open.get(key) ?? [];
+      stack.push(token.index + token[0].length); open.set(key, stack);
+    } else if (closing) {
+      const start = open.get(key)?.pop();
+      if (start !== undefined) references.push([key, raw.slice(start, token.index).replace(/<!--[\s\S]*?-->/gu, '').replace(/<\s*br\s*\/?>/giu, '\n').replace(/<[^>]*>/gu, '').trim()]);
+    }
+  }
+  return timeFingerprint([clocks, references]);
+}
 
 // Recall only needs the current visible body clock and a short recent span. Keep
 // this path independent from the full body binding/hash pass used by time jobs.
@@ -33,9 +55,40 @@ export function readRecentBodyStoryTimes(host, { storyClockReferenceTags = '', l
 }
 
 // Private projection: current selected body witnesses never rewrite foundation records.
+// The fork's M0 sanitizer contract keeps configured story-clock reference tags inside
+// canonical content, so editing only a tag rewrites canonicalFingerprint even though the
+// narrative floor is untouched. Return the text with those tag elements removed, so the
+// binding pass can recognize that narrow equivalence. Returns null when no reference tag
+// is configured, which disables the probe entirely.
+function withoutStoryClockReferenceTags(rawContent, referenceTags = '') {
+  const raw = String(rawContent ?? '');
+  const configured = new Set(normalizeStoryClockReferenceTags(referenceTags).map(name => name.toLocaleLowerCase('en-US')));
+  if (!configured.size) return null;
+  const open = new Map(), spans = [];
+  const tagPattern = /<\s*(\/?)\s*(\p{L}[\p{L}\p{N}_-]*~?)(?=[\s/>])[^>]*>/giu;
+  for (const token of raw.matchAll(tagPattern)) {
+    const key = token[2].toLocaleLowerCase('en-US');
+    if (!configured.has(key)) continue;
+    if (token[1] !== '/') { if (!/\/\s*>$/u.test(token[0])) { const stack = open.get(key) ?? []; stack.push(token.index); open.set(key, stack); } continue; }
+    const start = open.get(key)?.pop();
+    if (start !== undefined) spans.push([start, token.index + token[0].length]);
+  }
+  spans.sort((left, right) => left[0] - right[0]);
+  let out = '', cursor = 0;
+  for (const [start, end] of spans) { if (start < cursor) continue; out += raw.slice(cursor, start); cursor = end; }
+  return out + raw.slice(cursor);
+}
+
 export async function readTimeBody(reachable, host, { sanitizerOptions = {}, storyClockReferenceTags = '' } = {}) {
   const candidates = await scanAssistantCandidates(host.chat ?? [], { sanitizerOptions, chatId: reachable.root.chatId, captureRawContent: true });
-  const binding = matchFloorCandidates(reachable.floors ?? [], candidates);
+  const binding = matchFloorCandidates(reachable.floors ?? [], candidates, {
+    equivalentContent: (floor, candidate) => {
+      const floorText = withoutStoryClockReferenceTags(floor?.content?.canonicalContent, storyClockReferenceTags);
+      if (floorText === null) return false;
+      const candidateText = withoutStoryClockReferenceTags(candidate?.canonicalContent ?? candidate?.rawContent, storyClockReferenceTags);
+      return candidateText !== null && candidateText === floorText;
+    },
+  });
   if (binding.issue) throw Object.assign(new Error('正文楼绑定不唯一，未完成检查。'), { code: 'QQJ_TIME_BINDING' });
   const fallback = storyTimes(reachable.floorMemories ?? [], reachable.floors ?? []);
   const sourceFallback = storyTimes(reachable.floorMemories ?? [], reachable.floors ?? [], projectTimeSource);
@@ -50,8 +103,9 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     const sourceTime = raw ? projectTimeSource(raw.split(/\s*(?:→|->|⟶)\s*/u).at(-1), previousSource) : sourceFallback.get(match?.floor.id) ?? projectTimeSource('');
     previous = time; previousSource = sourceTime;
     const timeSourceFingerprint = await timeFingerprint(raw ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : raw] : ['no-body-time']);
+    const clockFingerprint = await clockContentFingerprint(candidate.rawContent, storyClockReferenceTags);
     const body = { stable: Boolean(candidate.stabilityProof), timeSourceKind: raw ? 'body' : 'summaryFallback', timeSourceFingerprint, floorId: match?.floor.id ?? null, assistantSeq: candidate.assistantSeq, canonicalFingerprint: candidate.canonicalFingerprint,
-      rawFingerprint: candidate.rawFingerprint, rawContent: candidate.rawContent, hostLocator: candidate.hostLocator, content: candidate.canonicalContent, observationTime: time };
+      rawFingerprint: candidate.rawFingerprint, clockContentFingerprint: clockFingerprint, rawContent: candidate.rawContent, hostLocator: candidate.hostLocator, content: candidate.canonicalContent, observationTime: time };
     bodies.push(body);
     if (match) floors.push({ ...match.floor, assistantSeq: candidate.assistantSeq, canonicalFingerprint: candidate.canonicalFingerprint, timeSourceFingerprint, content: candidate.canonicalContent });
   }
@@ -81,11 +135,21 @@ export function planTimeBody(source, batches, { start = null, history = false, i
   const fits = rows => new Set(rows.map(row => row.floorId)).size <= 20
     && estimateRecallTokens(JSON.stringify(createTimeBodyRequest(source, rows, rows.at(-1))) + TIME_SYSTEM_PROMPT) <= inputTokens - TIME_BODY_AUXILIARY_TOKENS;
   const fragment = (body, from, to) => ({ floorId: body.floorId, assistantSeq: body.assistantSeq,
-    canonicalFingerprint: body.canonicalFingerprint, rawFingerprint: body.rawFingerprint, timeSourceFingerprint: body.timeSourceFingerprint,
+    canonicalFingerprint: body.canonicalFingerprint, rawFingerprint: body.rawFingerprint, timeSourceFingerprint: body.timeSourceFingerprint, clockContentFingerprint: body.clockContentFingerprint,
     from, to, totalCharacters: body.content.length, observationTime: body.observationTime, description: body.content.slice(from, to) });
   const add = row => { let group = groups.at(-1); if (!group || !fits([...group, row])) { group = []; groups.push(group); } group.push(row); fragments.push(row); };
   for (const body of eligible) {
-    const covered = (reads.get(body.floorId) ?? []).sort((a, b) => a.from - b.from);
+    const versions = reads.get(body.floorId) ?? [];
+    const isCurrentVersion = read => read.canonicalFingerprint === body.canonicalFingerprint
+      && read.timeSourceFingerprint === body.timeSourceFingerprint && read.totalCharacters === body.content.length;
+    const versionKey = read => JSON.stringify([read.canonicalFingerprint, read.timeSourceFingerprint, read.totalCharacters]);
+    const byVersion = new Map();
+    for (const read of versions) { const key = versionKey(read); byVersion.set(key, [...(byVersion.get(key) ?? []), read]); }
+    const isCovered = ranges => ranges.sort((a, b) => a.from - b.from).reduce((end, range) => range.from <= end ? Math.max(end, range.to) : end, 0);
+    const completeVersions = [...byVersion.values()].filter(ranges => isCovered([...ranges]) >= ranges[0].totalCharacters);
+    if (completeVersions.length && (!history || completeVersions.some(ranges => isCurrentVersion(ranges[0])))) continue;
+    const covered = versions.filter(isCurrentVersion).sort((a, b) => a.from - b.from);
+    if (!covered.length && versions.length && !history) continue;
     let cursor = 0;
     const missing = [];
     for (const range of covered) { if (range.from > cursor) missing.push([cursor, range.from]); cursor = Math.max(cursor, range.to); }
@@ -109,7 +173,11 @@ export function planTimeBody(source, batches, { start = null, history = false, i
       }
     }
   }
-  const fullyRead = body => body.floorId && (reads.get(body.floorId) ?? []).sort((a,b) => a.from-b.from).reduce((end, range) => range.from <= end ? Math.max(end, range.to) : end, 0) >= body.content.length;
+  const fullyRead = body => body.floorId && (reads.get(body.floorId) ?? []).some(read => {
+    const sameVersion = (reads.get(body.floorId) ?? []).filter(value => value.canonicalFingerprint === read.canonicalFingerprint
+      && value.timeSourceFingerprint === read.timeSourceFingerprint && value.totalCharacters === read.totalCharacters);
+    return sameVersion.sort((a, b) => a.from - b.from).reduce((end, range) => range.from <= end ? Math.max(end, range.to) : end, 0) >= read.totalCharacters;
+  });
   const checked = source.bodyFloors.filter(fullyRead).length;
   const earlierUnchecked = startBody ? source.bodyFloors.filter(body => body.assistantSeq < startBody.assistantSeq && !fullyRead(body)).length : 0;
   return { groups, floorCount: new Set(fragments.map(row => row.floorId)).size, batchCount: groups.length, apiCalls: groups.length,

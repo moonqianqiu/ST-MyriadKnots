@@ -9,8 +9,14 @@ const contentOf = floor => floor?.content ?? {};
  * Valid anchors are reserved first, then unanchored candidates may use the same
  * locator with the same canonical body or exact raw body, or a globally unique
  * raw+canonical pair.
+ *
+ * `equivalentContent(floor, candidate)` is an optional extra equality probe for the
+ * locator pass. It runs only for a pair that already shares a locator and whose
+ * fingerprints differ, so a caller may declare a narrower equivalence (for example
+ * "only the configured story-clock reference tags differ") without weakening the
+ * default fingerprint contract or affecting callers that omit it.
  */
-export function matchFloorCandidates(floors = [], candidates = []) {
+export function matchFloorCandidates(floors = [], candidates = [], { equivalentContent = null } = {}) {
   const floorList = Array.isArray(floors) ? floors : [];
   const candidateList = Array.isArray(candidates) ? candidates : [];
   const floorById = new Map(floorList.map((floor, floorIndex) => [floor?.id, { floor, floorIndex }]));
@@ -74,11 +80,13 @@ export function matchFloorCandidates(floors = [], candidates = []) {
       .filter(({ floor, floorIndex }) => !floorMatches.has(floorIndex)
         && sameLocator(floor?.hostLocator, candidate?.hostLocator)
         && (contentOf(floor).canonicalFingerprint === candidate?.canonicalFingerprint
-          || contentOf(floor).rawFingerprint === candidate?.rawFingerprint));
+          || contentOf(floor).rawFingerprint === candidate?.rawFingerprint
+          || (typeof equivalentContent === 'function' && equivalentContent(floor, candidate) === true)));
     if (matches.length === 1) {
       const floor = matches[0].floor;
-      bind(candidateIndex, matches[0].floorIndex,
-        contentOf(floor).canonicalFingerprint === candidate?.canonicalFingerprint ? 'locatorCanonical' : 'locatorRaw');
+      const kind = contentOf(floor).canonicalFingerprint === candidate?.canonicalFingerprint ? 'locatorCanonical'
+        : contentOf(floor).rawFingerprint === candidate?.rawFingerprint ? 'locatorRaw' : 'locatorEquivalent';
+      bind(candidateIndex, matches[0].floorIndex, kind);
     }
     else if (matches.length > 1) fail('ambiguousLocatorCanonical', candidateIndex);
   }
