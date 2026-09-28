@@ -10,14 +10,14 @@
 ## 1. 仓库定位与版本构建惯例
 
 1. **版本声明 (`manifest.json`)**：
-   - 跟随上游官方发布版本号（当前已同步至 **`0.5.4`**）。
+   - 跟随上游官方发布版本号（当前已同步至 **`0.5.6`**）。
 2. **打包构建与产物约束 (`dist/qqj-app.js`)**：
    - 生产单文件由 `npm run build`（Vite + Rolldown）编译生成；
    - 源码发生任何变动后，**必须重新构建 bundle**，否则入口加载测试会失败。
 3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：
    - 格式强制规范：`dist/qqj-app.js?v=YYYYMMDD.<递增序号>-<bundle SHA-256 前16位>`；
    - `tests/production-entry-load.test.mjs` 会严格校验该哈希是否与实际 `dist/qqj-app.js` 的文件摘要一致；
-   - 序号随打包批次全局递增（当前批次为 **`20260927.382`**）。
+   - 序号随打包批次全局递增（当前批次为 **`20260927.384`**）。
 4. **分支与同步策略**：
    - 合并上游前先建立备份分支：`git branch backup/main-before-upstream-vX.Y.Z main`；
    - 在 `main` 分支执行 `--no-ff` 合并：`git merge --no-ff upstream/main`；
@@ -35,6 +35,7 @@
 | `dist/qqj-app.js` | 编译混淆产物冲突 | 冲突产生后直接执行 `npm run build` 覆盖重建即可消除 |
 | `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock 冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
 | `tests/v3-wiring.test.mjs` | 架构装配接口导出与版本断言冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
+| `tests/v3-cse.test.mjs` | 上游新增 `runtimeHarness` 宿主参数与本地 `sanitizerOptions` 参数冲突 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场（v0.5.6 合并首次出现） |
 
 > **业务文件自动合并注意**：
 > - `src/settings.js`：本地添加的 `sourceKeepTags: ''` 与上游存储自动清理字段位于不同区域，自动合入；
@@ -146,13 +147,17 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **当前工作分支**：`main`（合并提交 `ead1a6c`）；
-- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.4`，提交 `9447825`）；
-- **当前产物版本**：`manifest.json` 版本号 `0.5.4`，缓存键 `20260927.382-8757143bad8c4757`（bundle SHA-256 前 16 位）；
-- **v0.5.3/v0.5.4 上游能力**：v0.5.3 简化时间与千事归档（时间引擎/年度事项日期推断文案重写、千事图 `repairableQianshiDelta`/`qianshiHistoryMatch` 等旧机制删除、文本签名规范化 `qianshiText` 引入、`reviewDecisionPreservesGraph` 宽限分支移除）；v0.5.4 千事时间线文本编辑（`qianshi-timeline-view.js` 编辑入口 + `memory-runtime.js` 对应处理）；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
-- **本次合并实况**：真冲突仅 `manifest.json` 与 `dist/qqj-app.js` 两处（均为版本/产物文件）；`src/v3/memory-runtime.js`（本地 `extraOnlySanitizerOptions` import 与 `capturePrecedingUserInputFromSnapshot` 触点和上游大重构区域零重叠）、`src/ui/v3-foundation-view.js`（上游仅改年度事项展示文案 ~695 行，本地两处 invalidate 钩子在 582/1480 行）、`tests/v3-extractor-memory.test.mjs`（本地 keepTags 加固 +2 行，上游 1600+ 行重构未触及该区域）均三方自动平滑合并；`src/v3/recall-runtime.js`、`src/bootstrap.js`、`src/ui/people-profiles-view.js`、`src/settings.js`、`src/memory-content-sanitizer.js` 上游零触碰，12 项本地核心资产完整保留；
-- **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1214/1214 通过（已知上游时序偶发用例首轮单文件复现 1 次、重跑即过，属本文件第 4 节记载的负载敏感项，与本地产权无关）；跨仓 40 例金样对拍 0 差异；
+- **当前工作分支**：`main`（合并提交 `7211f6f`）；
+- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.6`，提交 `b7a59bc`，含 `v0.5.5`/`e99b95c`）；
+- **当前产物版本**：`manifest.json` 版本号 `0.5.6`，缓存键 `20260927.384-e880ac8665dcedbc`（bundle SHA-256 前 16 位）；
+- **v0.5.5/v0.5.6 上游能力**：v0.5.5（① 归档旧楼手动回填不再因正文被编辑/切 swipe 而拒绝，以归档快照为准；② 千事「编辑详情」可改/清空 **涉及物品（object）**，下游检索/召回/候选读取新值；③ 千事时间线按日期折叠，恒显日期+条数，搜索命中临时展开该日期、清空搜索恢复手动展开态；④ 新增 **user Core 提取**机制 `userCoreExtraction`，仅从 userPersona 文本提取用户长期核心特质，新字段 `userCoreExtraction`/`userCoreCheck`/`manualCoreSubjectEntityIds`，CSE 提示词 `qqj-v3-cse-prompt-23`、提取器提示词 `qqj-v3-extractor-prompt-24`）；v0.5.6（标准 ST 宿主上下文缺少 Persona 标识时，回退取当前条目 user UserPersona 标识，`index.js` 向 `createHostAdapter` 注入 `personaIdentifierProvider: () => user_avatar`；无可用标识时跳过用户 Core 辅助提取，常规角色状态分析照常保存）；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
+- **本次合并实况**：真冲突 3 处——`manifest.json`（版本号 + 缓存键）、`dist/qqj-app.js`（编译产物）、**`tests/v3-cse.test.mjs`（新增冲突，仅 `runtimeHarness({...})` 签名单块）**；其余全部三方自动平滑合并，含 `src/ui/v3-foundation-view.js`（上游新增 `clockReminder` 与本地两处 `invalidate` 钩子位于不同区域）、`src/v3/memory-runtime.js`（上游千事 object/历史护栏与本地 `extraOnlySanitizerOptions` 正交）、`src/cse-source-selection.js`（上游 `personaLocator` 与本地 extra-only 无关）、`src/v3/cse-engine.js`、`tests/v3-extractor-memory.test.mjs`、`tests/v3-time-body.test.mjs`；`src/v3/recall-runtime.js`、`src/bootstrap.js`、`src/ui/people-profiles-view.js`、`src/settings.js`、`src/memory-content-sanitizer.js`、`src/utils/tag-names.js` 上游零触碰，12 项本地核心资产完整保留；
+- **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1244 例、1243 通过、**唯一失败为第 4 节记载的上游负载敏感时序偶发项**（首轮即现、与本地无关）；跨仓 40 例金样对拍 **80 次用例执行 0 差异**（40 本地 + 40 SDC 各跑双方实现，且各自匹配自身金样）；
+- **本次合并的额外本地修复（真实语义冲突，非机械合并）**：
+  本地 M0 清洗器合同**保留**已配置的故事时钟引用标签（`storyClockReferenceTags`）于 canonical 正文中，而上游 v0.5.5 新增「编辑时间标签不得撤销已落盘覆盖」的保证依赖 canonical 正文剥离标签。二者相遇导致：改标签 → `canonicalFingerprint` 变化 → `matchFloorCandidates` 绑不上楼 → `evaluateTimeBatches` 丢弃该读取 → `tests/v3-time-flexible-date.test.mjs:95` 失败（对照工作树二分确认：仅拷入本地 `src/utils/tag-names.js` + `src/memory-content-sanitizer.js` 即复现 5/1，纯上游 6/6 通过；上游从未改过 `src/v3/floor-binding.js`）。
+  修复方式（加法式，不削弱本地合同、不改金样语义）：为 `matchFloorCandidates` 增加可选第三参 `{ equivalentContent }`，仅供 `src/v3/time-body.js` 的 `readTimeBody` 传入，用新增私有助手 `withoutStoryClockReferenceTags` 剥离**仅已配置的**故事时钟引用标签后比较；新增绑定种类 `'locatorEquivalent'`；其余 14 处调用点行为逐字节不变；
 - **最近提交记录**：
+  - `7211f6f`：审计并合并上游 v0.5.6（含 v0.5.5），重建生产 bundle，并落地上述 `matchFloorCandidates` 加法式绑定修复；
   - `ead1a6c`：审计并合并上游 v0.5.4（含 v0.5.3），重建生产 bundle；
   - `c6b0446`：审计并合并上游 v0.5.2，重建生产 bundle；
   - `392715c`：记录上游 v0.5.1 基线；
