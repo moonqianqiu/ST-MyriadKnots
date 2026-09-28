@@ -134,12 +134,13 @@
    ```bash
    npm test
    ```
-   *标准*：全量 1215+ 测试用例全部全绿（耗时约 57s，0 失败）。
+   *标准*：全量 1200+ 测试用例全部全绿（耗时约 57s，0 失败）。
    > **已知上游偶发用例（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5242`
    > 「切聊天及正文结构事件会撤销提前武装，迟到 token 不得写入或调用模型」存在**负载敏感的时序偶发**：
    > 空闲快速机器上后台自动化任务会在 10ms 断言窗口内漏入，报 `MESSAGE_DELETED 后不得触发旧楼任务 1 !== 0`；
    > 高负载或重跑时可通过。**已在纯 `upstream/main` worktree（零本地改动）中复现同样失败**，实证与本地产权无关。
    > 合并或维护时见此用例失败，先跑纯上游对照，切勿据此回滚本地资产。
+   > v0.5.7 对照还稳定复现 `tests/production-dist-branch.test.mjs` 的“源图准备失败”与 `tests/v3-chat-fork.test.mjs` 的“源聊天记忆未追平”两个 10 秒初始化超时；纯 `upstream/main` 同样失败，属于上游分支初始化时序问题。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：
    运行 40 例金样跨仓比对脚本，验证与 `ST-SevenDaysCal/runtime/tag-sanitizer.js` 输出 **0 差异、100% 逐字节一致**。
 
@@ -147,16 +148,20 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **当前工作分支**：`main`（合并提交 `7211f6f`）；
-- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.6`，提交 `b7a59bc`，含 `v0.5.5`/`e99b95c`）；
-- **当前产物版本**：`manifest.json` 版本号 `0.5.6`，缓存键 `20260927.384-e880ac8665dcedbc`（bundle SHA-256 前 16 位）；
+- **当前工作分支**：`main`（合并提交 `6c64941`）；
+- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.7`，提交 `b08a40c`，含 `v0.5.6`/`b7a59bc`）；
+- **当前产物版本**：`manifest.json` 版本号 `0.5.7`，缓存键 `20260928.37-d8729ec7d9867480`（bundle SHA-256 前 16 位）；
 - **v0.5.5/v0.5.6 上游能力**：v0.5.5（① 归档旧楼手动回填不再因正文被编辑/切 swipe 而拒绝，以归档快照为准；② 千事「编辑详情」可改/清空 **涉及物品（object）**，下游检索/召回/候选读取新值；③ 千事时间线按日期折叠，恒显日期+条数，搜索命中临时展开该日期、清空搜索恢复手动展开态；④ 新增 **user Core 提取**机制 `userCoreExtraction`，仅从 userPersona 文本提取用户长期核心特质，新字段 `userCoreExtraction`/`userCoreCheck`/`manualCoreSubjectEntityIds`，CSE 提示词 `qqj-v3-cse-prompt-23`、提取器提示词 `qqj-v3-extractor-prompt-24`）；v0.5.6（标准 ST 宿主上下文缺少 Persona 标识时，回退取当前条目 user UserPersona 标识，`index.js` 向 `createHostAdapter` 注入 `personaIdentifierProvider: () => user_avatar`；无可用标识时跳过用户 Core 辅助提取，常规角色状态分析照常保存）；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
+- **v0.5.7 上游能力**：CSE 提示词升级至 `qqj-v3-cse-prompt-24`、编译器升级至 `calibration-compiler-13`；兼容 `subjects`/`people` 等人物结果别名并拒绝冲突字段；所有候选均被隔离时明确失败并触发重试；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
 - **本次合并实况**：真冲突 3 处——`manifest.json`（版本号 + 缓存键）、`dist/qqj-app.js`（编译产物）、**`tests/v3-cse.test.mjs`（新增冲突，仅 `runtimeHarness({...})` 签名单块）**；其余全部三方自动平滑合并，含 `src/ui/v3-foundation-view.js`（上游新增 `clockReminder` 与本地两处 `invalidate` 钩子位于不同区域）、`src/v3/memory-runtime.js`（上游千事 object/历史护栏与本地 `extraOnlySanitizerOptions` 正交）、`src/cse-source-selection.js`（上游 `personaLocator` 与本地 extra-only 无关）、`src/v3/cse-engine.js`、`tests/v3-extractor-memory.test.mjs`、`tests/v3-time-body.test.mjs`；`src/v3/recall-runtime.js`、`src/bootstrap.js`、`src/ui/people-profiles-view.js`、`src/settings.js`、`src/memory-content-sanitizer.js`、`src/utils/tag-names.js` 上游零触碰，12 项本地核心资产完整保留；
 - **本次验证**：金样/清洗器 20/20；生产入口 + 装配 9/9；全量测试 1244 例、1243 通过、**唯一失败为第 4 节记载的上游负载敏感时序偶发项**（首轮即现、与本地无关）；跨仓 40 例金样对拍 **80 次用例执行 0 差异**（40 本地 + 40 SDC 各跑双方实现，且各自匹配自身金样）；
+- **v0.5.7 本次合并审计**：真冲突 2 处——`manifest.json` 与 `dist/qqj-app.js`；`src/v3/cse-engine.js` 自动合并后保留本地 `extraOnlySanitizerOptions`，并吸收上游 CSE v0.5.7 逻辑；生产与 CSE 测试均采纳上游新增回归覆盖。
+- **v0.5.7 本次验证**：清洗器 20/20；生产入口 + 装配 9/9；v3 CSE 74/74；全量 1245 例中 1243 通过，`production-dist-branch` 与 `v3-chat-fork` 两项 10 秒初始化超时在纯 `upstream/main` 对照中同样失败；
 - **本次合并的额外本地修复（真实语义冲突，非机械合并）**：
   本地 M0 清洗器合同**保留**已配置的故事时钟引用标签（`storyClockReferenceTags`）于 canonical 正文中，而上游 v0.5.5 新增「编辑时间标签不得撤销已落盘覆盖」的保证依赖 canonical 正文剥离标签。二者相遇导致：改标签 → `canonicalFingerprint` 变化 → `matchFloorCandidates` 绑不上楼 → `evaluateTimeBatches` 丢弃该读取 → `tests/v3-time-flexible-date.test.mjs:95` 失败（对照工作树二分确认：仅拷入本地 `src/utils/tag-names.js` + `src/memory-content-sanitizer.js` 即复现 5/1，纯上游 6/6 通过；上游从未改过 `src/v3/floor-binding.js`）。
   修复方式（加法式，不削弱本地合同、不改金样语义）：为 `matchFloorCandidates` 增加可选第三参 `{ equivalentContent }`，仅供 `src/v3/time-body.js` 的 `readTimeBody` 传入，用新增私有助手 `withoutStoryClockReferenceTags` 剥离**仅已配置的**故事时钟引用标签后比较；新增绑定种类 `'locatorEquivalent'`；其余 14 处调用点行为逐字节不变；
 - **最近提交记录**：
+  - `6c64941`：审计并合并上游 v0.5.7，保留 extra-only 世界书清洗并重建生产 bundle；
   - `7211f6f`：审计并合并上游 v0.5.6（含 v0.5.5），重建生产 bundle，并落地上述 `matchFloorCandidates` 加法式绑定修复；
   - `ead1a6c`：审计并合并上游 v0.5.4（含 v0.5.3），重建生产 bundle；
   - `c6b0446`：审计并合并上游 v0.5.2，重建生产 bundle；
