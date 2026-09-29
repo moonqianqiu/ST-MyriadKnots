@@ -5,7 +5,7 @@
 // 所有断言均与 SevenDaysCal runtime/tag-sanitizer.js stripTags 逐例对拍核实。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeMemoryTagList, sanitizeMemoryContent } from '../src/memory-content-sanitizer.js';
+import { normalizeMemoryTagList, readMemoryTagBlocks, sanitizeMemoryContent, stripMemoryTagBlocks } from '../src/memory-content-sanitizer.js';
 import { findEarliestCanonicalDivergence, scanAssistantCandidates, sanitizerFingerprint } from '../src/v3/foundation-domain.js';
 
 const OT = { think: '<' + 'think>', status: '<' + 'status>', reasoning: '<' + 'reasoning>', content: '<' + 'content>', story: '<' + 'story>', nowplot: '<' + 'now_plot>' };
@@ -30,6 +30,16 @@ test('M2 keep=content：keep 块之外的裸文本与其它块丢弃', () => {
 test('M2 keep 内的非 keep 配对块：保留原标签壳与文本（对齐 SevenDaysCal 合同）', () => {
   const source = OT.content + OT.story + '剧情' + CT.story + OT.nowplot + '正文正文' + CT.nowplot + CT.content;
   assert.equal(sanitizeMemoryContent(source, { keepTags: 'content' }), OT.story + '剧情' + CT.story + OT.nowplot + '正文正文' + CT.nowplot);
+});
+
+test('仅时间标签读取把 br 当 void，旧正文清洗保留原配对语义', () => {
+  // 本地合同：清洗器不注入默认 keepTags（settings 层默认留空 = M0 直通），
+  // 与上游 v0.5.9 默认 'content' 的语义分歧由 settings 层承担，清洗器层保持 M0 逐字节保留。
+  assert.equal(sanitizeMemoryContent('甲<br>乙</br>丙'), '甲<br>乙</br>丙');
+  assert.equal(sanitizeMemoryContent('<meta>说明</meta>'), '<meta>说明</meta>');
+  const source = '<StatusBar>当前状态：2026年5月10日<br><content>后文</content></StatusBar>';
+  assert.equal(stripMemoryTagBlocks(source, 'content'), '<StatusBar>当前状态：2026年5月10日<br> </StatusBar>');
+  assert.deepEqual(readMemoryTagBlocks(source).map(block => [block.name, block.ancestors]), [['statusbar', []], ['content', ['statusbar']]]);
 });
 
 test('标签列表规范化与 keep/extra 行为沿用构画合同', () => {

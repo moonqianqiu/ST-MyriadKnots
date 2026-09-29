@@ -3,14 +3,14 @@ import { buildFoundationIndexes } from './foundation-runtime.js';
 import { createCheckpointInputFingerprints, deterministicUuid, scanAssistantCandidates } from './foundation-domain.js';
 import { validateFoundationCheckpoint, validateFoundationRoot, validateFoundationRun, V3_INDEX_LAYOUT_FLOOR_ORDER } from './foundation-schema.js';
 import { buildExtractorSystemPrompt, buildHighFloorExtractorSystemPrompt, runExtractorRequest, createExtractorEnvelope, inferCanonicalCurrentTime, EXTRACTOR_PROMPT_VERSION, EXTRACTOR_VERSION } from './extractor.js';
-import { memorySourceFloorIds, validateEntityRecord, validateFloorMemory } from './memory-schema.js';
+import { collectFloorMemoryEntityIds, collectStateDeltaEntityIds, memorySourceFloorIds, validateEntityRecord, validateFloorMemory } from './memory-schema.js';
 import { sanitizeDiagnosticValue, sanitizeSensitiveText, sanitizeTaskMetadata } from './safe-metadata.js';
 import { createCseRuntime } from './cse-runtime.js';
 import { filterReachableDeltas, replayCurrentState } from './cse-engine.js';
 import { validateCseGraph } from './cse-schema.js';
 import { assessMemoryCoverageFromHost, diagnosticsWithRealtimeOrigin, realtimeOriginFromReachable } from './memory-coverage.js';
 import { isHostNarratorMessage, selectAssistantMessage, selectUserStabilityAnchor } from './foundation-domain.js';
-import { normalizeStoryClockReferenceTags, parseStoryClockEvidence, storyClockSignature } from '../story-clock.js';
+import { normalizeStoryClockReferenceTags, resolveStoryClock } from '../story-clock.js';
 import { parseJsonOutput } from '../compact-api-client.js';
 import { sanitizeMemoryContent, extraOnlySanitizerOptions } from '../memory-content-sanitizer.js';
 import { buildEntityIdentityDirectory, entitiesThroughFloorIds, normalizeIdentityProjection } from './entity-identity.js';
@@ -144,18 +144,38 @@ function capturePrecedingUserInputSnapshot(hostAdapter, floor, options) {
   return capturePrecedingUserInputFromSnapshot(hostAdapter.snapshot(), floor, options);
 }
 function clockEvidence(selected, referenceTags) {
-  const clock = parseStoryClockEvidence(selected?.rawContent, referenceTags);
-  if (!clock) return Object.freeze({ clock: null, signature: '', displayText: '' });
+  const resolved = resolveStoryClock(selected?.rawContent, referenceTags);
+  if (resolved?.status === 'ambiguous') {
+    const conflictClock = Object.freeze({ complete: false, namespace: resolved.evidence.namespace, start: null, end: null, referenceText: '多个故事时间戳存在冲突' });
+    return Object.freeze({ signature: resolved.signature, clock: conflictClock, displayText: conflictClock.referenceText });
+  }
+  if (!resolved || resolved.status !== 'available') {
+    const current = inferCanonicalCurrentTime(selected?.rawContent);
+    if (current?.text) {
+      const statusClock = Object.freeze({ complete: false, namespace: `body-${current.kind}`, start: null, end: null, referenceText: current.text });
+      return Object.freeze({ signature: JSON.stringify([statusClock.namespace, current.text]), clock: statusClock, displayText: current.text });
+    }
+  }
+  if (resolved?.status === 'incomplete') {
+    const partial = resolved.evidence;
+    const compact = value => value ? Object.freeze({ raw: value.raw, date: value.date, weekday: value.weekday, time: value.time }) : null;
+    const pairs = (partial.pairs ?? []).map(pair => Object.freeze({ start: compact(pair.startMeta), end: compact(pair.endMeta) }));
+    const clock = Object.freeze({ complete: false, namespace: partial.namespace, start: compact(partial.startMeta), end: compact(partial.endMeta), ...(pairs.length > 1 ? { pairs: Object.freeze(pairs) } : {}) });
+    return Object.freeze({ signature: resolved.signature, clock,
+      displayText: [...new Set([clock.start, clock.end].filter(Boolean).map(value => [value.date, value.weekday, value.time].filter(Boolean).join(' ')))].join(' → ') });
+  }
+  if (!resolved || resolved.status !== 'available') return Object.freeze({ clock: null, signature: '', displayText: '' });
+  const clock = resolved.evidence;
   if (typeof clock.referenceText === 'string') {
     const clockValue = Object.freeze({ complete: false, namespace: clock.namespace, start: null, end: null, referenceText: clock.referenceText });
-    return Object.freeze({ signature: storyClockSignature(clock), clock: clockValue, displayText: clock.referenceText });
+    return Object.freeze({ signature: resolved.signature, clock: clockValue, displayText: resolved.text });
   }
   const compact = value => value ? Object.freeze({ raw: value.raw, date: value.date, weekday: value.weekday, time: value.time }) : null;
   const pairs = (clock.pairs ?? []).map(pair => Object.freeze({ start: compact(pair.startMeta), end: compact(pair.endMeta) }));
   const clockValue = Object.freeze({ complete: clock.complete === true, namespace: clock.namespace, start: compact(clock.startMeta), end: compact(clock.endMeta), ...(pairs.length > 1 ? { pairs: Object.freeze(pairs) } : {}) });
   const part = value => [value?.date, value?.weekday, value?.time].filter(Boolean).join(' ');
   return Object.freeze({
-    signature: storyClockSignature(clock),
+    signature: resolved.signature,
     clock: clockValue,
     displayText: pairs.length > 1
       ? pairs.map(pair => `${part(pair.start)} → ${part(pair.end)}`).join('；')
@@ -1136,12 +1156,10 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
       entitiesById.set(entity.id, entity);
     }
     const provisionalDeltas = filterReachableDeltas({ floors: current.floors, floorMemories, stateDeltas: current.stateDeltas ?? [] });
-    const stateEntityIds = new Set(provisionalDeltas.flatMap(delta => [
-      ...delta.subjectSnapshots.flatMap(subject => [subject.subjectEntityId, ...['adaptive', 'situational'].flatMap(category => subject[category].map(item => item.towardEntityId).filter(Boolean))]),
-      ...(delta.fixedChanges ?? []).flatMap(subject => [subject.subjectEntityId, ...subject.items.flatMap(change => [change.before?.towardEntityId, change.after?.towardEntityId].filter(Boolean))]),
-    ]));
+    const memoryEntityIds = new Set(floorMemories.flatMap(memory => [...collectFloorMemoryEntityIds(memory)]));
+    const stateEntityIds = new Set(provisionalDeltas.flatMap(delta => [...collectStateDeltaEntityIds(delta)]));
     const baselineEntityIds = new Set(current.baseline ? [current.baseline.userPersona.entityId, current.baseline.characterCard.entityId] : []);
-    const entities = [...entitiesById.values()].filter(entity => current.floors.some(item => item.id === entity.firstSeenFloorId) || floorMemories.some(memory => JSON.stringify(memory).includes(entity.id)) || stateEntityIds.has(entity.id) || baselineEntityIds.has(entity.id));
+    const entities = [...entitiesById.values()].filter(entity => current.floors.some(item => item.id === entity.firstSeenFloorId) || memoryEntityIds.has(entity.id) || stateEntityIds.has(entity.id) || baselineEntityIds.has(entity.id));
     const nowValue = operation.commitTimestamp ??= nowIso(now);
     const runId = await deterministicUuid(['v3-memory-commit-run', operation.runId, current.root.headCheckpointId, attempt]);
     const checkpointId = await deterministicUuid(['v3-memory-checkpoint', current.root.headCheckpointId, current.root.narrativeGeneration, action, revisionReplacement.id, entities.map(entity => entity.id), runId]);

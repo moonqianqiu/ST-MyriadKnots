@@ -191,3 +191,105 @@ export function extraOnlySanitizerOptions(options = {}) {
 export { normalizeTagRules as normalizeMemoryTagList };
 export { normalizeTagNames };
 export { LITERAL_DOUBLE_BRACKET_RULE, TAG_NAME_RE, TAG_NAME_SOURCE };
+
+// ── 上游 v0.5.9 移植：时间标签块读取/剥离（readMemoryTagBlocks / stripMemoryTagBlocks）──
+// 供 src/v3/extractor.js（楼层时间扫描）与 src/v3/time-body.js（状态栏时间读取）调用。
+// 与上方 M0-M3 四模式合同正交：本节解析器（parseTagTokenTree）记录 start/end/contentStart/
+// contentEnd/textRanges 偏移元数据，且 <br> 按 void-tag 路径处理（不吞其后文本）。
+// 除将上游同名 parseSanitizerTree 更名为 parseTagTokenTree（避免与本文件四模式解析器撞名）外，
+// 本节代码与上游 v0.5.9 逐字一致（含上游 2 空格缩进），便于后续上游合并时该区域零冲突。
+const TAG_PATTERN = /<(\/?)\s*([\p{L}][\p{L}\p{N}_-]*~?)(?:\s[^>]*)?(\/?)>/giu;
+const HTML_VOID_TAGS = new Set(['br']);
+
+function tagTokens(content, { htmlVoidTags = false } = {}) {
+  return [...content.matchAll(TAG_PATTERN)].map(match => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    name: match[2].toLocaleLowerCase('en-US'),
+    closing: match[1] === '/',
+    selfClosing: match[3] === '/' || htmlVoidTags && HTML_VOID_TAGS.has(match[2].toLocaleLowerCase('en-US')),
+  }));
+}
+
+function parseTagTokenTree(content, tokens) {
+  const root = { children: [], textRanges: [] };
+  const stack = [root];
+  let cursor = 0;
+  for (const token of tokens) {
+    const parent = stack.at(-1);
+    if (token.start > cursor) {
+      parent.children.push(content.slice(cursor, token.start));
+      parent.textRanges.push([cursor, token.start]);
+    }
+    if (token.selfClosing) {
+      cursor = token.end;
+      continue;
+    }
+    if (!token.closing) {
+      const node = { name: token.name, closed: false, start: token.start, end: content.length, contentStart: token.end, contentEnd: content.length, children: [], textRanges: [] };
+      parent.children.push(node);
+      stack.push(node);
+    } else if (stack.length > 1) {
+      for (let index = stack.length - 1; index > 0; index -= 1) {
+        if (stack[index].name !== token.name) continue;
+        stack[index].closed = true;
+        stack[index].end = token.end;
+        stack[index].contentEnd = token.start;
+        stack.length = index;
+        break;
+      }
+    }
+    cursor = token.end;
+  }
+  stack.at(-1).children.push(content.slice(cursor));
+  stack.at(-1).textRanges.push([cursor, content.length]);
+  return root;
+}
+
+export function stripMemoryTagBlocks(raw, tagNames) {
+  const source = String(raw ?? '');
+  const names = new Set(normalizeTagRules(tagNames).map(name => name.toLocaleLowerCase('en-US')));
+  if (!names.size || !source) return source;
+  const content = source.replace(/<!--[\s\S]*?-->/gu, ' ');
+  const ranges = [];
+  const visit = (children, textRanges, rescueText = false) => {
+    if (rescueText) ranges.push(...textRanges);
+    for (const child of children) {
+      if (typeof child === 'string') continue;
+      if (names.has(child.name)) {
+        if (child.closed) ranges.push([child.start, child.end]);
+        else visit(child.children, child.textRanges, true);
+      } else {
+        visit(child.children, child.textRanges, rescueText && !child.closed);
+      }
+    }
+  };
+  const tree = parseTagTokenTree(content, tagTokens(content, { htmlVoidTags: true }));
+  visit(tree.children, tree.textRanges);
+  if (!ranges.length) return content;
+  ranges.sort((left, right) => left[0] - right[0]);
+  let output = '', cursor = 0;
+  for (const [start, end] of ranges) {
+    output += content.slice(cursor, start) + ' ';
+    cursor = end;
+  }
+  return output + content.slice(cursor);
+}
+
+export function readMemoryTagBlocks(raw) {
+  const source = String(raw ?? '').replace(/<!--[\s\S]*?-->/gu, ' ');
+  const blocks = [];
+  const plainText = children => children.map(child => typeof child === 'string' ? child : plainText(child.children)).join(' ');
+  const visit = (children, ancestors = [], parentRange = null) => {
+    for (const child of children) {
+      if (typeof child === 'string') continue;
+      blocks.push(Object.freeze({ name: child.name, closed: child.closed, ancestors: Object.freeze([...ancestors]),
+        depth: ancestors.length + 1, parentRange: parentRange && Object.freeze([...parentRange]),
+        directText: child.textRanges.map(([start, end]) => source.slice(start, end)).join(' '),
+        text: plainText(child.children).replace(/\s+/gu, ' ').trim(), rawContent: source.slice(child.contentStart, child.contentEnd) }));
+      visit(child.children, [...ancestors, child.name], [child.start, child.end]);
+    }
+  };
+  visit(parseTagTokenTree(source, tagTokens(source, { htmlVoidTags: true })).children);
+  return Object.freeze(blocks);
+}
