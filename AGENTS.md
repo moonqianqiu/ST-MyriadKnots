@@ -10,14 +10,14 @@
 ## 1. 仓库定位与版本构建惯例
 
 1. **版本声明 (`manifest.json`)**：
-   - 跟随上游官方发布版本号（当前已同步至 **`0.5.9`**）。
+   - 跟随上游官方发布版本号（当前已同步至 **`0.5.11`**）。
 2. **打包构建与产物约束 (`dist/qqj-app.js`)**：
    - 生产单文件由 `npm run build`（Vite + Rolldown）编译生成；
    - 源码发生任何变动后，**必须重新构建 bundle**，否则入口加载测试会失败。
 3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：
    - 格式强制规范：`dist/qqj-app.js?v=YYYYMMDD.<递增序号>-<bundle SHA-256 前16位>`；
    - `tests/production-entry-load.test.mjs` 会严格校验该哈希是否与实际 `dist/qqj-app.js` 的文件摘要一致；
-   - 序号随打包批次全局递增（当前批次为 **`20260929.39`**）。
+   - 序号随打包批次全局递增（当前批次为 **`20260929.40`**）。
 4. **分支与同步策略**：
    - 合并上游前先建立备份分支：`git branch backup/main-before-upstream-vX.Y.Z main`；
    - 在 `main` 分支执行 `--no-ff` 合并：`git merge --no-ff upstream/main`；
@@ -37,6 +37,7 @@
 | `tests/v3-wiring.test.mjs` | 架构装配接口导出与版本断言冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
 | `tests/v3-cse.test.mjs` | 上游新增 `runtimeHarness` 宿主参数与本地 `sanitizerOptions` 参数冲突 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场（v0.5.6 合并首次出现） |
 | `src/memory-content-sanitizer.js` | 上游 v0.5.8 将清洗器整体重写为「默认 keep='content'」简化实现，并新增 `stripMemoryTagBlocks`/`readMemoryTagBlocks` 导出，与本地四模式合同全面相撞 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（仅将上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避免撞名，2 空格缩进原样保留使该区域未来合并零冲突）；自动合并测试中依赖上游默认 keep='content' 的断言按本地 M0 合同改写（v0.5.9 合并首次出现） |
+| `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能时与本地叠加层相撞（v0.5.11：上游删除群体整理 `fullRewriteEnvelope`/`rewriteSelectedProfiles` 换成轻扫 `automaticRecentFloors`，撞掉本地第二处 extra-only 调用点与视图 `recallRuntime` 注入） | **随功能走 + 本地注入保留**：被上游删除的功能代码连同其专属保护点一并放弃（功能没了保护点自然不需要）；视图工厂签名保留本地 `recallRuntime = null` 参数并采纳上游瘦身后的 runtime 校验列表；存留的世界书路径 extra-only 调用点逐一复核（v0.5.11 合并首次出现） |
 
 > **业务文件自动合并注意**：
 > - `src/settings.js`：本地添加的 `sourceKeepTags: ''` 与上游存储自动清理字段位于不同区域，自动合入；
@@ -157,13 +158,17 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **当前工作分支**：`main`（v0.5.9 合并提交，哈希见 `git log`）；
-- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.9`，提交 `efdc17b`，含 `v0.5.8`/`dcfec9a`）；
-- **当前产物版本**：`manifest.json` 版本号 `0.5.9`，缓存键 `20260929.39-b4f1466bda79225a`（bundle SHA-256 前 16 位）；
+- **当前工作分支**：`main`（v0.5.11 合并提交，哈希见 `git log`）；
+- **跟踪上游基线**：已合入 `upstream/main`（Tag: `v0.5.11`，提交 `6475a65`，含 `v0.5.10`/`20c7280`）；
+- **当前产物版本**：`manifest.json` 版本号 `0.5.11`，缓存键 `20260929.40-03173b1854dd0b22`（bundle SHA-256 前 16 位）；
 - **v0.5.5/v0.5.6 上游能力**：v0.5.5（① 归档旧楼手动回填不再因正文被编辑/切 swipe 而拒绝，以归档快照为准；② 千事「编辑详情」可改/清空 **涉及物品（object）**，下游检索/召回/候选读取新值；③ 千事时间线按日期折叠，恒显日期+条数，搜索命中临时展开该日期、清空搜索恢复手动展开态；④ 新增 **user Core 提取**机制 `userCoreExtraction`，仅从 userPersona 文本提取用户长期核心特质，新字段 `userCoreExtraction`/`userCoreCheck`/`manualCoreSubjectEntityIds`，CSE 提示词 `qqj-v3-cse-prompt-23`、提取器提示词 `qqj-v3-extractor-prompt-24`）；v0.5.6（标准 ST 宿主上下文缺少 Persona 标识时，回退取当前条目 user UserPersona 标识，`index.js` 向 `createHostAdapter` 注入 `personaIdentifierProvider: () => user_avatar`；无可用标识时跳过用户 Core 辅助提取，常规角色状态分析照常保存）；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
 - **v0.5.7 上游能力**：CSE 提示词升级至 `qqj-v3-cse-prompt-24`、编译器升级至 `calibration-compiler-13`；兼容 `subjects`/`people` 等人物结果别名并拒绝冲突字段；所有候选均被隔离时明确失败并触发重试；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
 - **v0.5.8 上游能力（时间链路与千事日历兼容）**：清洗器新增 `stripMemoryTagBlocks(raw, tagNames)` / `readMemoryTagBlocks(raw)` 导出（节点携带 `start/end/contentStart/contentEnd/textRanges` 偏移元数据，`<br>` 按 void-tag 路径处理不吞其后文本）；`src/v3/extractor.js` 的 `inferCanonicalCurrentTime` 改为标签块感知（`<date>/<time>` 字段组、status 容器、excluded 标签块过滤）；`src/v3/time-body.js` 的 `currentBodyClock` 先在剥离 content 块的原文上找状态栏时间、再回退清洗后正文；千事后端与日历兼容性修正；本地清洗器、extra-only 隔离与召回失效闭环均已保留；
 - **v0.5.9 上游能力**：字号以旧版 85% 档观感为基准，调整后固定所选大小不再随窗口缩放（新增 `src/ui/font-scale.js`）；高级 API 设置中每个配置可单独留空温度沿用默认行为；召回标题放大到 150% 时允许换行；人物资料保存时保全引用字段；
+- **v0.5.10 上游能力**：千事时间线把无法确定发生日期的事件单独收入「无法确定单一发生时间」分组，编辑自动展开、重绘保留手动展开态；时间解析保留约略表述（日期明确钟点约略时按日期归组但不按钟点精确排序，日期约略入未定分组，具名纪年「约」前缀仍按历法名识别）；摘要解析兼容限定说明包围的唯一 JSON 对象、stop 结束且只缺唯一结尾大括号的情况，标准 `people` 无可用人物时可回退读取 `person`；
+- **v0.5.11 上游能力**：千人轻扫——每约十个新增稳定 AI 楼触发近期原文轻扫，只更新明确新增或重大变化的长期资料，手动修改优先、无有效新结果保留旧资料、迟到结果不写入已变化的人物或聊天；移除千人页顶部群体整理入口及专属流程（`fullRewriteEnvelope`/`rewriteSelectedProfiles` 删除），仍可逐人整理；
+- **v0.5.11 本次合并实况**：真冲突 4 处——`manifest.json`（版本号 + 缓存键）、`dist/qqj-app.js`（编译产物）、`src/ui/people-profiles-view.js`（本地 `recallRuntime` 注入参数 vs 上游删除 `rewriteSelectedProfiles` 校验项，取并集）、`src/v3/people-workspace.js`（上游删除 `fullRewriteEnvelope` 换成 `automaticRecentFloors` 轻扫，随功能走）；上游触碰 `people-workspace.js`（302 行）与 `people-profiles-view.js`（19 行）两个本地热区，`view.js:128` 的 `peopleProfileSaved` 失效联动与 `people-workspace` 世界书路径 extra-only 调用点均完好；`people-workspace` 第二处 extra-only 调用点随被删除的整档重写功能一并消失（轻扫流程不读世界书，无需保护点）；清洗器、time-body、settings、floor-binding、recall-runtime 上游零触碰；
+- **v0.5.11 本次验证**：金样/清洗器 21/21（40 例金样逐字节）；生产入口 + 装配 30/30（含金样合并跑）；千人套件 70/70；extractor/CSE/千事/故事时钟 421/421；**全量 1278/1278 全绿**（首轮失败为第 4 节记载的上游负载敏感时序偶发项，重跑通过）；跨仓 40 例金样对拍 **三方逐字节 0 差异**；
 - **v0.5.9 本次合并实况**：真冲突 3 处——`manifest.json`（版本号 + 缓存键）、`dist/qqj-app.js`（编译产物）、**`src/memory-content-sanitizer.js`（首次真冲突：上游 v0.5.8 将清洗器整体重写为「默认 keepTags='content'」简化实现，与本地四模式合同全面相撞）**；其余全部三方自动平滑合并（`src/settings.js` 本地 `sourceKeepTags: ''` 默认完好，`src/v3/floor-binding.js` 的 `equivalentContent`/`locatorEquivalent` 绑定修复完好）；
 - **v0.5.9 冲突裁决（清洗器双层保留）**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 及全部既有导出**逐字节保留**；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks` 连同 `tagTokens`/`HTML_VOID_TAGS`/元数据解析器**整段移植**（仅将上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避免撞名，上游 2 空格缩进原样保留使该区域未来合并零冲突）；移植段内归一化引用改走本地 `normalizeTagRules`（简单标签名下与上游归一化等价，含 `[,，\n]` 分隔与 `<tag>` 解包）；
 - **v0.5.9 测试侧适配**：自动合并的 `tests/memory-content-sanitizer.test.mjs` 中，上游新测试两条断言依赖上游「默认 keepTags='content'」语义（`sanitizeMemoryContent('甲<br>乙</br>丙')==='甲丙'`、`sanitizeMemoryContent('<meta>说明</meta>')===''`），按本地合同改写为 M0 直通正断言（两输入逐字节保留）；`stripMemoryTagBlocks`/`readMemoryTagBlocks` 的 br-void 与祖先链断言原样保留；
@@ -177,7 +182,8 @@
 - **v0.5.7 合并审计**：真冲突 2 处——`manifest.json` 与 `dist/qqj-app.js`；`src/v3/cse-engine.js` 自动合并后保留本地 `extraOnlySanitizerOptions`，并吸收上游 CSE v0.5.7 逻辑；生产与 CSE 测试均采纳上游新增回归覆盖；
 - **v0.5.7 合并验证**：清洗器 20/20；生产入口 + 装配 9/9；v3 CSE 74/74；全量 1245 例中 1243 通过，`production-dist-branch` 与 `v3-chat-fork` 两项 10 秒初始化超时在纯 `upstream/main` 对照中同样失败；
 - **最近提交记录**：
-  - 本次合并：审计并合并上游 v0.5.9（含 v0.5.8），清洗器双层保留（本地四模式合同 + 上游 strip/read 导出移植）、time-body 加法式内容视图兜底、重建生产 bundle；
+  - 本次合并：审计并合并上游 v0.5.11（含 v0.5.10），千人热区冲突裁决（视图 recallRuntime 注入保留、整档重写随上游删除）、重建生产 bundle；
+  - v0.5.9 合并：审计并合并上游 v0.5.9（含 v0.5.8），清洗器双层保留（本地四模式合同 + 上游 strip/read 导出移植）、time-body 加法式内容视图兜底、重建生产 bundle；
   - `6c64941`：审计并合并上游 v0.5.7，保留 extra-only 世界书清洗并重建生产 bundle；
   - `7211f6f`：审计并合并上游 v0.5.6（含 v0.5.5），重建生产 bundle，并落地上述 `matchFloorCandidates` 加法式绑定修复；
   - `ead1a6c`：审计并合并上游 v0.5.4（含 v0.5.3），重建生产 bundle；
