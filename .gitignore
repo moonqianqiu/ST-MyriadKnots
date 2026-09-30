@@ -27,3 +27,4 @@ data/
 
 # Claude Code local session/config
 .claude/
+.zcode/
