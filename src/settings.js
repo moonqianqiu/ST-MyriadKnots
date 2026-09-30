@@ -33,6 +33,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 注意 keepTags 非空时（如 'content'）按 M2 合同只保留 keep 块内部，块外裸文本会丢弃。
   sourceKeepTags: '',
   sourceExtraTags: '',
+  // 一次性迁移标记：上游 v0.5.8+ 的默认 sourceKeepTags='content' 曾被 get() 的默认回写持久化进存档，
+  // 而本地 M2 合同下 keepTags 非空时会丢弃 keep 块之外的裸文本（见 migrateSanitizerKeepTags）。
+  sanitizerKeepTagsMigrationVersion: 0,
   processingPrompt: '',
   summaryPrompt: '',
   csePrompt: '',
@@ -420,6 +423,17 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     notify();
     return true;
   };
+  // 存量存档里的 sourceKeepTags 可能是上游 v0.5.8+ 的默认值 'content'（由 get() 的默认回写持久化）。
+  // 本地 M2 只保留 keep 块内部、丢弃块外裸文本，该值会让无 <content> 标签的 AI 正文被静默清空。
+  // 无法区分「沿用上游默认」与「用户手填 content」：按裁决统一重置一次并记录版本号，用户可再手动填回。
+  const migrateSanitizerKeepTags = () => {
+    const current = get();
+    if ((Number(current.sanitizerKeepTagsMigrationVersion) || 0) >= 1) return false;
+    if (String(current.sourceKeepTags ?? '').trim().toLowerCase() === 'content') current.sourceKeepTags = '';
+    current.sanitizerKeepTagsMigrationVersion = 1;
+    notify();
+    return true;
+  };
   return {
     get,
     update,
@@ -442,6 +456,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     setSharedWorldInfoExcluded,
     sourcePermissionSnapshot,
     migrateLegacyApiSettings,
+    migrateSanitizerKeepTags,
     isEnabled: () => get().pluginEnabled !== false,
   };
 }

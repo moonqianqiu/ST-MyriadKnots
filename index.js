@@ -46,6 +46,9 @@ const newUuid = () => hostContext().uuidv4();
 const contextProvider = () => ({ ...hostContext(), userAvatar: user_avatar });
 const settings = createSettingsStore({ extensionSettings: extension_settings, save: saveSettingsDebounced });
 settings.migrateLegacyApiSettings();
+// 存量存档若带上游 v0.5.8+ 默认 keepTags='content'，先在本地 M2 合同下重置为「不清洗」（只发生一次）。
+// 可选链：宿主/测试桩可能只提供最小 store，缺失时跳过迁移而不是中断加载。
+settings.migrateSanitizerKeepTags?.();
 const sevenDaysClockState = () => extensionStoryClockState({ extensionNames, disabledExtensions: extension_settings.disabledExtensions, extensionSuffix: '/ST-SevenDaysCal', peerSettings: extension_settings['schedule-planner'] });
 const isSevenDaysAvailable = () => {
   const extensionId = extensionNames.find(name => String(name).endsWith('/ST-SevenDaysCal'));

@@ -61,6 +61,36 @@ test('提示词模块字段 change 即持久化', () => {
   assert.equal(fieldControl(node, '通用附加提示词'), undefined, '退役入口不得继续显示');
 });
 
+test('包裹符冲突回退取最近一次成功保存值，而非视图创建时的陈旧快照', async () => {
+  const current = { sourceKeepTags: 'content', sourceExtraTags: '' };
+  const patches = [];
+  const settings = { get: () => ({ ...current }), update: patch => { Object.assign(current, patch); patches.push(patch); return { ...current }; } };
+  const { node } = createPromptsSettings({ settings, documentRef });
+  const wrappers = node.find(n => n.id === 'qqj-settings-wrappers');
+  const keep = fieldControl(wrappers, '保留包裹符');
+  const clean = fieldControl(wrappers, '清洗包裹符');
+  assert.equal(keep.value, 'content');
+  assert.equal(clean.value, '');
+  // 视图创建后，清洗栏成功保存过 reasoning（持久层随之改变）
+  clean.value = 'reasoning'; await clean.fire('change');
+  assert.deepEqual(patches.at(-1), { sourceExtraTags: 'reasoning' });
+  assert.equal(current.sourceExtraTags, 'reasoning');
+  // 二次冲突：清洗栏填了保留栏已有的 content → 拒绝落存，回退到刚保存成功的 reasoning（创建时快照会是空串）
+  clean.value = 'content'; await clean.fire('change');
+  assert.equal(clean.value, 'reasoning', '回退值必须来自持久层当前值');
+  assert.equal(current.sourceExtraTags, 'reasoning', '冲突值不得落存');
+  assert.equal(patches.at(-1).sourceExtraTags, 'reasoning');
+  const hint = wrappers.find(n => n.className.split(' ').includes('settings-result'));
+  assert.match(hint.className, /error/);
+  assert.match(hint.textContent, /不能填相同标签/);
+  assert.match(hint.textContent, /content/);
+  // 解除冲突后正常落存并清除提示
+  clean.value = 'think'; await clean.fire('change');
+  assert.deepEqual(patches.at(-1), { sourceExtraTags: 'think' });
+  assert.equal(hint.textContent, '');
+  assert.doesNotMatch(hint.className, /error/);
+});
+
 test('提示词模块提供时间戳开关、独立参考标签、原样自定义、恢复默认与协调状态', async () => {
   const current = { sourceKeepTags: 'content', sourceExtraTags: '', storyClockEnabled: true, storyClockPrompt: '', storyClockReferenceTags: '' };
   const patches = [], refreshes = [];

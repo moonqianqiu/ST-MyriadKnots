@@ -647,3 +647,32 @@ test('副任务沿用统一 disabled 与 external signal 守卫', async () => {
   assert.equal(calls, 1);
   assert.equal(router.getActiveCount(), 0);
 });
+
+test('存量存档的上游默认 keepTags=content 被迁移重置一次，此后用户手填不再被覆盖', () => {
+  const extensionSettings = { qianqianjie: { sourceKeepTags: 'content', sourceExtraTags: 'think' } };
+  const { settings, saves } = setup(extensionSettings);
+  // 上游 v0.5.8+ 默认 keepTags='content' 被 get() 的默认回写持久化；本地 M2 下它会清空无 <content> 标签的 AI 正文。
+  assert.equal(settings.get().sanitizerKeepTagsMigrationVersion, 0);
+  assert.equal(settings.migrateSanitizerKeepTags(), true);
+  assert.equal(settings.get().sourceKeepTags, '');
+  assert.equal(settings.get().sanitizerKeepTagsMigrationVersion, 1);
+  assert.equal(extensionSettings.qianqianjie.sourceExtraTags, 'think', '迁移不得触碰清洗栏');
+  assert.equal(saves(), 1, '迁移只调度一次保存');
+  // 用户在 UI 里再次手填 content：版本号已置 1，迁移永不覆盖
+  settings.update({ sourceKeepTags: 'content' });
+  assert.equal(settings.migrateSanitizerKeepTags(), false);
+  assert.equal(settings.get().sourceKeepTags, 'content');
+});
+
+test('迁移不触碰用户手改过的多标签值，且全新存档同样置位', () => {
+  const legacy = setup({ qianqianjie: { sourceKeepTags: 'content,summary', sourceExtraTags: '' } }).settings;
+  assert.equal(legacy.migrateSanitizerKeepTags(), true);
+  assert.equal(legacy.get().sourceKeepTags, 'content,summary', '非纯默认值的存量配置按用户意图保留');
+  assert.equal(legacy.get().sanitizerKeepTagsMigrationVersion, 1);
+
+  const fresh = setup({}).settings;
+  assert.equal(fresh.get().sourceKeepTags, '');
+  assert.equal(fresh.migrateSanitizerKeepTags(), true);
+  assert.equal(fresh.get().sourceKeepTags, '');
+  assert.equal(fresh.get().sanitizerKeepTagsMigrationVersion, 1);
+});

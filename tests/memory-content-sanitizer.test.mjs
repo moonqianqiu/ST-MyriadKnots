@@ -134,3 +134,37 @@ test('显式 sourceKeepTags=content 时正文格式不再被吞（回归案例�
   assert.match(result, /剧情/u);
   assert.doesNotMatch(result, /思考|场景|<meanwhile>|<options>|disclaimer/u);
 });
+
+// 通用字面量包裹规则（`起始...结束`）：两栏都可配置，keep 栏剥壳取内、extra 栏连定界符整块删。
+// `[[...]]` 只是该规则的一个特例，故以下用例与既有双中括号用例共用同一套树机。
+test('包裹规则归一化：任意 `起始...结束` 原样保留，非法形态丢弃', () => {
+  // a) 非双中括号的包裹规则不再被静默丢弃
+  assert.deepEqual(normalizeMemoryTagList('{{...}},think,<<...>>'), ['{{...}}', 'think', '<<...>>']);
+  // b) 三类非法形态：开定界符为空 / 闭定界符为空 / 分隔符出现两次（歧义）
+  assert.deepEqual(normalizeMemoryTagList('...abc,abc...,a...b...c'), []);
+  // 既有合同不回归：标签名仍小写归一，包裹规则大小写敏感原样保留
+  assert.deepEqual(normalizeMemoryTagList('THINK, [[...]], {{...}} '), ['think', '[[...]]', '{{...}}']);
+});
+
+test('包裹规则在 extra 栏：整块删除，未闭合不吞 EOF', () => {
+  // c) 成对包裹连定界符删除
+  assert.equal(sanitizeMemoryContent('正文{{噪音}}尾部', { keepTags: '', extraTags: '{{...}}' }), '正文尾部');
+  // d) 未闭合不匹配 token → 按原文保留（不吞至 EOF）
+  assert.equal(sanitizeMemoryContent('正文{{噪音', { keepTags: '', extraTags: '{{...}}' }), '正文{{噪音');
+  // f) 多条包裹规则并存
+  assert.equal(sanitizeMemoryContent('A{{1}}B<<2>>C', { keepTags: '', extraTags: '{{...}},<<...>>' }), 'ABC');
+});
+
+test('包裹规则在 keep 栏：剥壳取内层（本 fork 扩展，`[[...]]` 同路）', () => {
+  // e) 保留栏的通用包裹符生效：正文被成对符号包住时取其内部
+  assert.equal(sanitizeMemoryContent('正文{{核心}}尾部', { keepTags: '{{...}}', extraTags: '' }), '核心');
+  // 与既有双中括号语义一致（金样 :54 的同类形态）
+  assert.equal(sanitizeMemoryContent('x <<a b>> y', { keepTags: '<<...>>', extraTags: '' }), 'a b');
+});
+
+test('包裹规则在 M3：extra 穿透 keep 子树，恒优先', () => {
+  // g) keep 块内的包裹噪音同样被剔除
+  assert.equal(sanitizeMemoryContent(OT.content + '正文{{噪音}}尾' + CT.content, { keepTags: 'content', extraTags: '{{...}}' }), '正文尾');
+  // 外层 extra、内层 keep：整块剔除（与双中括号判例同构）
+  assert.equal(sanitizeMemoryContent('{{' + OT.content + '秘密' + CT.content + '}}', { keepTags: 'content', extraTags: '{{...}}' }), '');
+});

@@ -14,8 +14,8 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   const { drawer: wrapperDrawer, body: wrapperBody } = subDrawer({ title: '包裹符', id: 'qqj-settings-wrappers' });
   const current = settings.get();
 
-  const keepTags = element('input', 'settings-input'); keepTags.value = current.sourceKeepTags ?? ''; keepTags.placeholder = '留空＝不清洗；示例：content';
-  const extraTags = element('input', 'settings-input'); extraTags.value = current.sourceExtraTags ?? ''; extraTags.placeholder = '示例（不会自动生效）：think, reasoning, [[...]]';
+  const keepTags = element('input', 'settings-input'); keepTags.value = current.sourceKeepTags ?? ''; keepTags.placeholder = '留空＝不清洗；示例：content, [[...]]';
+  const extraTags = element('input', 'settings-input'); extraTags.value = current.sourceExtraTags ?? ''; extraTags.placeholder = '示例（不会自动生效）：think, reasoning, [[...]], {{...}}';
   const storyClockEnabled = element('input'); storyClockEnabled.type = 'checkbox'; storyClockEnabled.checked = current.storyClockEnabled !== false;
   const storyClockPrompt = element('textarea', 'settings-input'); storyClockPrompt.value = current.storyClockPrompt ?? ''; storyClockPrompt.placeholder = '留空＝使用千千结内置默认时间戳提示词';
   const storyClockReferenceTags = element('input', 'settings-input'); storyClockReferenceTags.value = current.storyClockReferenceTags ?? ''; storyClockReferenceTags.placeholder = '填写成对标签名（可选）';
@@ -32,23 +32,25 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   const { drawer: profileDrawer, body: profileBody } = subDrawer({ title: '人物资料内容指导', id: 'qqj-settings-profile-prompt' });
 
   // 保留/清洗两栏不得同名（对齐 ST-SevenDaysCal bindTagField 校验）：命中交集即拒绝落存、
-  // 回退输入框旧值并给行内错误提示（本项目无 toast 体系，沿用 settings-result error 模式）。
-  // [[...]] 字面量经 normalizeMemoryTagList 归一后参与比较，天然覆盖双中括号规则。
+  // 回退输入框为持久层当前值并给行内错误提示（本项目无 toast 体系，沿用 settings-result error 模式）。
+  // 标签名与 `起始...结束` 字面量包裹规则都经 normalizeMemoryTagList 归一后参与比较，
+  // 故两栏填同一条包裹规则（如都写 {{...}}）同样会被拦下。
   const tagClashHint = element('p', 'settings-result');
   const setTagClashHint = names => {
     if (!names) { tagClashHint.textContent = ''; tagClashHint.className = 'settings-result'; return; }
     tagClashHint.textContent = `「保留包裹符」与「清洗包裹符」两栏不能填相同标签：${names.join(',')}。请先从另一栏移除。`;
     tagClashHint.className = 'settings-result error';
   };
-  const savedKeepTags = current.sourceKeepTags ?? '';
-  const savedExtraTags = current.sourceExtraTags ?? '';
   const bindTagFieldWithClashCheck = (control, key, otherValue) => {
     control.addEventListener('change', () => {
       const normalized = normalizeMemoryTagList(control.value);
       const other = normalizeMemoryTagList(otherValue());
       const clash = normalized.filter(name => other.includes(name));
       if (clash.length) {
-        control.value = key === 'sourceKeepTags' ? savedKeepTags : savedExtraTags;
+        // 回退读持久层当前值（= 最近一次成功保存值）：本面板只在 panel 初始化时创建一次，
+        // 若用创建时快照，二次冲突会把用户刚保存的合法值回退成陈旧值。
+        // 回退后显示归一化结果（如 Content → content），与真实落盘状态一致。
+        control.value = settings.get()[key] ?? '';
         setTagClashHint(clash);
         return;
       }

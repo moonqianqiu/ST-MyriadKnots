@@ -10,7 +10,7 @@
 
 1. **版本声明 (`manifest.json`)**：跟随上游官方发布版本号。
 2. **生产单文件 (`dist/qqj-app.js`)**：由 `npm run build`（Vite + Rolldown）编译生成；源码任何变动后**必须重新构建 bundle**，否则入口加载测试会失败。
-3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：格式强制 `dist/qqj-app.js?v=YYYYMMDD.<全局递增序号>-<bundle SHA-256 前16位>`；`tests/production-entry-load.test.mjs` 严格校验该哈希与实际 bundle 文件摘要一致。
+3. **缓存键规则 (`manifest.json` 的 `js` 字段)**：格式强制 `dist/qqj-app.js?v=YYYYMMDD.<全局递增序号>-<bundle SHA-256 前16位>`；`tests/production-entry-load.test.mjs` 严格校验该哈希与实际 bundle 文件摘要一致。**序号在全库历史内全局递增（同一天多次重建也不得复用已用过的序号）；哈希必须取自真实重建产物的 SHA-256 前 16 位（小写），禁止手写或沿用上一次的值**——2026-09-30 曾出现文档记录 `…41-80132f68…` 而实际产物为 `…41-e50ecda8…` 的漂移，即因重建后未同步序号与哈希。
 4. **合并流程**：先建备份分支 `git branch backup/main-before-upstream-vX.Y.Z main`，再在 `main` 上执行 `git merge --no-ff upstream/main`；本地合并验证完整前不向远程 force push。
 
 ---
@@ -33,7 +33,7 @@
 > **业务文件自动合并注意**：`src/settings.js`（本地 `sourceKeepTags: ''` 与上游存储自动清理字段不同区域）、`src/v3/cse-engine.js` 与 `src/v3/memory-runtime.js`（本地 `extraOnlySanitizerOptions` 拦截与上游新提示词/千事调度正交）均可三方自动合入。
 
 > **本地已修改的上游产权文件（未来合并的潜在冲突热区；上游重写对应链路时，须以本地增强为产权逐项回植并重跑对应测试全绿）**：
-> - `src/v3/recall-runtime.js`：本地叠加三处增强——见证截断 / 密封点版本重对齐 / `invalidate` 支持 `clearPersisted`（详见 3.4）→ `tests/v3-recall.test.mjs`。**v0.6.x 实录**：上游将 `captureCoreBodyWitness` 导出并加第 4 位参数 `maximumFloors`（经 `normalizeAutoHideKeepAiCount` 归一化，其测试按位置传参调用）——并集签名为 `(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null)`，内部调用点传 `(…, recentBodyFloorLimit(), user?.message)`；循环保留本地 triggerIndex 向前截断、上限改用上游归一化值；
+> - `src/v3/recall-runtime.js`：本地叠加三处增强——见证截断 / 密封点版本重对齐 / `invalidate` 支持 `clearPersisted`（详见 3.4）→ `tests/v3-recall.test.mjs`（与上游逐字相同，本地断言一律加在 `tests/recall-local-guards.test.mjs`）。**v0.6.x 实录**：上游将 `captureCoreBodyWitness` 导出并加第 4 位参数 `maximumFloors`（经 `normalizeAutoHideKeepAiCount` 归一化，其测试按位置传参调用）——并集签名为 `(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null)`，内部调用点传 `(…, recentBodyFloorLimit(), user?.message)`；循环保留本地 triggerIndex 向前截断、上限改用上游归一化值；
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与新增绑定种类 `'locatorEquivalent'`——为弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖（依赖 canonical 剥离标签）」的语义冲突而加；经私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `src/v3/time-body.js` 的 `readTimeBody` 传入，其余调用点行为不变；
 > - `src/v3/time-body.js`：`currentBodyClock` 加法式内容视图兜底——canonical 探测返回 null（非 ambiguous）时以 `sanitizeMemoryContent(rawContent, { keepTags: 'content' })` 再探一次，弥合上游时间测试对「effective canonical 已剥出 content」的依赖；用户已显式配置 keepTags 时行为不变 → `tests/v3-time-body.test.mjs`；
 > - `src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构的 `invalidate` 联动点）、`src/ui/people-profiles-view.js`（`saveProfile` 联动点）、`src/bootstrap.js`（`recallRuntime` 注入）——上游若重排这几处 UI 装配代码，须保住三处 `invalidate` 联动调用。
@@ -51,9 +51,10 @@
   - **M1（仅 extra）**：成对删除 extra 标签及内容，未闭合 extra 吞至同名闭合或文末（噪音不泄漏）；
   - **M2（仅 keep）**：剥壳保留 keep 块内容（内部不再二次清洗，嵌套标签原样保留），块外裸文本丢弃；
   - **M3（混合）**：extra 恒优先，无论在外层、包裹 keep 还是嵌套在 keep 子树内一律整块剔除；
-  - **三分支 token 正则**：`TAG_ATTR_SOURCE`（引号感知，属性内 `>` 不截断）+ `TAG_ATTR_FALLBACK_SOURCE`（未闭合引号宽松兜底回退旧行为，防止思维链泄漏）+ `[[...]]`；
+  - **三分支 token 正则**：`TAG_ATTR_SOURCE`（引号感知，属性内 `>` 不截断）+ `TAG_ATTR_FALLBACK_SOURCE`（未闭合引号宽松兜底回退旧行为，防止思维链泄漏）+ 每条配置的字面量包裹规则各一分支（由 `freshTokenRx(wrapperRules)` 动态生成）；
   - **自闭合标记**：keep 子树内自闭合 extra 标记连标记删除，非 extra 原样保留 openRaw。
-- **合法差异保留**：`src/utils/tag-names.js` 接受 `[,，\n]` 分隔符（中文逗号与换行兼容）。
+- **通用字面量包裹规则（P5 已于 2026-09-30 按方案 B 恢复）**：两栏都接受任意「起始...结束」（`LITERAL_WRAPPER_SEPARATOR = '...'`，如 `{{...}}`、`<<...>>`），`...` 前=开定界符、后=闭定界符；keep 栏=剥壳取内层，extra 栏=连同定界符整块删除，`[[...]]` 只是其特例。解析由 `collectWrapperRules(keep, extra)` 收集两栏并集（去重、按开定界符长度降序防短前缀抢占）后生成 `kind:'wrapper'` 节点，`renderFlat`/`renderKeptInner` 用节点自带 `openRaw`/`closeRaw` 重建 —— **不再有硬编码 `\[\[…\]\]`，也取消了上游式前置删除与 keep 栏 `TAG_NAME_PATTERN` 过滤**。归一化侧 `normalizeTagRules` 对包裹规则原样保留（大小写敏感）、对标签名照旧小写；非法形态（开/闭定界符为空、`...` 出现两次）按 `literalWrapperRule` 三条件丢弃。
+- **与上游包装符语义的唯一分歧**：嵌套包装符（如 `{{a{{b}}c}}`）本 fork 按树机整块处理（与本地 `[[...]]` 既有树机语义一致），上游 `dropLiteralWrappedContent` 为扁平 indexOf 扫描；40 例金样不含嵌套包装符，故不冲突。
 - **测试侧不得回退**：`tests/memory-content-sanitizer.test.mjs` 中上游两条依赖「默认 keepTags='content'」语义的断言，已按本地 M0 合同改写为直通正断言（两输入逐字节保留），未来合并不得采用上游语义覆盖。
 - **v0.5.8+ 双层文件结构**：文件前半部为本地四模式合同，后半部为上游移植段（`stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`parseTagTokenTree`，服务 v3 时间链路，`<br>` 按 void-tag 处理、节点携带偏移元数据；移植段内归一化引用改走本地 `normalizeTagRules`，简单标签名下与上游归一化等价），与四模式合同正交。上游后续若改这些导出，直接对齐上游该段即可。
 
@@ -64,14 +65,16 @@
 - **设计依据**：`keepTags`（如 `'content'`）是 AI 正文专属提取白名单；普通用户输入或未加自定义标签的世界书条目若流经 `keepTags` 会被直接清空为 0 字。非正文来源必须强制走 extra-only 清洗。
 
 ### 3.3 提示词与标签设置 UI 校验 (`src/ui/settings/prompts-settings.js`)
-- **默认值配置**：`src/settings.js` 中 `sourceKeepTags: ''`（默认留空直通，全库不应残留 `'content'` 默认）。
-- **保存拦截器 (`bindTagFieldWithClashCheck`)**：保留/清洗两栏失焦保存时自动做归一化交集计算（含 `[[...]]`）；检测到同名标签冲突即**拒绝落存、输入框回退旧值**，并显示 `settings-result error` 行内红色警告，从源头阻止非法配置存盘。
+- **默认值配置**：`src/settings.js` 中 `sourceKeepTags: ''`（默认留空直通）。
+- **存量迁移 (`migrateSanitizerKeepTags`，2026-09-30 新增)**：上游 v0.5.8+ 默认 `sourceKeepTags: 'content'` 会被 `get()` 的默认回写持久化进老存档，而本地严格 M2 下该值会把**无 `<content>` 标签的 AI 正文整楼清空**（`src/v3/foundation-domain.js:123-124` 的 `if (!canonicalContent) continue;` 静默跳楼）。故 `src/settings.js` 加版本化迁移：`sanitizerKeepTagsMigrationVersion` 由 0 升 1 时，仅当持久值为纯 `'content'`（trim + 小写后完全相等）才重置为 `''`；`'content,summary'` 等用户手改值原样保留；迁移后再手填 `content` 永不被覆盖；全新存档直接置位。`index.js` 在 `settings.migrateLegacyApiSettings()` 之后以**可选链**调用（`settings.migrateSanitizerKeepTags?.()`，宿主/测试桩缺该方法时跳过而不中断加载）。断言见 `tests/settings-api.test.mjs` 末尾两条用例。
+- **保存拦截器 (`bindTagFieldWithClashCheck`)**：保留/清洗两栏失焦保存时自动做归一化交集计算（标签名与字面量包裹规则一并参与，含 `[[...]]`、`{{...}}`）；检测到同名标签冲突即**拒绝落存**，输入框回退 `settings.get()[key] ?? ''`（= 该栏最近一次成功保存值；**不得**再用视图创建时快照——本面板只在 `src/ui/panel.js` 初始化时创建一次，二次冲突会回退成陈旧值），并显示 `settings-result error` 行内红色警告，从源头阻止非法配置存盘。守卫见 `tests/settings-modules.test.mjs`「包裹符冲突回退取最近一次成功保存值，而非视图创建时的陈旧快照」。
 
 ### 3.4 召回回执重新生成（Regenerate）秒级复用机制与架构定性
 - **核心文件**：`src/v3/recall-runtime.js`（修复主体）；`src/ui/v3-foundation-view.js`（单楼记忆编辑/完全重构联动）；`src/ui/people-profiles-view.js`（人物资料保存联动）；`src/bootstrap.js`（`recallRuntime` 注入通道）。
 - **双重致错源头**（稳定复现：删当前用户楼 → 重新发送 → 重新生成，即便摘要早已归档落盘也 100% 必现）：① **并发盖错公章**——选材 LLM 耗时窗口内，重新发送触发的底层地基扫描（`foundationRuntime.scan()` → `commitRoot()`）推进全局 Root，原代码开收据仍盖选材开始时的旧公章，收据存盘即过期；② **见证指纹漂移**——原 `captureCoreBodyWitness` 从数组末尾逆向采集，重新生成时尾部短暂残留刚撤下的 AI 楼层，指纹分歧击穿回执。
 - **本地修复三件套（治本，不可被上游旧代码覆盖）**：① **见证向前截断**——`captureCoreBodyWitness` 以传入触发用户楼 `userMessage` 严格向前逆向采集，同时保护全新生成与 `commitPromptIfCurrent` 的 `captureCoveredBodyGuards` 终检；② **密封点活版本重对齐**——`commitPromptIfCurrent` 持久化前重读活档案头，将收据 Checkpoint/Revision/签名重对齐为最新版本，落盘收据天然自洽；③ **三端联动主动失效**——`invalidate({ clearPersisted: true })` 清除最新用户楼持久化收据并 `saveChat()` 落盘（防 F5 后旧收据复活），联动 `manualMemoryEdit` / `foundationFullRebuild` / `peopleProfileSaved` 三个入口。
 - **与上游 `root: 0` 极速通道共存**：上游 0.4.0~0.4.3 的 `commitFrozenReceiptIfCurrent` 在复用阶段有意不比对 `headCheckpointId`/`rootRevision`（测试锁定复用零 I/O），代价是面板手动改记忆无法被灵敏感知。本地修复零性能开销：日常重新生成照走毫秒级极速通道，仅人工修改记忆时精确清缓存重选材。
+- **本地守卫测试（上游无此文件，2026-09-30 新增）**：`tests/recall-local-guards.test.mjs` 集中回归本地补丁——见证向前截断（第 5 参 `userMessage` 与 4 参旧行为对照）、`matchFloorCandidates` 的 `{ equivalentContent }` 探针与 `'locatorEquivalent'` 绑定、`extraOnlySanitizerOptions` 合同、`invalidate` 默认不删持久收据而 `clearPersisted: true` 才删并 `saveChat`、时间参考标签探针。因 `tests/v3-recall.test.mjs` 按 §2 与上游逐字相同（不得追加本地断言），本地补丁的守卫一律写在该文件；上游重写对应链路后先跑它。
 
 ---
 
@@ -83,13 +86,13 @@
    ```bash
    node --experimental-vm-modules --test tests/tag-sanitizer-golden.test.mjs tests/memory-content-sanitizer.test.mjs
    ```
-   *标准*：21/21 全部全绿（40 例金样逐字节一致）。
+   *标准*：25/25 全部全绿（40 例金样逐字节一致；19 条清洗器合同断言 + 6 条金样/对拍断言）。
 2. **生产构建与入口装配测试**：
    ```bash
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
-   *标准*：9/9 全部通过（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量 1300+ 用例全绿（v0.6.1 基线实测 1340，约 60s，0 失败）。
+   *标准*：10/10 全部通过（`tests/production-entry-load.test.mjs` 9 + `tests/v3-wiring.test.mjs` 1；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
+3. **全量测试套件**：`npm test` —— 全量用例全绿（本地当前基线 **1352** = 上游 v0.6.1 的 1340 + 本地新增 12：`tests/settings-api.test.mjs` 2 + `tests/settings-modules.test.mjs` 1 + `tests/recall-local-guards.test.mjs` 5 + `tests/memory-content-sanitizer.test.mjs` 的 4 条 P5 包裹规则用例；实测约 47s，0 失败）。**注意本机沙箱下须加 `--test-isolation=none`**（默认管道 stdio 会报 `Error: spawn EPERM`，属环境边界而非回归）：`node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs`。
    > **已知上游负载敏感时序偶发（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5242`「切聊天及正文结构事件会撤销提前武装」在空闲快速机器上可能于 10ms 断言窗口内漏入后台自动化任务而失败（报 `MESSAGE_DELETED 后不得触发旧楼任务 1 !== 0`），重跑可通过；已在纯 `upstream/main` worktree 复现同样失败。见此失败先跑纯上游对照，切勿据此回滚本地资产。
    > **v0.6.1 新增 Windows 偶发**：`tests/tauri-backend.test.mjs` 各测试在并行满载下可能于 `t.after` 清理临时目录时报 `ENOTEMPTY: directory not empty, rmdir`（每轮全量挂的用例不同），单跑该文件或重跑全量即过；已在纯 `upstream/main` 树 3 轮复现同款失败（23/24），确系环境竞态而非回归。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：运行 40 例金样跨仓比对脚本，验证与 `ST-SevenDaysCal/runtime/tag-sanitizer.js` 输出 **0 差异、100% 逐字节一致**。
@@ -99,5 +102,5 @@
 ## 5. 当前仓库状态底数（基线备忘）
 
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.1`，提交 `1caf2d4`；v0.6.0 单人主动整理人物重构 + v0.6.1 TauriTavern 后端支持）；合并前备份分支 `backup/main-before-upstream-v0.6.1`；
-- **产物版本**：`manifest.json` 版本号 `0.6.1`（含上游新增 `author: "atonal519"` 字段，TT 2.2.0 安装器硬性要求），缓存键 `20260930.41-80132f6894449612`；
+- **产物版本**：`manifest.json` 版本号 `0.6.1`（含上游新增 `author: "atonal519"` 字段，TT 2.2.0 安装器硬性要求），缓存键 `20260930.43-e4719e4ce3d03cc3`（P1–P5 全部落地后的 2026-09-30 重建；历史漂移实例：旧文档 `20260930.41-80132f6894449612` vs 实际 `…41-e50ecda8…`，即 §1.3 记录，现已按序递增到 43）；
 - 逐版本上游能力、合并实况与裁决细节见 git log 及本文件的 git 历史版本（`git log -p AGENTS.md`）。
