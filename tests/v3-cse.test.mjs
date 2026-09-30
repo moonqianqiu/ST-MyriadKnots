@@ -225,7 +225,7 @@ test('显式 keep=content 时用户输入与 canonical 正文只做 extra 清洗
   assert.deepEqual(request.payload.currentUserInput, { source: 'currentUserInput', messages: [{ sourceSnapshotIndex: 0, messageIndex: 0, content: '请记住带伞' }] });
 });
 
-test('显式 keep=content 时持久化 baseline 与每楼 CSE 世界书都只做 extra 清洗', async () => {
+test('显式 keep=content 时持久化 baseline 走 extra 清洗、每楼动态世界书遵循上游直通', async () => {
   const hidden = '<' + 'secret>不应发送的内容</' + 'secret>';
   const h = runtimeHarness({
     currentWorldInfoContent: `${hidden}启用作者设定`,
@@ -239,8 +239,10 @@ test('显式 keep=content 时持久化 baseline 与每楼 CSE 世界书都只做
 
   const request = JSON.parse(h.calls.find(call => call.systemPrompt === CSE_SYSTEM_PROMPT).taskMessages[0].content);
   const worldInfo = request.payload.relevantBaseline.worldInfo;
-  assert.deepEqual(worldInfo.map(entry => entry.content), ['启用作者设定'], '每楼动态世界书应执行同样的 extra-only 清洗');
-  assert.doesNotMatch(JSON.stringify({ state: state.cseFloors, saved: saved.worldInfoSources, worldInfo }), /不应发送的内容|secret/);
+  // 每楼动态世界书已回归上游直通（AGENTS.md §3.2，2026-09-30 裁决）：仅宏替换 + clean，不做 extra 清洗；
+  // 与 baseline 持久化路径的 extra-only 语义有意不同，勿再合并两断言。
+  assert.deepEqual(worldInfo.map(entry => entry.content), [`${hidden}启用作者设定`], '每楼动态世界书遵循上游直通，不剥离 extra 块');
+  assert.doesNotMatch(JSON.stringify({ state: state.cseFloors, saved: saved.worldInfoSources }), /不应发送的内容|secret/);
 });
 
 test('CSE mixed tracked 首次预算优先缺记录人物，并能用合并旧名命中前情', async () => {

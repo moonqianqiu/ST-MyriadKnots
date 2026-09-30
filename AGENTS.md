@@ -27,12 +27,13 @@
 | `tests/v3-wiring.test.mjs` | 架构装配接口导出与版本断言冲突 | 采纳上游修改（版本断言对齐上游最新版本） |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数与本地 `sanitizerOptions` 参数冲突 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
 | `src/memory-content-sanitizer.js` | 上游 v0.5.8 起重写为「默认 keep='content'」简化实现，与本地四模式合同相撞 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（仅将上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避免撞名，上游 2 空格缩进原样保留使该区域未来合并零冲突） |
-| `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能时与本地叠加层相撞 | **随功能走 + 本地注入保留**：被上游删除的功能代码连同其专属保护点一并放弃；视图工厂签名保留本地 `recallRuntime = null` 参数并采纳上游瘦身后的 runtime 校验列表；存留的世界书路径 extra-only 调用点逐一复核 |
+| `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能时与本地叠加层相撞 | **随功能走 + 本地注入保留**：被上游删除的功能代码连同其专属保护点一并放弃；视图工厂签名保留本地 `recallRuntime = null` 参数并采纳上游瘦身后的 runtime 校验列表；people-profiles-view 保留 `saveProfile → invalidate('peopleProfileSaved',{clearPersisted:true})` 联动。**v0.6.0 实录（2026-09-30 定案）**：上游改世界书原文直通并删 `sanitizerOptions` 参数，本地曾回植 extraOnly，后按「世界书少含自定义噪音标签、直通系上游设计意图」裁决**整文件回归上游逐字相同**（源码/工厂签名/import/测试，含其直通断言），该文件未来合并零冲突——勿再回植 extraOnly（详见 §3.2 已回归清单） |
+| `src/v3/foundation-domain.js` | 本地 `SANITIZER_VERSION` 已升 `memory-content-sanitizer-v2` 且 `sanitizerFingerprint` 默认 keepTags 为 `''`（M0），上游停留 v1+`'content'`——同一宿主聊天在两侧派生出**不同的确定性图 ID**（floor/run/checkpoint/index 全链） | **保留本地合同**；上游 fixture 类测试（`tests/fixtures/tt2-native-init-failure.json`，编码上游预计算 ID）须在本地语义下重生成：干净初始化后按 `fstore.recordKey(record)` 捕获 run/checkpoint/floor/index（索引键含 `floorOrder-0-` 段，勿手拼 `v3-index-<id>`），run 回卷为 `retryableError`+`V3_GRAPH_INDEX_ROUTE_INVALID` 定格、无 root；否则上游"重试幂等/篡改零容忍"两测试或挂 ID 断言、或因键不相交而绕过篡改检测 |
 
 > **业务文件自动合并注意**：`src/settings.js`（本地 `sourceKeepTags: ''` 与上游存储自动清理字段不同区域）、`src/v3/cse-engine.js` 与 `src/v3/memory-runtime.js`（本地 `extraOnlySanitizerOptions` 拦截与上游新提示词/千事调度正交）均可三方自动合入。
 
 > **本地已修改的上游产权文件（未来合并的潜在冲突热区；上游重写对应链路时，须以本地增强为产权逐项回植并重跑对应测试全绿）**：
-> - `src/v3/recall-runtime.js`：本地叠加三处增强——见证截断 / 密封点版本重对齐 / `invalidate` 支持 `clearPersisted`（详见 3.4）→ `tests/v3-recall.test.mjs`；
+> - `src/v3/recall-runtime.js`：本地叠加三处增强——见证截断 / 密封点版本重对齐 / `invalidate` 支持 `clearPersisted`（详见 3.4）→ `tests/v3-recall.test.mjs`。**v0.6.x 实录**：上游将 `captureCoreBodyWitness` 导出并加第 4 位参数 `maximumFloors`（经 `normalizeAutoHideKeepAiCount` 归一化，其测试按位置传参调用）——并集签名为 `(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null)`，内部调用点传 `(…, recentBodyFloorLimit(), user?.message)`；循环保留本地 triggerIndex 向前截断、上限改用上游归一化值；
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与新增绑定种类 `'locatorEquivalent'`——为弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖（依赖 canonical 剥离标签）」的语义冲突而加；经私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `src/v3/time-body.js` 的 `readTimeBody` 传入，其余调用点行为不变；
 > - `src/v3/time-body.js`：`currentBodyClock` 加法式内容视图兜底——canonical 探测返回 null（非 ambiguous）时以 `sanitizeMemoryContent(rawContent, { keepTags: 'content' })` 再探一次，弥合上游时间测试对「effective canonical 已剥出 content」的依赖；用户已显式配置 keepTags 时行为不变 → `tests/v3-time-body.test.mjs`；
 > - `src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构的 `invalidate` 联动点）、`src/ui/people-profiles-view.js`（`saveProfile` 联动点）、`src/bootstrap.js`（`recallRuntime` 注入）——上游若重排这几处 UI 装配代码，须保住三处 `invalidate` 联动调用。
@@ -58,7 +59,8 @@
 
 ### 3.2 非 AI 正文来源 extra-only 隔离清洗（防止世界书/用户输入被洗空）
 - **核心辅助函数**：`export function extraOnlySanitizerOptions(options = {}) => { keepTags: '', extraTags: options?.extraTags ?? '' }`
-- **保护场景与调用点**：`src/v3/cse-engine.js`（`captureCseBaseline` 遍历世界书条目时）；`src/v3/people-workspace.js`（人物工作区扫描世界书时）；`src/cse-source-selection.js`（动态世界书与扫描窗纯文本）；`src/v3/memory-runtime.js`（`capturePrecedingUserInputFromSnapshot` 用户输入快照处理）。
+- **保护场景与调用点（仅剩 3 处，均为上游活洗空点）**：`src/v3/cse-engine.js` L133（`captureCseBaseline` 遍历世界书条目，上游 M2 提取致无 `<content>` 标签条目洗空、L134 静默跳过）；`src/cse-source-selection.js` 扫描窗 rows 分路（上游 L98 把用户楼也用 keep 提取 → 用户输入洗空；本地 assistant 行保 keep 提取+合并 `qqj-cse`，用户行/canonical 行走 plainText extraOnly）；`src/v3/memory-runtime.js`（`capturePrecedingUserInputFromSnapshot` 用户输入快照，上游 L134 同款洗空）。
+- **已回归上游直通的点（2026-09-30 裁决，勿再回植）**：`src/v3/people-workspace.js` 人物整理世界书（上游 v0.6.0 原文直通，防洗空价值归零，源码/工厂签名/import/测试已逐字回归上游）；`src/cse-source-selection.js` 动态世界书（上游本为 `clean+宏替换` 直通，extraOnly 仅剩卫生价值已撤）。上游直通策略与「世界书条目少含自定义噪音标签」的实践相符。
 - **设计依据**：`keepTags`（如 `'content'`）是 AI 正文专属提取白名单；普通用户输入或未加自定义标签的世界书条目若流经 `keepTags` 会被直接清空为 0 字。非正文来源必须强制走 extra-only 清洗。
 
 ### 3.3 提示词与标签设置 UI 校验 (`src/ui/settings/prompts-settings.js`)
@@ -87,14 +89,15 @@
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
    *标准*：9/9 全部通过（验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量 1200+ 用例全绿（v0.5.11 基线实测 1278，约 57s，0 失败）。
+3. **全量测试套件**：`npm test` —— 全量 1300+ 用例全绿（v0.6.1 基线实测 1340，约 60s，0 失败）。
    > **已知上游负载敏感时序偶发（勿误判为本地回归！）**：`tests/v3-extractor-memory.test.mjs:5242`「切聊天及正文结构事件会撤销提前武装」在空闲快速机器上可能于 10ms 断言窗口内漏入后台自动化任务而失败（报 `MESSAGE_DELETED 后不得触发旧楼任务 1 !== 0`），重跑可通过；已在纯 `upstream/main` worktree 复现同样失败。见此失败先跑纯上游对照，切勿据此回滚本地资产。
+   > **v0.6.1 新增 Windows 偶发**：`tests/tauri-backend.test.mjs` 各测试在并行满载下可能于 `t.after` 清理临时目录时报 `ENOTEMPTY: directory not empty, rmdir`（每轮全量挂的用例不同），单跑该文件或重跑全量即过；已在纯 `upstream/main` 树 3 轮复现同款失败（23/24），确系环境竞态而非回归。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：运行 40 例金样跨仓比对脚本，验证与 `ST-SevenDaysCal/runtime/tag-sanitizer.js` 输出 **0 差异、100% 逐字节一致**。
 
 ---
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.5.11`，提交 `6475a65`）；
-- **产物版本**：`manifest.json` 版本号 `0.5.11`，缓存键 `20260929.40-03173b1854dd0b22`；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.1`，提交 `1caf2d4`；v0.6.0 单人主动整理人物重构 + v0.6.1 TauriTavern 后端支持）；合并前备份分支 `backup/main-before-upstream-v0.6.1`；
+- **产物版本**：`manifest.json` 版本号 `0.6.1`（含上游新增 `author: "atonal519"` 字段，TT 2.2.0 安装器硬性要求），缓存键 `20260930.41-80132f6894449612`；
 - 逐版本上游能力、合并实况与裁决细节见 git log 及本文件的 git 历史版本（`git log -p AGENTS.md`）。
