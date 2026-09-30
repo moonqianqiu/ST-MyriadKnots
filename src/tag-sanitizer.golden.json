@@ -331,7 +331,7 @@
         "keepTags": "content",
         "extraTags": "think"
       },
-      "input": "</think>",
+      "input": "<think>思维链噪音<content>秘密</content>更多噪音</think>",
       "oldOutput": ""
     },
     {
