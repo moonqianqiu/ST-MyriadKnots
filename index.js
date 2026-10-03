@@ -31,6 +31,7 @@ import { installPublicMemoryBridge } from './src/v3/public-memory-bridge.js';
 import { installPublicQianshiBridge } from './src/v3/public-qianshi-bridge.js';
 import { createMyKnotsStoryClockController, createStoryClockStatusProjection, extensionStoryClockState } from './src/story-clock.js';
 import { createInlineRenderer } from './src/ui/inline-renderer.js';
+import { normalizeStoryCalendar } from './src/v3/calendar-rules.js';
 
 const isGenerating = () => Boolean(is_send_press || is_group_generating);
 const hostAdapter = createHostAdapter({ personaIdentifierProvider: () => user_avatar, worldInfoBindings: {
@@ -103,6 +104,15 @@ const listHostChats = createHostChatList({ headers: () => hostContext()?.getRequ
 const initializeChatBranch = createChatBranchInitializer({ client: backendClient, hostAdapter, sanitizerOptions });
 const identityCoordinator = createChatIdentityCoordinator({ client: backendClient, freshUuid: newUuid, listHostChats, initializeBranch: initializeChatBranch });
 const session = createChatSession({ contextProvider, isEnabled: settings.isEnabled, identityCoordinator });
+// 设置页在禁用、未选聊天及身份准备期间仍须可打开；此时不读写聊天历法，保存仍走严格身份校验。
+const calendarContextProvider = () => {
+  let owner;
+  try { owner = session.identity(); }
+  catch { return { chatId: null, calendar: null }; }
+  return { chatId: owner.chatId, calendar: settings.get().storyCalendars[owner.chatId] ?? null };
+};
+// 历法设置按 QQJ 聊天身份保存；读取计算规则不依赖时间推演开关。
+const storyCalendarProvider = () => calendarContextProvider().calendar;
 const sourcePermissions = createSourcePermissionController({ settings, contextProvider });
 const summaryPrompt = () => settings.get().summaryPrompt;
 const csePrompt = () => settings.get().csePrompt;
@@ -129,6 +139,7 @@ const identityProjectionProvider = async () => {
 };
 let v3RecallRuntime;
 const timeRuntime = createTimeRuntime({
+  storyCalendarProvider,
   newUuid,
   store: createTimeStore({ client: backendClient }), foundationStore, hostAdapter, session,
   getReachable: () => foundationRuntime.getReachable(),
@@ -145,6 +156,7 @@ const timeRuntime = createTimeRuntime({
   isEnabled: () => settings.isEnabled() && settings.get().timeEvolutionEnabled === true,
 });
 const v3MemoryRuntime = createV3MemoryRuntime({
+  storyCalendarProvider,
   foundationRuntime,
   store: foundationStore,
   hostAdapter,
@@ -281,6 +293,21 @@ ui = bootstrap({
   onStoryClockChange: options => refreshStoryClock({ ...options, announce: options?.readOnly !== true }),
   onAutoHideChange: options => autoHideController.applySettings(options),
   onTimeEvolutionChange: async () => { await timeRuntime.stop(); await timeRuntime.runBatch(); },
+  calendarContextProvider,
+  onCalendarChange: async ({ chatId, calendar }) => {
+    const normalized = normalizeStoryCalendar(calendar);
+    if (!normalized) throw new Error('特殊年请填写不含数字的纪年名称，例如启航。');
+    const owner = session.identity();
+    if (!chatId || owner?.chatId !== chatId || owner.hostChatId && owner.hostChatId !== hostAdapter.snapshot().chatId) throw new Error('当前聊天已变化，请重新设置历法。');
+    const state = v3MemoryRuntime.getState();
+    if (state.memoryWorkBusy || state.activeExtraction || state.activeCse || state.qianshiHistoryActive || timeRuntime.getState().active) throw new Error('请等当前记忆任务完成后再设置历法。');
+    const previous = settings.get().storyCalendars;
+    try { settings.update({ storyCalendars: { ...previous, [chatId]: normalized } }, { observeSaveFailure: true }); }
+    catch (error) { settings.update({ storyCalendars: previous }); throw error; }
+    // 更新本地计算缓存，不启动旧楼提取或时间 API。
+    timeRuntime.invalidate();
+    await timeRuntime.refreshStatus({ force: true });
+  },
   timeRuntime,
   subscribeDialogContextChange: handler => {
     const currentHost = hostContext();

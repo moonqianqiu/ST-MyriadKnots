@@ -693,7 +693,7 @@ test('删除当前聊天记忆使用自绘异步确认，取消零写且确认�
   flatten(container).find(node => node.textContent === '删除当前聊天记忆').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls, 0);
-  assert.match(confirmation.body, /摘要、双丝网、人物资料、召回及历史版本/);
+  assert.match(confirmation.body, /摘要、双丝网、人物资料、时间事项、召回及历史版本/);
   assert.match(confirmation.body, /正文、手动前情和全局设置保留.*前情可另行清空/);
   assert.match(confirmation.note, /移入回收站.*并非永久擦除/);
 });
@@ -1319,6 +1319,28 @@ test('复制回执仅诊断，独立fallback不切抽屉或重绘草稿，失败
     view.deactivate();
   }
   const container = new Node('main'); createV3FoundationView({ runtime, documentRef }).mount(container); assert.equal(flatten(container).some(node => node.textContent === '复制回执'), false);
+});
+
+test('复制回执附核验保存计时及最新本轮请求，不混入新轮或响应正文', async () => {
+  const foundation = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 0, rememberedCount: 0, memorySyncStatus: 'idle', floors: [] };
+  const record = { status: 'ready', requestDiagnosticId: 7, userMessageIndex: 4, createdAt: '2026-10-02T11:46:51Z', generationType: 'normal', receiptPersistence: 'saveUnconfirmed',
+    selectedFloors: [], selectedStates: [], coverage: null, stages: null, timings: { totalMs: 146000, selectorMs: 24000, sourceMs: 1000, commitMs: 3, receiptMs: 120000 }, skipReasons: [], injectionText: 'PRIVATE_BODY', error: null };
+  let state = { recallStatus: 'ready', lastRecall: record, requestDiagnostic: { status: 'recording', requests: [] } };
+  const copied = [], container = new Node('main');
+  createV3FoundationView({ runtime: { getState: () => foundation, refreshStatus: async () => foundation, confirmLatest: async () => foundation }, recallRuntime: { getState: () => state }, documentRef,
+    navigatorRef: { clipboard: { writeText: async text => copied.push(text) } } }).mount(container);
+  const text = flatten(container).map(node => node.textContent).join('|');
+  assert.match(text, /核验 3\.0 ms.*保存 120000\.0 ms/u);
+  const button = flatten(container).find(node => node.textContent === '复制回执');
+  const stamp = Date.parse('2026-10-02T11:49:00Z');
+  state.requestDiagnostic.requests.push({ label: '生成请求', startedAt: stamp, requestStartedAt: stamp + 2000, responseStartedAt: stamp + 2100, finishedAt: stamp + 2150, responseText: 'PRIVATE_RESPONSE' });
+  await button.click();
+  assert.match(copied[0], /核验 3\.0 ms.*保存 120000\.0 ms/su);
+  assert.match(copied[0], /生成请求.*2026-10-02T11:49:02\.000Z/su, '读取复制时才完成的请求');
+  assert.match(copied[0], /首响应不代表模型首字/u); assert.doesNotMatch(copied[0], /PRIVATE_/u);
+  state = { ...state, lastRecall: { ...record, requestDiagnosticId: 8 }, requestDiagnostic: { status: 'recording', requests: [{ label: '另一轮请求' }] } };
+  await button.click();
+  assert.match(copied[1], /请求计时：未记录/u); assert.doesNotMatch(copied[1], /另一轮请求/u);
 });
 
 test('召回归属旧字段缺失自然降级，候选回复使用中文标签且不拒绝正文', () => {

@@ -76,7 +76,7 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
     storyClockStatus,
     element('p', 'settings-hint', '默认 QQJ-start/end，也兼容 SDC 和旧 myknots 格式。自定义文本原样发送，请保留成对 start/end 及 date、weekday、time 字段。'),
     field('正文时间参考标签', storyClockReferenceTags),
-    element('p', 'settings-hint', '额外时间标签名用逗号或换行分隔，留空关闭。标准时间戳优先；这里只补读摘要时间，不改变正文清洗，也不受生成开关影响。'),
+    element('p', 'settings-hint', '额外时间标签名用逗号或换行分隔，留空关闭。标准时间戳优先；补读故事时间，不改变正文清洗，也不受生成开关影响。'),
     field('完整自定义提示词', storyClockPrompt),
     clockActions,
   );

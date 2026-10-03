@@ -43,6 +43,8 @@ export function createPanel({
   onStoryClockChange,
   onAutoHideChange,
   onTimeEvolutionChange,
+  calendarContextProvider = () => ({ chatId: null, calendar: null }),
+  onCalendarChange,
   isSevenDaysAvailable,
   isSevenDaysLedgerInjectionEnabled,
   dialog,
@@ -274,7 +276,7 @@ export function createPanel({
     const subOpen = key => settingsDrawerState.isOpen(key, false);
     const subToggle = key => open => settingsDrawerState.set(key, open);
 
-    // 通用设置：API / 世界书排除 / 提示词 / 外观（各子项 change 即存，API 预设区保留手动保存）。
+    // 通用设置：世界书排除、提示词和外观即时保存；API 角色选择即时生效，配置编辑需点“保存设置”。
     const { drawer: general, body: generalBody } = groupOf('general', '通用设置');
     const api = createApiSettings({
       settings, apiTools, documentRef,
@@ -313,7 +315,7 @@ export function createPanel({
     timeToggle.id = 'qqj-settings-time';
     const timeInput = element('input'); timeInput.type = 'checkbox'; timeInput.checked = settings.get().timeEvolutionEnabled === true;
     timeInput.setAttribute('aria-label', '时间推演');
-    timeToggle.append(element('span', '', '开启时间推演'), timeInput);
+    timeToggle.append(element('span', '', '时间推演'), timeInput);
     timeToggle.addEventListener('click', event => event.stopPropagation());
     timeInput.addEventListener('change', async () => {
       if (timeInput.checked && settings.get().timeEvolutionEnabled !== true && isSevenDaysLedgerInjectionEnabled?.()) {
@@ -330,10 +332,11 @@ export function createPanel({
       settings.update({ timeEvolutionEnabled: timeInput.checked });
       await onTimeEvolutionChange?.();
     });
-    memoryBody.append(timeToggle, element('p', 'settings-hint', '按剧情时间推算身体状态、周期与期限，直接读 AI 正文，使用摘要 API（每批最多一次）。从当前楼开始追踪；旧楼请到摘要页“近期事项”补查。已保存结果可保留并续跑。与构画刻度建议只开一方注入。'));
+    memoryBody.append(timeToggle, element('p', 'settings-hint', '按剧情时间推算身体状态、周期与期限，直接读 AI 正文，使用摘要 API（每批最多一次）。从当前楼开始追踪；旧楼请到“近期事项”补查。已保存结果可保留并续跑。与构画刻度建议只开一方注入。'));
     const autoHideToggle = element('label', 'setting-switch');
+    autoHideToggle.id = 'qqj-settings-auto-hide';
     const autoHideInput = element('input'); autoHideInput.type = 'checkbox'; autoHideInput.checked = settings.get().autoHideEnabled === true;
-    autoHideToggle.append(autoHideInput, element('span', '', '自动隐藏已记忆旧楼'));
+    autoHideToggle.append(element('span', '', '自动隐藏'), autoHideInput);
     const keepRow = element('label', 'qqj-auto-hide-row');
     keepRow.append(element('span', '', '保留最近 AI 楼数'));
     const keepInput = element('input', 'settings-input settings-num'); keepInput.type = 'number'; keepInput.min = '1'; keepInput.max = '50'; keepInput.step = '1'; keepInput.value = String(settings.get().autoHideKeepAiCount ?? 3);
@@ -351,22 +354,70 @@ export function createPanel({
           autoHideResult.className = 'settings-result success';
           return;
         }
-        autoHideResult.textContent = current.autoHideEnabled ? `已开启；后续按最近 ${current.autoHideKeepAiCount} 个 AI 楼保留，已隐藏楼保持隐藏。` : '已关闭；千千结拥有的隐藏楼已恢复。';
+        autoHideResult.textContent = current.autoHideEnabled ? `已开启；后续按最近 ${current.autoHideKeepAiCount} 个 AI 楼保留，已隐藏楼保持隐藏。` : '已关闭；由千千结隐藏的消息已恢复。';
         autoHideResult.className = 'settings-result success';
       } catch (error) {
-        autoHideResult.textContent = `设置已保存，但当前聊天整理未完成：${publicErrorMessage(error, { fallback: '自动隐藏操作失败。' })} 请再次调整设置重试。`;
+        autoHideResult.textContent = `设置已保存，自动隐藏未完成：${publicErrorMessage(error, { fallback: '操作失败。' })}`;
         autoHideResult.className = 'settings-result error';
       } finally { autoHideInput.disabled = false; keepInput.disabled = false; }
     };
     autoHideInput.addEventListener('change', () => { void applyAutoHide({ autoHideEnabled: autoHideInput.checked }); });
     keepInput.addEventListener('change', () => { void applyAutoHide({ autoHideKeepAiCount: Number(keepInput.value) }); });
+    const calendarContext = calendarContextProvider();
+    const calendarRow = element('div', 'qqj-calendar-row'); calendarRow.id = 'qqj-settings-calendar';
+    calendarRow.append(element('span', '', '历法选择'));
+    const choices = element('div', 'qqj-calendar-choices'); choices.setAttribute('role', 'group'); choices.setAttribute('aria-label', '历法选择');
+    const calendarInputs = [4, 12].map(months => {
+      const label = element('label', 'setting-switch'), input = element('input'); input.type = 'checkbox';
+      input.setAttribute('aria-label', `${months}个月`); input.checked = (calendarContext.calendar?.months ?? 12) === months;
+      input.disabled = !calendarContext.chatId; label.append(element('span', '', String(months)), input); choices.append(label);
+      return { months, input };
+    });
+    calendarRow.append(choices);
+    const prefixRow = element('label', 'qqj-calendar-row'); prefixRow.append(element('span', '', '特殊年'));
+    const prefixInput = element('input', 'settings-input qqj-calendar-prefix'); prefixInput.type = 'text'; prefixInput.maxLength = 40;
+    prefixInput.placeholder = '如：启航'; prefixInput.value = calendarContext.calendar?.prefix ?? ''; prefixInput.disabled = !calendarContext.chatId;
+    prefixInput.setAttribute('aria-label', '特殊纪年名称'); prefixRow.append(prefixInput);
+    const calendarResult = element('p', 'settings-result'); calendarResult.hidden = true;
+    const syncCalendarInputs = () => {
+      const saved = calendarContextProvider().calendar;
+      for (const { months, input } of calendarInputs) input.checked = (saved?.months ?? 12) === months;
+      prefixInput.value = saved?.prefix ?? '';
+    };
+    const changeCalendar = async months => {
+      const prefix = prefixInput.value.normalize('NFKC').trim();
+      const saved = calendarContextProvider();
+      if (saved.chatId !== calendarContext.chatId) { syncCalendarInputs(); return; }
+      if (saved.calendar?.months === months && saved.calendar.prefix === prefix) { syncCalendarInputs(); return; }
+      const confirmationEpoch = activationEpoch;
+      for (const { input } of calendarInputs) input.disabled = true;
+      prefixInput.disabled = true; calendarResult.hidden = true;
+      try {
+        const confirmed = await dialog?.confirm?.({ title: '确认历法', body: '仅当前聊天生效，仅影响间隔计算。', confirmText: '确认', cancelText: '取消' });
+        if (!confirmed || confirmationEpoch !== activationEpoch || calendarContextProvider().chatId !== calendarContext.chatId) return;
+        await onCalendarChange?.({ chatId: calendarContext.chatId, calendar: { months, prefix } });
+      } catch (error) {
+        if (confirmationEpoch === activationEpoch) { calendarResult.hidden = false; calendarResult.className = 'settings-result error'; calendarResult.textContent = publicErrorMessage(error, { fallback: '历法未保存，请重试。' }); }
+      } finally {
+        syncCalendarInputs();
+        for (const { input } of calendarInputs) input.disabled = !calendarContextProvider().chatId;
+        prefixInput.disabled = !calendarContextProvider().chatId;
+      }
+    };
+    for (const { months, input } of calendarInputs) input.addEventListener('change', () => {
+      for (const choice of calendarInputs) choice.input.checked = choice.months === months;
+      return changeCalendar(months);
+    });
+    prefixInput.addEventListener('change', () => changeCalendar(calendarInputs.find(({ input }) => input.checked)?.months ?? 12));
     const storageDrawer = createSettingsDrawer({
       documentRef, title: '存储管理', level: 'sub', id: 'qqj-settings-sub-storage', open: storageOpen,
       onToggle: open => { settingsDrawerState.set('storage', open); syncStorageActivation(); },
     });
     storageGroup = storageDrawer.drawer;
     storageManagementView.mount(storageDrawer.body);
-    memoryBody.append(autoHideToggle, keepRow, autoHideResult, storageGroup);
+    memoryBody.append(autoHideToggle, keepRow, autoHideResult, calendarRow, prefixRow,
+      element('p', 'settings-hint', '历法用于推算时间间隔，仅当前聊天生效。特殊年只填年份前的完整纪年名称，不填数字或“年”。'),
+      element('p', 'settings-hint', '例：启航387年，填启航。'), calendarResult, storageGroup);
     page.append(memoryGroup);
 
     page.append(managementMount, settingsManagementError);

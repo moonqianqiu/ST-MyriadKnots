@@ -27,10 +27,15 @@ const EVENTS = Object.freeze(['CHAT_CHANGED', 'CHAT_RENAMED', 'MESSAGE_SENT', 'M
 const HISTORY_MUTATION_EVENTS = new Set(['MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']);
 const MANUAL_HISTORY_REASON = 'manualHistoricalRebuild';
 const MANUAL_CSE_REBUILD_REASON = 'manualCseRebuild';
-const QIANSHI_HISTORY_SYSTEM_PROMPT = `你是“千千结”的千事历史提取器。只输出 JSON：{"floors":[{"floorKey":"floor-N","qianshi":{"events":[],"order":[]}}]}。每个 qianshi.order 必须是对象数组，例如 [{"before":"event-1","after":"event-2","certainty":"explicit"}]；只写材料明确支持的先后关系，引用键沿用本楼和候选键合同。顶层 qianshiCandidates 是本批共享候选池，每楼只能使用其 qianshiCandidateKeys 列出的键。候选 candidateType=event 表示一次性事件，只能用于 context 或先后关系端点；只有持续事项候选才能用于 progress。每个事件正文必须放在 description 字段，事件对象示例：{"key":"event-1","title":"事件标题","description":"事件正文","status":"occurred","matter":false}；不得用 chatSummary 等自造字段替代 description。每个事件最多关联一个旧事项候选（links 中最多一个 candidateKey）；同一叙事影响多个旧事项时，按事项分别写成独立事件，每个事件只链接对应的一个候选。逐楼提取，但每楼按对后续叙事有用的事件单位整理，不按每个动作逐条拆分；同一场景同一事项的连续动作合成一件完整事件，没有新增事实、关系变化或事项进展的重复日常不另立事件。新计划、事项实质推进、完成、取消和关键变化仍须记录。只有计划、持续事项 matter=true；带来新事实或变化的一次性事件可为 matter=false。object 只填写对后续叙事有用的具体物品，多个物品用“、”分隔；人物写入 people，地点或建筑及事件主题应在相应事件正文信息中表达，不要混入 object，也不要凭空补物品；没有合适物品时 object 写 null。links 使用 candidateKey 和 kind=progress|context，倒叙补证必须用 context；禁止把无效 progress 默默降级为 context。可让后楼引用同批更早楼事件，candidateKey 写“更早floorKey:该事件key”，不得跨 floorKey 合并事件来源。storyTime 是发生时间，scheduledTime 是预计时间；材料已有故事年份或纪年时必须保留，只有月日或相对时间时不得猜当前故事年或现实年份。不得改写摘要，不得输出人物资料。`;
-const QIANSHI_REJUDGE_SYSTEM_PROMPT = `你是“千千结”的已存千事重判器，只重判现有事件的归线关系、整线状态与动作状态，不重写原事件事实。只输出JSON：{"qianshi":{"events":[],"order":[]}}。输入records数组的key为本次请求唯一的旧记录键record-N；每条旧记录必须原样使用对应record-N，严禁换号、猜配、按标题或描述生成身份。可省略旧事件的title、description、object、people、storyTime、scheduledTime；程序会保留存档原值。每条记录必须尽量明确输出status（整线状态）、actionStatus（局部动作状态）、matter与links；status可使用兼容lineStatus表示整线状态、status表示动作状态。links必须使用标准字段，例如[{"candidateKey":"candidate-1","kind":"progress"}]。只有明确延续事项才用一个有效candidate-N的progress链接；context只表示回忆/背景，不能把记录归入该线。无链接且matter=true表示新建独立事项；无链接且matter=false表示一次性事件。候选candidateType=event只可context。允许新增确有必要的新记录，使用event-N键；不允许改写、删除或冒充record-N。order中的引用使用本次record-N/event-N或输入candidate-N。不要输出摘要、CSE、人物资料或非千事字段。人工修订是权威材料，须按已给记录保留人工保护；模型不得输出或创建人工覆盖标记。`;
+const QIANSHI_HISTORY_SYSTEM_PROMPT = `你是“千千结”的千事历史提取器。只输出 JSON：{"floors":[{"floorKey":"floor-N","qianshi":{"events":[],"order":[]}}]}。每个输入 floorKey 恰好返回一次，无事件也返回空 events 和 order。每个 qianshi.order 必须是对象数组，例如 [{"before":"event-1","after":"event-2","certainty":"explicit"}]；只写材料明确支持的先后关系，引用键沿用本楼和候选键合同。顶层 qianshiCandidates 是本批共享候选池，每楼只能使用其 qianshiCandidateKeys 列出的键。候选 candidateType=event 表示一次性事件，只能用于 context 或先后关系端点；只有持续事项候选才能用于 progress。每个事件正文必须放在 description 字段，事件对象示例：{"key":"event-1","title":"事件标题","description":"事件正文","status":"occurred","matter":false}；不得用 chatSummary 等自造字段替代 description。每个事件最多关联一个旧事项候选（links 中最多一个 candidateKey）；同一叙事影响多个旧事项时，按事项分别写成独立事件，每个事件只链接对应的一个候选。逐楼提取，但每楼按对后续叙事有用的事件单位整理，不按每个动作逐条拆分；同一场景同一事项的连续动作合成一件完整事件，没有新增事实、关系变化或事项进展的重复日常不另立事件。新计划、事项实质推进、完成、取消和关键变化仍须记录。只有计划、持续事项 matter=true；带来新事实或变化的一次性事件可为 matter=false。object 只填写对后续叙事有用的具体物品，多个物品用“、”分隔；人物写入 people，地点或建筑及事件主题应在相应事件正文信息中表达，不要混入 object，也不要凭空补物品；没有合适物品时 object 写 null。links 使用 candidateKey 和 kind=progress|context，倒叙补证必须用 context；禁止把无效 progress 默默降级为 context。可让后楼引用同批更早楼事件，candidateKey 写“更早floorKey:该事件key”，不得跨 floorKey 合并事件来源。storyTime 是发生时间，scheduledTime 是预计时间；材料已有故事年份或纪年时必须保留，只有月日或相对时间时不得猜当前故事年或现实年份。不得改写摘要，不得输出人物资料。`;
+// 新请求只说明规范输出；等价旧字段仍由既有编译器兼容，不迁移旧存档。
+const QIANSHI_REJUDGE_SYSTEM_PROMPT = `你是“千千结”的已存千事重判器。重判现有事件的归线关系、整线状态与动作状态；仅可补充原楼材料明确发生但旧记录漏记的事件，不改写原事件事实，不因重新措辞新增重复记录。
+只输出 JSON：{"qianshi":{"events":[],"order":[]}}。输入 records 每条旧记录恰好返回一次，key 逐字使用对应 record-N；严禁换号、猜配、按标题或描述生成身份，不得删除或冒充旧记录。旧事件的 title、description、object、people、storyTime、scheduledTime 可省略，程序保留存档原值。新增漏记事件使用 event-N，并写明 title、description 与有依据的发生时间；不补造材料没有的事实。
+每条记录必须输出 status（本条进展后的整线状态）、actionStatus（局部动作状态）、matter 与 links。links 使用 [{"candidateKey":"candidate-1","kind":"progress"}]；每个事件最多关联一个旧事项候选（links 中最多一个 candidateKey）。同一叙事影响多个旧事项时，新增漏记事件按事项分别记录，不能把一个 record-N 复制成多条。只有明确延续持续事项才用有效 candidate-N 的 progress；context 仅是回忆/背景，不能把记录归入该线。candidateType=event 只可 context 或作为先后关系端点。无链接且 matter=true 表示独立持续事项，matter=false 表示一次性事件。
+order 必须使用对象数组，例如 [{"before":"record-1","after":"event-1","certainty":"explicit"}]；引用只用本次 record-N/event-N 或明确指向单一旧事件的 candidate-N。certainty 只用 explicit（材料明示）或 strong（可靠时间锚支持）；先后未知、同日不明或不可比较时不输出。不生成因果等其他关系。
+人工修订是权威材料，保留人工保护；不得输出或创建人工覆盖标记。不要输出摘要、CSE、人物资料或非千事字段。`;
 // 历史补齐和已存重判都明确要求规范状态；共用编译器另行兼容模型的等价表达。
-const QIANSHI_STATUS_GUIDANCE = 'status、lineStatus和actionStatus只能返回这些规范值：planned（计划/待办）、inProgress（进行中）、completed（已完成）、cancelled（已取消）、occurred（已发生的一次性事件）、unknown（未知）。千事状态分两层：优先用 status 表示本条进展后的整线状态、actionStatus 表示局部动作状态；局部动作完成不必然结束事项，整线可以仍为进行中。兼容 lineStatus + status 时，lineStatus 是整线状态、status 是局部动作状态。人工修订过的状态是权威材料，不被旧状态覆盖。';
+const QIANSHI_STATUS_GUIDANCE = 'status 和 actionStatus 只能返回这些规范值：planned（计划/待办）、inProgress（进行中）、completed（已完成）、cancelled（已取消）、occurred（已发生的一次性事件）、unknown（未知）。千事状态分两层：优先用 status 表示本条进展后的整线状态、actionStatus 表示局部动作状态；局部动作完成不必然结束事项，整线可以仍为进行中。人工修订过的状态是权威材料，不被旧状态覆盖。';
 const qianshiHistoryInputTokens = request => estimateRecallTokens(`${QIANSHI_HISTORY_SYSTEM_PROMPT}\n\n${QIANSHI_STATUS_GUIDANCE}${JSON.stringify(request)}`);
 const qianshiHistoryBudgetRequest = inputs => ({ task: 'extractQianshiHistoryV1',
   qianshiCandidates: inputs.map((_, index) => ({ key: `candidate-budget-${index + 1}`, candidateType: 'matter',
@@ -195,9 +200,10 @@ const floorFailureStorageKey = chatId => `${FLOOR_FAILURE_STORAGE_PREFIX}${chatI
 
 export function createQianshiSnapshotMemo(projector = publicQianshiSnapshot) {
   let cache = null, projectionRevision = 0;
-  return (reachable, identityProjection, history) => {
-    if (cache?.reachable !== reachable || cache.identityProjection !== identityProjection) {
-      cache = { reachable, identityProjection, value: projector(reachable, null, identityProjection), projectionRevision: ++projectionRevision };
+  return (reachable, identityProjection, history, calendar = null) => {
+    const calendarSignature = JSON.stringify(calendar);
+    if (cache?.reachable !== reachable || cache.identityProjection !== identityProjection || cache.calendarSignature !== calendarSignature) {
+      cache = { reachable, identityProjection, calendarSignature, value: projector(reachable, null, identityProjection, calendar), projectionRevision: ++projectionRevision };
     }
     // 会话内投影版本只供界面判断内容是否变化，不落盘；进度通知不重新归线。
     return { ...cache.value, projectionRevision: cache.projectionRevision, history };
@@ -224,7 +230,7 @@ export function createQianshiEventLookup(readSnapshot = createQianshiSnapshotMem
   };
 }
 
-export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, generateAnalysisTask, generateUtilityTask, isEnabled = true, automationSettings = () => ({ enabled: false, batchSize: 1 }), notifyUser = null, isMainGenerationActive = () => false, onAutomaticSummaryCommitted = () => {}, onMemoryBatchCommitted = () => {}, onQianshiEventDeleted = () => {}, extractorPromptGuidance = () => '', csePromptGuidance = () => '', processingPrompt = () => '', storyClockReferenceTags = () => '', filterWorldInfoSources = sources => sources, sanitizerOptions = () => ({}), persistAnchors = null, identityProjectionProvider = null, qianshiExternalReferenceProvider = () => [], qianshiCandidatePreparer = prepareQianshiCandidates, qianshiCandidateIndexFactory = createQianshiCandidateIndex, failureStorage = undefined, now = () => new Date(), newUuid = newIdentityUuid, logger = console } = {}) {
+export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, generateAnalysisTask, generateUtilityTask, isEnabled = true, automationSettings = () => ({ enabled: false, batchSize: 1 }), notifyUser = null, isMainGenerationActive = () => false, onAutomaticSummaryCommitted = () => {}, onMemoryBatchCommitted = () => {}, onQianshiEventDeleted = () => {}, extractorPromptGuidance = () => '', csePromptGuidance = () => '', processingPrompt = () => '', storyClockReferenceTags = () => '', storyCalendarProvider = () => null, filterWorldInfoSources = sources => sources, sanitizerOptions = () => ({}), persistAnchors = null, identityProjectionProvider = null, qianshiExternalReferenceProvider = () => [], qianshiCandidatePreparer = prepareQianshiCandidates, qianshiCandidateIndexFactory = createQianshiCandidateIndex, failureStorage = undefined, now = () => new Date(), newUuid = newIdentityUuid, logger = console } = {}) {
   if (!foundationRuntime || ['start', 'refreshStatus', 'confirmLatest', 'setEnabled', 'bind', 'getState'].some(name => typeof foundationRuntime[name] !== 'function')) throw new TypeError('V3 memory foundation runtime 无效');
   if (!store || ['readReachable', 'readRecord', 'putRecord', 'commitRoot', 'recordKey', 'invalidate'].some(name => typeof store[name] !== 'function')) throw new TypeError('V3 memory store 无效');
   if (typeof generateAnalysisTask !== 'function') throw new TypeError('V3 memory analysis route 无效');
@@ -279,7 +285,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
   let qianshiHistoryRun = null;
   let qianshiHistoryState = Object.freeze({ status: 'idle', jobId: null, processedFloors: 0, totalFloors: 0, calls: 0, outcomes: [], message: '' });
   const qianshiSnapshotMemo = createQianshiSnapshotMemo();
-  const qianshiEventLookup = createQianshiEventLookup(source => qianshiSnapshotMemo(source, identityProjection, null));
+  const qianshiEventLookup = createQianshiEventLookup(source => qianshiSnapshotMemo(source, identityProjection, null, storyCalendarProvider()));
   const qianshiCandidateIndex = qianshiCandidatePreparer === prepareQianshiCandidates ? qianshiCandidateIndexFactory() : null;
   const subscribers = new Set();
   const currentReferenceTags = () => normalizeStoryClockReferenceTags(typeof storyClockReferenceTags === 'function' ? storyClockReferenceTags() : storyClockReferenceTags);
@@ -1018,7 +1024,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
       if (samePreparedRoot(preparedReachable, rootResult)) current = preparedReachable;
     }
     current ??= await store.readReachable({ mode: 'runtime' });
-    if (current.status !== 'ready') throw errorWith('V3_MEMORY_PREFIX_CHANGED', '当前记忆图尚未收敛，目标楼依赖前缀无法复核。');
+    if (current.status !== 'ready') throw errorWith('V3_MEMORY_PREFIX_CHANGED', '记忆尚未完成核对，请刷新状态后重试。');
     if (operation.epoch !== epoch || operation.controller?.signal?.aborted) throw errorWith('V3_MEMORY_CANCELLED', '操作已取消。');
     return current;
   }
@@ -1119,7 +1125,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
         const priorMatter = before.matters.find(matter => matter.matterId === override.matterId);
         const finalOrigin = priorMatter && finalEventById.get(priorMatter.origin.eventId);
         if (!finalOrigin || finalOrigin.matterId !== override.matterId) {
-          throw errorWith('QIANSHI_REJUDGE_MANUAL_LINE_CONFLICT', '重判会移动人工整线状态所锚定的原事项；请先人工解除或改判后再试，整组未提交。');
+          throw errorWith('QIANSHI_REJUDGE_MANUAL_LINE_CONFLICT', '整组未保存：人工状态与整理结果冲突。可恢复自动判断后重试。');
         }
       }
     }
@@ -1328,7 +1334,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
       }
     }
     if (operation.qianshiTextEdit && qianshiRejected && !operation.qianshiTextEdit.manualAction) {
-      throw errorWith('QIANSHI_TEXT_EDIT_RELATION_CONFLICT', '这条事件带有旧审核关系；修改文字会使关系失去对应依据，首版暂不能编辑。原记录保持不变。');
+      throw errorWith('QIANSHI_TEXT_EDIT_RELATION_CONFLICT', '旧版待核对事件暂不能编辑，原记录保留。');
     }
     if (!operation.qianshiRejudge) revisionReplacements = [revisionReplacement];
     for (const value of revisionReplacements) memoryByFloor.set(value.floorId, value);
@@ -2935,7 +2941,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
 
   function qianshiSnapshot() {
     if (!reachable?.root) return Object.freeze({ status: 'not-ready', message: '千事后端尚未准备好当前聊天。' });
-    return qianshiSnapshotMemo(reachable, identityProjection, qianshiHistoryState);
+    return qianshiSnapshotMemo(reachable, identityProjection, qianshiHistoryState, storyCalendarProvider());
   }
 
   function formalQianshiEvent(eventId, source = reachable) {
@@ -3026,7 +3032,7 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
         ['pending', 'new'].includes(candidate.decision) && candidate.event?.id === event.id
         && qianshiTextEventSignature(candidate.event) === qianshiTextEventSignature(event)
         && candidate.relations?.length > 0);
-      if (!manualAction && sameReviewCandidate) throw errorWith('QIANSHI_TEXT_EDIT_RELATION_CONFLICT', '这条事件带有旧审核关系；修改文字会使关系失去对应依据，首版暂不能编辑。原记录保持不变。');
+      if (!manualAction && sameReviewCandidate) throw errorWith('QIANSHI_TEXT_EDIT_RELATION_CONFLICT', '旧版待核对事件暂不能编辑，原记录保留。');
       const nowValue = nowIso(now), priorAudit = floorProvenance(reachable)[old.floorId] ?? {};
       const qianshiDelta = clone(old.qianshiDelta);
       const eventIndex = qianshiDelta.events.findIndex(item => item.id === eventId);
@@ -3736,12 +3742,13 @@ export function createV3MemoryRuntime({ foundationRuntime, store, hostAdapter, g
     },
     setQianshiMatterFollowing, setQianshiMatterStatus, getQianshiRecall: ({ queryContext = null, currentTime = null, selectedEventIds = null, selectedMatterIds = null } = {}) => {
       if (!reachable?.root) return { projectionVersion: QIANSHI_RECALL_PROJECTION_VERSION, text: '', eventIds: [], matterIds: [], anchor: null };
+      const calendarReachable = { ...reachable, calendar: storyCalendarProvider() };
       const anchor = { narrativeGeneration: reachable.root.narrativeGeneration, headCheckpointId: reachable.root.headCheckpointId, rootRevision: reachable.rootRevision };
       if (Array.isArray(selectedEventIds) || Array.isArray(selectedMatterIds)) {
-        const recall = projectQianshiRecall(reachable, { identityProjection, selectedEventIds: selectedEventIds ?? [], selectedMatterIds: selectedMatterIds ?? [] });
+        const recall = projectQianshiRecall(calendarReachable, { identityProjection, selectedEventIds: selectedEventIds ?? [], selectedMatterIds: selectedMatterIds ?? [] });
         return structuredClone({ ...recall, deletedEvents: qianshiDeletedEvents(reachable), anchor });
       }
-      const prepared = prepareQianshiRecallCandidates(reachable, { queryContext, identityProjection });
+      const prepared = prepareQianshiRecallCandidates(calendarReachable, { queryContext, identityProjection });
       const recall = projectQianshiCandidateSelection(prepared.candidates);
       const storyDate = typeof currentTime?.date === 'string' && currentTime.date.trim() ? currentTime.date.trim()
         : typeof currentTime?.raw === 'string' && currentTime.raw.trim() ? currentTime.raw.trim() : '';

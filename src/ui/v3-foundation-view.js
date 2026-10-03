@@ -60,7 +60,7 @@ const waitingFloorCopy = value => ({
 const waitingFloorExplanation = value => ({
   waitingNextUser: '尚未摘要，发送下一条用户消息后检查。',
   waitingEarlierFloor: '尚未摘要，先确认前面的 AI 楼。',
-  consecutiveAssistant: '尚未摘要，请在记忆页确认连续 AI 回复。',
+  consecutiveAssistant: '尚未摘要，请在记忆管理确认连续 AI 回复。',
   registrationNeedsReview: '尚未摘要，需核对楼层与记忆的对应关系。',
 })[value] ?? '这一楼尚未摘要，正在等待确认。';
 const reviewReasonCopy = value => {
@@ -1359,6 +1359,10 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
       : record.restoredReceipt
         ? `历史原始耗时：${Number.isFinite(timings?.totalMs) ? `总等待 ${Number(timings.totalMs).toFixed(1)} ms · ` : ''}${Number.isFinite(timings?.selectorMs) ? `选材总等待 ${Number(timings.selectorMs).toFixed(1)} ms · ` : ''}${selectorBreakdown}${Number.isFinite(timings?.sourceMs) ? ` · 读取 ${Number(timings.sourceMs).toFixed(1)} ms` : ''}`
         : timings ? `${Number.isFinite(timings.totalMs) ? `本轮召回等待 ${Number(timings.totalMs).toFixed(1)} ms · ` : ''}${Number.isFinite(timings.selectorMs) ? `选材总等待 ${Number(timings.selectorMs).toFixed(1)} ms · ` : ''}${selectorBreakdown}${Number.isFinite(timings.sourceMs) ? ` · 读取 ${Number(timings.sourceMs).toFixed(1)} ms` : ''}` : '未记录';
+    if (!record.restoredReceipt) {
+      if (Number.isFinite(timings?.commitMs)) timingCopy += ` · 核验 ${Number(timings.commitMs).toFixed(1)} ms`;
+      if (Number.isFinite(timings?.receiptMs)) timingCopy += ` · 保存 ${Number(timings.receiptMs).toFixed(1)} ms`;
+    }
     if (uncommitted && record.diagnosticAttempt) timingCopy = `选材与读取耗时来自第 ${record.diagnosticAttempt} 次尝试 · ${timingCopy}`;
     const filterReasons = (record.skipReasons ?? []).filter(value => value !== 'historySelectionFallback').map(skipReasonCopy);
     const selectorMetadataCopy = selector?.code ? `${selectorFailureCopy(selector.code)}${selector.httpStatus ? ` · HTTP ${selector.httpStatus}` : ''}${selector.formatStage ? ` · 格式阶段 ${selector.formatStage}` : ''}${selector.sourceStage ? ` · 阶段 ${selector.sourceStage}` : ''}${selector.finishReason ? ` · 结束原因 ${selector.finishReason}` : ''}${selector.sourceLabel && selector.sourceLabel !== '未命名 API' ? ` · 来源 ${selector.sourceLabel}` : ''}${selector.model && selector.model !== 'unknown' ? ` · 模型 ${selector.model}` : ''}${Number.isSafeInteger(selector.transportAttempts) ? ` · 网络尝试 ${selector.transportAttempts}` : ''}${Number.isSafeInteger(selector.requestCharacters) ? ` · 请求约 ${selector.requestCharacters} 字符 / ${selector.requestEstimatedTokens} token` : ''}` : '';
@@ -1381,8 +1385,19 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
       event.preventDefault(); event.stopPropagation();
       const excluded = new Set(['召回旧楼', '当前人物状态', '人物状态历史变化']);
       const nodeCopy = node => node.children?.length ? Array.from(node.children).map(nodeCopy).filter(Boolean).join(' ') : node.textContent || '';
+      // 复制时读最新时间记录，才能包含回执显示之后发出的主楼请求；不附别轮或刷新前的记录。
+      const latest = recallRuntime?.getState?.();
+      const requests = Number.isSafeInteger(record.requestDiagnosticId) && latest?.lastRecall?.requestDiagnosticId === record.requestDiagnosticId
+        ? latest.requestDiagnostic : null;
+      const stamp = value => Number.isFinite(value) ? new Date(value).toISOString() : '未记录';
+      const requestCopy = !requests || requests.status === 'unavailable' ? ['请求计时：未记录（刷新后不可恢复）。']
+        : requests.status === 'unsupported' ? ['请求计时：浏览器不支持。']
+        : ['请求计时（UTC，仅 HTTP，可能含后台请求；首响应不代表模型首字）：',
+          ...(requests.requests ?? []).map((item, index) => `${index + 1}. ${item.label}：发起 ${stamp(item.startedAt)} · 发送 ${stamp(item.requestStartedAt)} · 首响应 ${stamp(item.responseStartedAt)} · 完成 ${stamp(item.finishedAt)}`),
+          ...(requests.droppedCount ? [`仅保留最近 64 条；较早 ${requests.droppedCount} 条已略去。`] : [])];
       const value = [`召回回执：${recallStatus}`, ...Array.from(details.children).filter(node => !excluded.has(node.children[0]?.textContent)).map(node => nodeCopy(node)),
         `实际注入：${record.restoredReceipt || record.legacyReadOnly ? '历史展示，不代表本轮' : record.injectionText && !uncommitted ? '有' : '无'}；旧楼 ${record.selectedFloors?.length ?? 0}，状态 ${record.selectedStates?.length ?? 0}，变化 ${record.selectedCseChanges?.length ?? 0}`,
+        ...requestCopy,
         ...(errorCode ? [`错误代码：${errorCode}`, `错误：${publicErrorMessage({ code: errorCode }, { fallback: '召回未完成，请按错误代码检查。' })}`] : []), ...(errorMetadataCopy ? [`安全错误诊断：${errorMetadataCopy}`] : [])].join('\n');
       copyFeedback.textContent = await copy(value, { local: true }); copyFallback.replaceChildren();
       if (copyFeedback.textContent !== '已复制。') { const input = element('textarea', 'v3-diagnostic-fallback qqj-recall-copy-fallback'); input.value = value; input.readOnly = true; input.setAttribute('aria-label', '召回回执诊断复制文本'); copyFallback.append(input); }
@@ -1531,7 +1546,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, peopleRu
       const remove = element('button', 'primary-action', deleting ? '删除中…' : deletePending ? '继续删除当前聊天记忆' : '删除当前聊天记忆');
       remove.type = 'button'; remove.disabled = deleting || managementState?.blockedByOtherChat === true || (!deletePending && (managementState?.workBusy === true || !hasCurrentIdentity));
       remove.addEventListener('click', async () => {
-        if (!await Promise.resolve(confirmImpl({ title: '删除当前聊天记忆', body: '删除本聊天的摘要、双丝网、人物资料、召回及历史版本，下次需重新建档。正文、手动前情和全局设置保留；前情可另行清空。', note: '后台记录移入回收站，并非永久擦除。', confirmText: deletePending ? '继续删除' : '删除记忆', cancelText: '取消' }))) { feedback = '已取消删除当前聊天记忆。'; render(foundationState); return; }
+        if (!await Promise.resolve(confirmImpl({ title: '删除当前聊天记忆', body: '删除本聊天的摘要、双丝网、人物资料、时间事项、召回及历史版本，下次需重新建档。正文、手动前情和全局设置保留；前情可另行清空。', note: '后台记录移入回收站，并非永久擦除。', confirmText: deletePending ? '继续删除' : '删除记忆', cancelText: '取消' }))) { feedback = '已取消删除当前聊天记忆。'; render(foundationState); return; }
         void run(deletePending ? '继续删除当前聊天记忆' : '删除当前聊天记忆', () => memoryManagement.deleteCurrent(), { after: () => { managementState = memoryManagement.getState(); feedback = '当前聊天记忆已删除；聊天正文、手动前情与全局设置均已保留。手动前情可在“前情”中清空。'; return true; }, failed: () => { managementState = memoryManagement.getState(); return true; } });
       });
       deleteActions.append(remove);
