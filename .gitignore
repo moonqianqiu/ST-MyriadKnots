@@ -28,3 +28,7 @@ data/
 # Claude Code local session/config
 .claude/
 .zcode/
+.zcodeignore
+
+# Server-local diagnostic activation; never distribute it with the extension.
+diagnostics.local.json

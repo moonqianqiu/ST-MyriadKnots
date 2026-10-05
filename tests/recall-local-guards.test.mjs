@@ -93,18 +93,18 @@ test('invalidate：默认不删持久收据，clearPersisted 才删最新用户�
   runtime.invalidate('manualMemoryEdit');
   assert.equal(Object.hasOwn(message.extra, RECALL_RECEIPT_KEY), true, '默认失效不得动持久层');
   assert.deepEqual(saves, []);
-  runtime.invalidate('foundationFullRebuild', { clearPersisted: true });
+  runtime.invalidate('foundationFullRebuild', 'foundationFullRebuild', { clearPersisted: true });
   assert.equal(Object.hasOwn(message.extra, RECALL_RECEIPT_KEY), false);
   assert.equal(message.extra.untouched, 1, '只删收据键');
   assert.deepEqual(saves, ['save']);
   // 最新用户楼没有收据时早退：不触碰 extra，也不落盘
   host.chat = [{ is_user: false, mes: 'a2' }, { is_user: true, mes: 'u2', extra: { other: 2 } }];
-  runtime.invalidate('peopleProfileSaved', { clearPersisted: true });
+  runtime.invalidate('peopleProfileSaved', 'peopleProfileSaved', { clearPersisted: true });
   assert.deepEqual(host.chat[1].extra, { other: 2 });
   assert.deepEqual(saves, ['save']);
   // 宿主没有 snapshot 能力时非致命
   const bare = createV3RecallRuntime({ store: { readReachable: async () => ({}) }, hostAdapter: { snapshot: () => ({ chat: [], context: {} }) }, fingerprint, logger: { warn() {} } });
-  assert.doesNotThrow(() => bare.invalidate('manualMemoryEdit', { clearPersisted: true }));
+  assert.doesNotThrow(() => bare.invalidate('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true }));
 });
 
 test('时间参考标签探针：未配置引用标签时不读取标签内容，配置后才参与正文指纹', async () => {

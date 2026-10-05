@@ -17,6 +17,10 @@ function fieldsFrom(person) {
   return result;
 }
 function sameFields(left, right) { return PEOPLE_PROFILE_FIELDS.every(field => String(left?.[field] ?? '') === String(right?.[field] ?? '')); }
+function profileReadingText(value) {
+  // Reading-only formatting: keep the stored/editor value untouched.
+  return String(value ?? '').replace(/([；;。](?:[”’」』"'])*)[ \t]*(?=[^\s”’」』"'])/gu, '$1\n');
+}
 
 export function createPeopleProfilesView({ runtime, recallRuntime = null, sessionStateProvider = null, prepareSession = null, dialog = null, documentRef = globalThis.document, imageFactory = () => new Image(), urlApi = globalThis.URL } = {}) {
   if (!runtime || ['getState', 'refresh', 'setSelectedEntityIds', 'setPersonOrderEntityIds', 'saveProfile', 'saveAvatar', 'mergePeople', 'deletePerson', 'generateMissingProfiles', 'regenerateProfile'].some(name => typeof runtime[name] !== 'function')) throw new TypeError('千人人物资料 runtime 无效');
@@ -127,7 +131,7 @@ export function createPeopleProfilesView({ runtime, recallRuntime = null, sessio
       } else {
         const saved = fieldsFrom(updated);
         drafts.set(token.entityId, { ...saved, original: { ...saved }, dirtyFields: new Set(), wasProfiled: true, dirty: false, saving: false, editing: false, error: '', notice: '已保存' });
-        try { recallRuntime?.invalidate?.('peopleProfileSaved', { clearPersisted: true }); } catch { /* non-fatal */ }
+        try { recallRuntime?.invalidate?.('peopleProfileSaved', 'peopleProfileSaved', { clearPersisted: true }); } catch { /* non-fatal */ }
       }
       if (active) { render(next); if (updated?.profiled) scrollProfileToTop(token.entityId); }
     }, error => {
@@ -318,7 +322,7 @@ export function createPeopleProfilesView({ runtime, recallRuntime = null, sessio
         const present = group.fields.filter(([field]) => values[field]);
         if (!present.length) continue;
         const section = element('section', `qqj-profile-section qqj-profile-section-${group.key}${reading.children.length ? '' : ' lead'}`); section.append(element('h3', '', group.label));
-        for (const [field] of present) { const row = element('div', `qqj-profile-read-row qqj-profile-read-${field}`); row.append(element('span', '', PEOPLE_PROFILE_LABELS[field]), element('p', '', values[field])); section.append(row); }
+        for (const [field,,control] of present) { const row = element('div', `qqj-profile-read-row qqj-profile-read-${field}`); row.append(element('span', '', PEOPLE_PROFILE_LABELS[field]), element('p', '', control === 'textarea' ? profileReadingText(values[field]) : values[field])); section.append(row); }
         reading.append(section);
       }
       body.append(reading);
