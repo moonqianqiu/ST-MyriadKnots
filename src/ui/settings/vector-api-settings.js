@@ -1,5 +1,5 @@
 import { createSettingsKit } from './kit.js';
-import { normalizeVectorConfig, VECTOR_DEFAULT_MODEL, VECTOR_DEFAULT_URL } from '../../vector-api.js';
+import { normalizeVectorConfig, usesNativeXfyunProxy, VECTOR_DEFAULT_MODEL, VECTOR_DEFAULT_URL } from '../../vector-api.js';
 import { publicErrorMessage } from '../../public-error.js';
 
 // 向量配置独立保存；旧显式预设只用于回填，用户保存后复制配置并解除共享引用。
@@ -22,17 +22,20 @@ export function createVectorApiSettings({ settings, vectorApi, vectorIndex, docu
   const url = element('input', 'settings-input'); url.value = current.url; url.placeholder = VECTOR_DEFAULT_URL;
   const key = element('input', 'settings-input'); key.type = 'password';
   const model = element('input', 'settings-input'); model.value = current.model; model.placeholder = VECTOR_DEFAULT_MODEL;
+  const xfyunHint = element('p', 'settings-hint qqj-vector-xfyun-hint', '讯飞 MaaS 需开启酒馆 CORS 代理并重启；模型名请手动填写。');
+  const syncXfyunHint = () => { xfyunHint.hidden = !usesNativeXfyunProxy(url.value); };
+  url.addEventListener('input', syncXfyunHint);
   const result = element('p', 'settings-result');
   const progress = element('p', 'settings-result qqj-vector-progress');
   let testing = false;
   const draft = () => ({ url: url.value.trim() || VECTOR_DEFAULT_URL, key: key.value.trim() || savedConfig().key, model: model.value.trim() || VECTOR_DEFAULT_MODEL });
-  const updateKeyHint = () => { key.placeholder = savedConfig().key ? '已保存，留空保持不变' : '输入硅基 API Key'; };
+  const updateKeyHint = () => { key.placeholder = savedConfig().key ? '已保存，留空保持不变' : '输入向量 API Key'; };
   const saveConfig = () => {
     const previous = savedConfig(), config = draft();
     settings.update({ vectorEnabled: enabled.checked, vectorPresetId: '', vectorUrl: config.url, vectorKey: config.key, vectorModel: config.model });
     // 相同配置保留已加载向量，重复建立仍可复用未变片段。
     if (['url', 'key', 'model'].some(name => config[name] !== previous[name])) vectorIndex?.abortAll();
-    url.value = config.url; model.value = config.model; key.value = ''; updateKeyHint();
+    url.value = config.url; model.value = config.model; key.value = ''; updateKeyHint(); syncXfyunHint();
   };
   enabled.addEventListener('change', () => {
     settings.update({ vectorEnabled: enabled.checked }); vectorIndex?.abortAll(); sync();
@@ -53,23 +56,23 @@ export function createVectorApiSettings({ settings, vectorApi, vectorIndex, docu
     try { await vectorIndex.build(); }
     catch (error) { if (!vectorIndex.getState().error) { result.textContent = publicErrorMessage(error, { fallback: '索引建立失败，请重试。' }); result.className = 'settings-result error'; } }
   });
-  const cancel = button('取消', 'secondary-action', () => vectorIndex?.abortAll());
+  const cancel = button('取消', 'secondary-action', () => vectorIndex?.abortAll({ userInitiated: true }));
   const actions = element('div', 'settings-actions qqj-vector-actions'); actions.append(save, test, build, cancel);
   function sync() {
     const state = vectorIndex?.getState(), busy = state?.active === true || state?.status === 'building';
     build.disabled = !enabled.checked || busy || !vectorIndex;
     test.disabled = !enabled.checked || testing || !vectorApi;
     cancel.hidden = !busy;
-    progress.textContent = busy ? state.total > 0 ? `建立中 ${state.completed}/${state.total}` : '正在读取原文…'
+    progress.textContent = busy ? state.total > 0 ? `${state.background ? '后台补齐' : '建立中'} ${state.completed}/${state.total}` : state.background ? '正在读取已建索引…' : '正在读取原文…'
       : state?.error ? state.error
       : state?.status === 'ready' ? state.total > 0 ? `已索引 ${state.total} 个片段` : '当前没有可索引的原文。'
       : '';
     progress.className = `settings-result qqj-vector-progress${state?.error ? ' error' : state?.status === 'ready' && !busy ? ' success' : ''}`;
     progress.hidden = !progress.textContent;
   }
-  body.append(enabledRow, field('URL', url), field('Key', key), field('模型', model),
-    element('p', 'settings-hint', '索引仅当前聊天；更新原文后可重新建立。'), actions, result, progress);
-  updateKeyHint(); sync();
+  body.append(enabledRow, field('URL', url), field('Key', key), field('模型', model), xfyunHint,
+    element('p', 'settings-hint', '索引仅当前聊天；首次手动建立后，稳定新楼会自动补齐，删除的来源会自动退出索引。'), actions, result, progress);
+  updateKeyHint(); syncXfyunHint(); sync();
   // 订阅属于设置界面；切页只释放监听，返回恢复运行时进度，不取消后台任务。
   const releaseProgress = vectorIndex?.subscribe(() => sync());
   return { node, dispose: () => releaseProgress?.() };

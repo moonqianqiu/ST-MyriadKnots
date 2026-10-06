@@ -17,7 +17,9 @@ export const RECALL_LLM_SYSTEM_PROMPT = `为接下来的剧情续写分别排除
 
 C 的 kind=current 表示最后保存的状态快照，不代表此刻已经重新确认；kind=change 记录来源楼当时的 before→after，不要把其中的旧状态当作当前状态，尤其 remove 的 before 只是当时被移除的状态。toward 表示主体对该对象的单向状态，不推导反向关系。
 
-只输出JSON，例如 {"history_exclude_keys":[],"state_exclude_keys":[],"qianshi_exclude_keys":[],"annual_retain_keys":[]}。`;
+另外输出 priority_keys 数组：从本次被你保留的 R/C 材料中，按重要性列出解释本轮意图所需的最小证据组合，最多 8 个键，不必填满。涉及原因或变化时，优先项应能交代相关起因、对方实际回应及实质转折；不要用同主题的后期现状替代被问及的早期过程。优先选直接提供必要事实的材料，避免对同一阶段重复举证。不得列入任何排除键或不存在的键；没有明确优先项时返回空数组。只输出键，不另写解释；原有排除字段仍按上述规则填写。
+
+只输出JSON，例如 {"history_exclude_keys":[],"state_exclude_keys":[],"qianshi_exclude_keys":[],"annual_retain_keys":[],"priority_keys":[]}。`;
 
 const abortError = reason => {
   try { return new DOMException(String(reason ?? 'The operation was aborted.'), 'AbortError'); }
@@ -54,6 +56,25 @@ function optionalExcludedKeys(value, field, allowed) {
   return selected;
 }
 
+function optionalPriority(value, candidatesByKey, excludedKeys) {
+  if (!Object.hasOwn(value, 'priority_keys')) return { status: 'missing', keys: [], candidates: [], ignoredCount: 0 };
+  if (!Array.isArray(value.priority_keys)) return { status: 'invalid', keys: [], candidates: [], ignoredCount: 1 };
+  if (!value.priority_keys.length) return { status: 'empty', keys: [], candidates: [], ignoredCount: 0 };
+  const seen = new Set(), keys = [], candidates = [];
+  let ignoredCount = 0;
+  for (const key of value.priority_keys) {
+    if (typeof key !== 'string' || !candidatesByKey.has(key) || excludedKeys.has(key) || seen.has(key) || keys.length >= 8) {
+      ignoredCount += 1;
+      continue;
+    }
+    seen.add(key);
+    keys.push(key);
+    const candidate = candidatesByKey.get(key);
+    candidates.push(Object.freeze({ key, stableKey: candidate.stableKey }));
+  }
+  return { status: keys.length ? 'applied' : 'invalid', keys, candidates, ignoredCount: Math.min(10000, ignoredCount) };
+}
+
 const qianshiBlock = value => value?.text ? `<qqj_qianshi_progress>\n${value.text}\n</qqj_qianshi_progress>` : '';
 const qianshiTokens = value => value?.text ? estimateRecallTokens(`\n\n${qianshiBlock(value)}`) : 0;
 const qianshiCharacters = value => value?.text ? `\n\n${qianshiBlock(value)}`.length : 0;
@@ -85,11 +106,12 @@ export function removeExactQianshiDuplicates(progress, selection) {
   return Object.freeze({ ...progress, text, characterCount: text.length, eventIds: Object.freeze(keptEventIds) });
 }
 
-const diagnostic = ({ semantic = null, mode, metadata = null, error = null, durationMs = 0, utilityRoundTripMs = null, localSelectionMs = null, historyCandidateCount = null, stateCandidateCount = null, historyExcludedCount = null, stateExcludedCount = null, historyRetainedCount = null, stateRetainedCount = null, requestCharacters = null, requestEstimatedTokens = null, progressState = null } = {}) => {
+const diagnostic = ({ semantic = null, mode, metadata = null, error = null, priority = null, durationMs = 0, utilityRoundTripMs = null, localSelectionMs = null, historyCandidateCount = null, stateCandidateCount = null, historyExcludedCount = null, stateExcludedCount = null, historyRetainedCount = null, stateRetainedCount = null, requestCharacters = null, requestEstimatedTokens = null, progressState = null } = {}) => {
   const api = sanitizeTaskMetadata(metadata);
   return Object.freeze({
     mode,
     ...(semantic ? { semantic } : {}),
+    ...(priority ? { priority } : {}),
     code: typeof error?.code === 'string' ? error.code.slice(0, 120) : null,
     httpStatus: Number.isSafeInteger(error?.httpStatus ?? error?.status) ? (error.httpStatus ?? error.status) : null,
     formatStage: typeof error?.formatStage === 'string' ? error.formatStage.slice(0, 80) : null,
@@ -157,9 +179,10 @@ export async function selectRecallWithLlm({
   if (semantic.candidates?.length) historyContext = addSemanticHistory(historyContext, semantic.candidates);
   const cseContext = cseSelectionContext(source, queryContext);
   const baseInput = { source, queryContext, historyContext, cseContext, contextSize, maxFloors, maxItems, reservedTokens, reservedCharacters };
-  // 只有取得有效语义片段才留出 12 个位置；失败仍使用原来的 48 条候选。
-  const nativeHistoryPool = buildRecallHistoryCandidatePool({ source, queryContext, historyContext: nativeHistoryContext, maxCandidates: semantic.candidates?.length ? 36 : 48, maxCharacters: 24000 - semanticHistoryCharacters(historyContext) });
-  const historyPool = semantic.candidates?.length ? mergeSemanticHistoryPool(nativeHistoryPool, historyContext) : nativeHistoryPool;
+  // 原文片段与人工摘要共用最多12个语义位置；命中已有摘要时只替换该候选，不另加重复项。
+  const hasSemantic = historyContext.semantic?.length > 0;
+  const nativeHistoryPool = buildRecallHistoryCandidatePool({ source, queryContext, historyContext: nativeHistoryContext, maxCandidates: hasSemantic ? 36 : 48, maxCharacters: 24000 - semanticHistoryCharacters(historyContext) });
+  const historyPool = hasSemantic ? mergeSemanticHistoryPool(nativeHistoryPool, historyContext) : nativeHistoryPool;
   const csePool = buildRecallCseCandidatePool({ source, queryContext, cseContext });
   const annualCandidates = buildRecallAnnualCandidatePool({ source, queryContext, historyContext });
   const qianshiCandidates = Array.isArray(source?.qianshiCandidates) ? source.qianshiCandidates : [];
@@ -272,6 +295,9 @@ export async function selectRecallWithLlm({
     const excludedCse = stateKeys.map(key => cseByKey.get(key)).filter(Boolean);
     const retainedHistory = historyPool.candidates.filter(candidate => !historyKeys.includes(candidate.key));
     const retainedCse = csePool.candidates.filter(candidate => !stateKeys.includes(candidate.key));
+    const priorityCandidatesByKey = new Map([...retainedHistory, ...retainedCse].map(candidate => [candidate.key, candidate]));
+    // A malformed optional hint is ignored locally; it never retries the request or restores excluded material.
+    const parsedPriority = optionalPriority(parsed, priorityCandidatesByKey, new Set([...historyKeys, ...stateKeys]));
     const projectedQianshi = qianshiCandidates.length
       ? projectCandidates(qianshiKeys)
       : source?.qianshiProgress ?? null;
@@ -284,6 +310,7 @@ export async function selectRecallWithLlm({
         ...finalInput,
         selectedHistoryCandidates: retainedHistory,
         selectedCseCandidates: retainedCse,
+        priorityCandidates: parsedPriority.candidates,
         selectedAnnualReminderIds: annualCandidates.filter(candidate => annualKeys.includes(candidate.key)).map(candidate => candidate.itemId),
         excludedHistoryCandidates: excludedHistory,
         excludedCseCandidates: excludedCse,
@@ -291,11 +318,18 @@ export async function selectRecallWithLlm({
     const selectorCompleted = Date.now();
     updateStep(null);
     // 向量阶段单独计时；本地选材只包含候选准备、回包解析与最终材料选择。
+    const priorityDiagnostic = Object.freeze({
+      status: selection.prioritySelection?.timeGuard ? 'timeGuard' : parsedPriority.status,
+      keys: Object.freeze(parsedPriority.keys),
+      selectedKeys: Object.freeze(selection.prioritySelection?.selectedKeys ?? []),
+      ignoredCount: parsedPriority.ignoredCount,
+    });
+    const { prioritySelection: _prioritySelection, ...selectionResult } = selection;
     return Object.freeze({
-      ...selection,
+      ...selectionResult,
       qianshiProgress: removeExactQianshiDuplicates(qianshiProgress, selection),
       selectorDiagnostic: diagnostic({
-        semantic: semantic.diagnostic, mode: 'llm', metadata: result?.taskMetadata,
+        semantic: semantic.diagnostic, mode: 'llm', metadata: result?.taskMetadata, priority: priorityDiagnostic,
         durationMs: selectorCompleted - selectorStarted,
         utilityRoundTripMs: utilityCompleted - utilityStarted,
         localSelectionMs: Math.max(0, (utilityStarted - selectorStarted) + (selectorCompleted - utilityCompleted) - (Number(semantic.diagnostic?.durationMs) || 0)),
