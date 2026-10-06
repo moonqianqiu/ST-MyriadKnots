@@ -12,7 +12,7 @@
 1. **版本声明 (`manifest.json`)**：跟随上游官方发布版本号。
 2. **生产单文件 (`dist/qqj-app.js`)**：由 `npm run build`（Vite + Rolldown）编译生成；源码任何变动后**必须重新构建 bundle**，否则入口加载测试失败。
 3. **缓存键规则 (`js` 字段)**：格式强制 `dist/qqj-app.js?v=YYYYMMDD.<全局递增序号>-<bundle SHA-256 前16位小写>`；`tests/production-entry-load.test.mjs` 校验哈希与实际 bundle 摘要一致。**序号全库历史内全局递增、同日不得复用——合并上游后注意上游同日已用的序号，取未用过的更大值（`git log --all -S 'YYYYMMDD.'` 复核）；哈希取自真实重建产物，禁止手写或沿用旧值**（曾发生文档记录与实际产物哈希漂移的「漏 bump 假通过」失效模式）。构建顺序铁律：**先把版本号改到位 → 再 build（bundle 内嵌版本常量）→ 最后回填缓存键**。
-4. **合并流程**：备份分支 `git branch backup/main-before-upstream-vX.Y.Z main` → `git merge --no-ff upstream/main`（先以 `git merge-tree --write-tree main upstream/main` 预判，实际冲突应与预判一致）→ 裁决（§2）→ 四门禁（§4）→ AGENTS.md 记录 → push origin；验证完整前不向远程 force push。
+4. **合并流程**：备份分支 `git branch backup/main-before-upstream-vX.Y.Z main` → `git merge --no-ff upstream/main`（先以 `git merge-tree --write-tree main upstream/main` 预判，实际冲突应与预判一致）→ 裁决（§2）→ 四门禁（§4）→ AGENTS.md 记录 → push origin；验证完整前不向远程 force push。**备份分支仅在本地存在，合并验证通过并推送后即可清理**（`git branch -d`，其尖端已是 main 历史内的祖先提交，即合并提交的第一父状态，删除零损失）。
 
 ---
 
