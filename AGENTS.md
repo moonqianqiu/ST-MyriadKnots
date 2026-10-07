@@ -92,13 +92,14 @@
 
 ### 3.5 召回选材性能（`src/v3/recall-selector.js` 四项记忆化）
 - **动机**：长聊天（129 楼层记忆 / 92 实体）点「重新生成」时 `buildStorylinePlan()` 占 `selectRecall()` 壁钟 **92.7–97.3%**（`candidateBuild` 一步 ~20.2s），主线程被单核跑满、界面无响应。根因是**同一批字符串被反复重算**：`compact()`（NFKC + 3 次正则 + `toLocaleLowerCase` + `\p{L}\p{N}` 正则，作用在最长 12000 字符的 `_coreText` 上）占 self time **42.4%**，`tokenizeRecallText()` 16.1% + `materialTokens` 10.5%（合 26.6%）；真正做集合交集的 `setIntersection` 只占 **0.3%**。
-- **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5：n=48 **17.18×**、n=96 25.95×、n=129 29.22×、n=192 **35.49×**；文档上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**。增长指数由 `n^1.76` 降到 `n^1.24`。
+- **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5：n=48 **17.18×**、n=96 25.95×、n=129 29.22×、n=192 **35.49×**；实机卡死上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**。增长指数由 `n^1.76` 降到 `n^1.24`。
 - **等价性证据**：`node tools/perf-audit/verify-equivalence.mjs HEAD` = **144/144 逐字节一致**（`injectionText` 逐字符 + 完整结果树 canonical 深比）；四门禁全绿。判据：三者都是纯函数（`compact`/`historyStableKey`/`prepareMaterial`）按输入记忆化，`entityDerivedCache` 只上提依赖 `context` 的常量。
 - **仍未解决的（有意留作后续）**：`buildStorylinePlan` 内层仍是 **O(m²)** 对比较（四层：候选线生成／建线合并／附着／continuity 兜底）。本改动只砍常数与部分指数，**不改阶**——按修复后自身实测，n=192 634ms → 384 1924ms → 768 6883ms → **1536 18056ms**，即悬崖约从 192 楼推到 **~1500 楼**。要真正压阶只能收缩参与分组的候选池（`baseHistory` 有原则预过滤）；硬切 `.slice(0,128)` 实测可得 17×–54×但**会改变召回结果**，不可取。
-- **三条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
-  ① **缓存要打在热点上**：原移交文档去缓存 `setIntersection`（self 0.3%）并以 `historyStableKey` 拼接串为键（键推导落在 42.4% 的大头上，4000 字符时键成本是交集的 401×），实测**反而慢 20.4%**、并多吃 56–107MB 键内存。
+- **四条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
+  ① **缓存要打在热点上，且键必须廉价**：实测成本分布是 `compact` 类键推导 **42.4%** 对 `setIntersection` **0.3%**；`_coreText` 4000 字符时键推导成本是交集的 **401×**，缓存命中一次的键成本是原运算的 **15.39×**——为便宜运算付昂贵键即净亏。故本节只缓存**最贵的** `compact`/`historyStableKey`/`prepareMaterial`。
   ② **跨轮记忆化不能按对象身份**：`decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效。
-  ③ **缓存键必须覆盖被缓存函数的全部输入**：`historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用「它 + 内容」做 `recordFor` 的键会串记录。该缓存实测收益为噪声（0.982×/0.989×）已剔除（§2.2 反例警示）。
+  ③ **缓存键必须覆盖被缓存函数的全部输入**：`historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用「它 + 内容」做 `recordFor` 的键会串记录——该方案的收益也落在噪声内（0.982×/0.989×），故剔除（§2.2 反例警示）。
+  ④ **审计基线的谱系必须断言**：性能夹具曾在跨上游版本比较中给出虚假的「逐字节一致」；`tools/perf-audit/lib/recall-audit.mjs` 的 `assertUpstreamMarkers()` 让这种情况**抛异常而非静默通过**。
 - **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到 gitignore 的 `.perf-audit-scratch/`，**绝不写入 `src/` 旁**。
 
 ---
