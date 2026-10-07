@@ -98,7 +98,7 @@
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1545** = 上游 v0.6.11 树 1521 + 本地 24；实测约 69s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1564** = 上游 v0.6.12 树 1540 + 本地 24；实测约 69s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -106,9 +106,9 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.11`，提交 `797e2ab`；v0.6.9 召回实证选择与千事恢复 + v0.6.10 语义召回支持手动摘要 + v0.6.11 原始向量索引维护/摘要重试，新文件 `src/v3/vector-auto-update.js`）；合并前备份分支 `backup/main-before-upstream-v0.6.11`；
-- **产物版本**：`manifest.json` 版本号 `0.6.11`（含 `author: "atonal519"` 字段），缓存键 `20261006.15-4375cf376a092ffd`（v0.6.11 合并后 2026-10-06 重建）；
-- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.2moon（2026-10-06，`c001d45`；narrativePace/事件制门票/daily-menu），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.12`，提交 `b33c843`；空档案初始化 + 召回来源核验：`sourceRefsValid` 混合楼 rawWitness 校验、准备期限 5000ms→8000ms、`recall-selector` 去重键 `cseDuplicateKey`/`sameSelectionDuplicate`）；本次未留备份分支（合并前基线 `2344a0d` 为合并提交 b422e28 的第一父提交，且已推送 origin）；
+- **产物版本**：`manifest.json` 版本号 `0.6.12`（含 `author: "atonal519"` 字段），缓存键 `20261006.19-f5bc5d2239eb3a09`（v0.6.12 合并后 2026-10-07 重建）；
+- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
 ### 5.1 合并历史索引（逐版本实录与验证数据：`git log -p AGENTS.md`；上游能力摘要：`git show <合并提交>`）
 
