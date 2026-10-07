@@ -13,6 +13,22 @@ import { summaryCandidateText } from './vector-source.js';
 const clean = (value, maximum = 4000) => String(value ?? '').normalize('NFKC').replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maximum);
 const cleanLiteral = (value, maximum = 4000) => String(value ?? '').replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maximum);
 const compact = value => clean(value, 12000).toLocaleLowerCase('zh-CN').replace(/[^\p{L}\p{N}]+/gu, '');
+// [perf] compact() is the single hottest transform here, and it is called repeatedly on
+// the same strings. decorate() re-clones every candidate on each budget round, but the
+// clones SHARE the _coreText/_rankText string instances, so memoizing on the STRING
+// (rather than on the object) survives the clone. compact() is pure in its argument, so
+// this cannot change any result; the cap only bounds memory.
+const COMPACT_MEMO_LIMIT = 200000;
+const compactMemo = new Map();
+const compactOf = value => {
+  if (typeof value !== 'string' || value.length === 0) return compact(value);
+  const cached = compactMemo.get(value);
+  if (cached !== undefined) return cached;
+  const result = compact(value);
+  if (compactMemo.size >= COMPACT_MEMO_LIMIT) compactMemo.clear();
+  compactMemo.set(value, result);
+  return result;
+};
 const playable = message => {
   if (!message || message.is_system === true || message.is_hidden === true || message.hidden === true || (message.is_user !== true && message.is_user !== false)) return false;
   const text = message.mes;
@@ -587,7 +603,7 @@ export function cseSelectionContext(source, queryContext) {
   return { query, queries, involvedIds, entityById, entityOrder, states, changes };
 }
 
-const duplicateKey = value => [compact(value._coreText), value._subjectKey, value._visibilityKey, value._statusKey ?? ''].join('|');
+const duplicateKey = value => [compactOf(value._coreText), value._subjectKey, value._visibilityKey, value._statusKey ?? ''].join('|');
 // 历史材料继续使用原有键；CSE另保留单向对象边界，避免同文状态互相吞并。
 const cseDuplicateKey = value => [duplicateKey(value), value.towardEntityId ?? '', value.before?.towardEntityId ?? '', value.after?.towardEntityId ?? ''].join('|');
 const isCseValue = value => Boolean(value && ['core', 'adaptive', 'situational'].includes(value.layer) && typeof value.subjectEntityId === 'string');
@@ -597,7 +613,20 @@ const sameSelectionDuplicate = (left, right) => {
   if (targetedCse(left) || targetedCse(right)) return false;
   return duplicateKey(left) === duplicateKey(right);
 };
-export const historyStableKey = value => [value.floorId, value.floorMemoryId, value.assistantSeq, value._sourceOrder, duplicateKey(value)].join('|');
+const historyStableKeyRaw = value => [value.floorId, value.floorMemoryId, value.assistantSeq, value._sourceOrder, duplicateKey(value)].join('|');
+// [perf] historyStableKey() is a pure function of the object's own fields, yet topicTerms()
+// calls it twice per invocation and topicTerms itself runs O(m^2) times, so the string was
+// being rebuilt constantly (duplicateKey -> compact). Memoize per object with a WeakMap:
+// no leak and no eviction policy needed. Same inputs -> same key, so results are unchanged.
+const stableKeyMemo = new WeakMap();
+export const historyStableKey = value => {
+  if (value === null || typeof value !== 'object') return historyStableKeyRaw(value);
+  const cached = stableKeyMemo.get(value);
+  if (cached !== undefined) return cached;
+  const key = historyStableKeyRaw(value);
+  stableKeyMemo.set(value, key);
+  return key;
+};
 const cseStableKey = value => value._recallCseKind === 'change'
   ? ['change', value.deltaId, value.floorId, value.assistantSeq, value.subjectEntityId, value.layer, value.action, stateSourceKey(value.before), stateSourceKey(value.after)].join('|')
   : ['current', value.subjectEntityId, value.layer, stateSourceKey(value), duplicateKey(value)].join('|');
@@ -678,9 +707,23 @@ const relationAnchorOrder = (left, right) => (Number(right.branchScores?.latestU
   || (Number(left._sourceOrder) || 0) - (Number(right._sourceOrder) || 0);
 
 const materialText = value => value?._coreText ?? value?.text;
+// [perf] prepareMaterial() is pure in materialText(value). materiallySame() is called
+// O(m^2) times and used to allocate a fresh object each time, so the lazily-built `tokens`
+// Set (materialTokens, below) never survived a single call and tokenizeRecallText() re-ran
+// on the same text over and over. Sharing the prepared object keeps that Set alive.
+// The returned object is only ever read, so sharing it cannot change any result.
+const preparedMaterialMemo = new Map();
+const PREPARED_MATERIAL_LIMIT = 200000;
 const prepareMaterial = value => {
-  const text = clean(materialText(value), 4000);
-  return { text, compactText: text ? compact(text) : '', tokens: null };
+  const raw = materialText(value);
+  const key = typeof raw === 'string' ? raw : `\u0000${String(raw)}`;
+  const cached = preparedMaterialMemo.get(key);
+  if (cached !== undefined) return cached;
+  const text = clean(raw, 4000);
+  const prepared = { text, compactText: text ? compactOf(text) : '', tokens: null };
+  if (preparedMaterialMemo.size >= PREPARED_MATERIAL_LIMIT) preparedMaterialMemo.clear();
+  preparedMaterialMemo.set(key, prepared);
+  return prepared;
 };
 const materialTokens = value => value.tokens ??= new Set(tokenizeRecallText(value.text));
 
@@ -852,9 +895,21 @@ function expandLinkedCse({ source, historyContext, selectedHistory, linkedHistor
   }).sort(relationAnchorOrder);
 }
 
+// [perf] The entity token set and each entity's compacted name labels depend only on
+// `context`, which is stable for the whole selectRecall call, yet they were rebuilt
+// inside EVERY recordFor() invocation -- including re-running compact() on all aliases.
+const entityDerivedCache = new WeakMap();
 function buildStorylinePlan({ context, history, states, changes }) {
   if (!context) return { storylines: [], history: [], states: [], changes: [] };
-  const entityTokens = new Set([...context.entityById.values()].flatMap(entity => entityLabels(entity).flatMap(tokenizeRecallText)));
+  const contextDerived = entityDerivedCache.get(context) ?? (() => {
+    const entityTokens = new Set([...context.entityById.values()].flatMap(entity => entityLabels(entity).flatMap(tokenizeRecallText)));
+    const entityNameEntries = [...context.entityById].map(([entityId, entity]) => [entityId,
+      entityLabels(entity).filter(label => !genericAlias(label)).map(label => compactOf(label)).filter(label => label.length >= 2)]);
+    const derived = { entityTokens, entityNameEntries };
+    entityDerivedCache.set(context, derived);
+    return derived;
+  })();
+  const { entityTokens, entityNameEntries } = contextDerived;
   const memoryByFloor = new Map(context.oldMemories.map(memory => [memory.floorId, memory]));
   const recordFor = value => {
     const memory = memoryByFloor.get(value.rawWitness?.memoryFloorId ?? value.floorId ?? value.sourceFloorId ?? value.before?.sourceFloorId ?? value.after?.sourceFloorId);
@@ -862,9 +917,9 @@ function buildStorylinePlan({ context, history, states, changes }) {
     for (const entityId of String(value._subjectKey ?? '').split(',').filter(Boolean)) participants.add(entityId);
     for (const entityId of [value.subjectEntityId, value.towardEntityId, value.before?.towardEntityId, value.after?.towardEntityId].filter(Boolean)) participants.add(entityId);
     const relationText = value._rankText ?? value.text ?? `${value.before?.text ?? ''} ${value.after?.text ?? ''}`;
-    const compactText = compact(relationText);
-    for (const [entityId, entity] of context.entityById) {
-      if (entityLabels(entity).some(label => !genericAlias(label) && compact(label).length >= 2 && compactText.includes(compact(label)))) participants.add(entityId);
+    const compactText = compactOf(relationText);
+    for (const [entityId, labels] of entityNameEntries) {
+      if (labels.some(label => compactText.includes(label))) participants.add(entityId);
     }
     return { value, participants, tokens: relationTokens(relationText, entityTokens) };
   };

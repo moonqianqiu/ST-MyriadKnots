@@ -43,6 +43,12 @@
 > - `src/v3/time-body.js`：`currentBodyClock` 加法式内容视图兜底（canonical 探测返回 null 时以 `sanitizeMemoryContent(rawContent, { keepTags: 'content' })` 再探；用户显式配置 keepTags 时行为不变）；`readTimeBody` 签名并集 `{ sanitizerOptions = {}, storyClockReferenceTags = '', calendar = null }`（上游故事历法 `calendar` 与本地兜底正交）→ `tests/v3-time-body.test.mjs`。
 > - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。
 > - `src/ui/help-guide.js`：本地仅改设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义），上游高频重写本文件文案——裁决：**上游新增段落全收 + 包裹符段保持本地**（上游侧该段仍是旧的 `[[...]]` 专用描述，勿取上游侧）。
+> - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，四者都是「纯函数按输入记忆化 / 只依赖 `context` 的常量上提」，判定输入一字未动。上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
+>   ① `compactOf`（按**字符串**记忆化 `compact()`；`COMPACT_MEMO_LIMIT = 200000`）——`decorate()` 每轮 `{...value}` 克隆候选，但克隆体**共享 `_coreText`/`_rankText` 字符串实例**，故按字符串键可跨轮命中（按对象键则命中率仅 ~4.5%，见 §3.5 教训）；
+>   ② `entityDerivedCache`（`WeakMap` on `context`）上提 `entityTokens` 与 `entityNameEntries`（实体名 → 已 `compact` 的标签表），替代 `recordFor()` 内对 92 实体的逐次扫；
+>   ③ `stableKeyMemo` + `historyStableKeyRaw`（按对象记忆化 `historyStableKey()`，仍是导出的 `historyStableKey`）；
+>   ④ `preparedMaterialMemo`（按 material 文本共享 `prepareMaterial()` 结果，使 `materialTokens` 的懒加载 `tokens` Set 得以存活）。
+>   **反例警示（勿回植）**：上游若引入「按内容键跨轮缓存 `recordFor`」须先证明键完整——`historyStableKey` **不含** `_rankText`／`towardEntityId`／`*?.sourceFloorId`，而这些正是 `recordFor()` 的输入，用它做键会把仅 `toward` 不同（上游 `cseDuplicateKey` 特意区分）的值串成同一条 record。本次实测该缓存收益在噪声内（n=129/192 为 0.982×/0.989×），已剔除。
 
 ### 2.3 自动合并正交区（3-way 自动合入，合并后核对资产在位即可）
 
@@ -84,6 +90,17 @@
 - **与上游 `root: 0` 极速通道共存**：上游 `commitFrozenReceiptIfCurrent` 复用阶段有意不比对 Checkpoint/Revision（测试锁定复用零 I/O）。本地修复零性能开销：日常重新生成照走极速通道，仅人工修改记忆时精确清缓存重选材。
 - **本地守卫测试**：`tests/recall-local-guards.test.mjs`（上游无此文件）集中回归本地补丁——见证向前截断对照、`matchFloorCandidates` 探针与 `'locatorEquivalent'`、`extraOnlySanitizerOptions` 合同、`invalidate` 默认不删持久收据而 `clearPersisted: true` 才删并 `saveChat`、时间参考标签探针。上游重写对应链路后**先跑它**。
 
+### 3.5 召回选材性能（`src/v3/recall-selector.js` 四项记忆化）
+- **动机**：长聊天（129 楼层记忆 / 92 实体）点「重新生成」时 `buildStorylinePlan()` 占 `selectRecall()` 壁钟 **92.7–97.3%**（`candidateBuild` 一步 ~20.2s），主线程被单核跑满、界面无响应。根因是**同一批字符串被反复重算**：`compact()`（NFKC + 3 次正则 + `toLocaleLowerCase` + `\p{L}\p{N}` 正则，作用在最长 12000 字符的 `_coreText` 上）占 self time **42.4%**，`tokenizeRecallText()` 16.1% + `materialTokens` 10.5%（合 26.6%）；真正做集合交集的 `setIntersection` 只占 **0.3%**。
+- **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5：n=48 **17.18×**、n=96 25.95×、n=129 29.22×、n=192 **35.49×**；文档上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**。增长指数由 `n^1.76` 降到 `n^1.24`。
+- **等价性证据**：`node tools/perf-audit/verify-equivalence.mjs HEAD` = **144/144 逐字节一致**（`injectionText` 逐字符 + 完整结果树 canonical 深比）；四门禁全绿。判据：三者都是纯函数（`compact`/`historyStableKey`/`prepareMaterial`）按输入记忆化，`entityDerivedCache` 只上提依赖 `context` 的常量。
+- **仍未解决的（有意留作后续）**：`buildStorylinePlan` 内层仍是 **O(m²)** 对比较（四层：候选线生成／建线合并／附着／continuity 兜底）。本改动只砍常数与部分指数，**不改阶**——按修复后自身实测，n=192 634ms → 384 1924ms → 768 6883ms → **1536 18056ms**，即悬崖约从 192 楼推到 **~1500 楼**。要真正压阶只能收缩参与分组的候选池（`baseHistory` 有原则预过滤）；硬切 `.slice(0,128)` 实测可得 17×–54×但**会改变召回结果**，不可取。
+- **三条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
+  ① **缓存要打在热点上**：原移交文档去缓存 `setIntersection`（self 0.3%）并以 `historyStableKey` 拼接串为键（键推导落在 42.4% 的大头上，4000 字符时键成本是交集的 401×），实测**反而慢 20.4%**、并多吃 56–107MB 键内存。
+  ② **跨轮记忆化不能按对象身份**：`decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效。
+  ③ **缓存键必须覆盖被缓存函数的全部输入**：`historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用「它 + 内容」做 `recordFor` 的键会串记录。该缓存实测收益为噪声（0.982×/0.989×）已剔除（§2.2 反例警示）。
+- **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到 gitignore 的 `.perf-audit-scratch/`，**绝不写入 `src/` 旁**。
+
 ---
 
 ## 4. 验证清单与验收标准（4 道硬性门禁）
@@ -107,7 +124,8 @@
 ## 5. 当前仓库状态底数（基线备忘）
 
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.12`，提交 `b33c843`；空档案初始化 + 召回来源核验：`sourceRefsValid` 混合楼 rawWitness 校验、准备期限 5000ms→8000ms、`recall-selector` 去重键 `cseDuplicateKey`/`sameSelectionDuplicate`）；本次未留备份分支（合并前基线 `2344a0d` 为合并提交 b422e28 的第一父提交，且已推送 origin）；
-- **产物版本**：`manifest.json` 版本号 `0.6.12`（含 `author: "atonal519"` 字段），缓存键 `20261006.19-f5bc5d2239eb3a09`（v0.6.12 合并后 2026-10-07 重建）；
+- **产物版本**：`manifest.json` 版本号 `0.6.12`（含 `author: "atonal519"` 字段），缓存键 `20261007.385-7b2e010282dc935d`（v0.6.12 合并后重建 → 2026-10-07 叠加**本地召回选材性能修复**后再次重建，见 §3.5）；
+- **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；同一场景 **20201ms → 706ms（28.62×）**，四门禁全绿（1564/1564）；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
 ### 5.1 合并历史索引（逐版本实录与验证数据：`git log -p AGENTS.md`；上游能力摘要：`git show <合并提交>`）
