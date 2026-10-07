@@ -15,7 +15,8 @@
 //  2. IMPORTS MUST BE ABSOLUTIZED. recall-selector.js imports its siblings with relative
 //     specifiers, so a copy placed outside src/v3/ cannot be imported as-is. Instead of
 //     copying next to the original (which mutates the working tree), we rewrite the three
-//     sibling specifiers to file:// URLs and keep the variant in a scratch directory.
+//     sibling specifiers to file:// URLs and keep the variant outside the repository, in
+//     the OS temp directory, so an audit never leaves anything behind in the checkout.
 //
 //  3. CRLF. src/v3/recall-selector.js is stored with CRLF line endings on Windows. Any
 //     text substitution must normalize to LF first, or anchor matching silently fails.
@@ -29,11 +30,13 @@ import { readFile, writeFile, mkdir, open, unlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // Variants are materialized here rather than next to the original, so an audit never
-// mutates src/. Gitignored.
-export const SCRATCH_DIR = resolve(REPO_ROOT, '.perf-audit-scratch');
+// mutates src/. Deliberately OUTSIDE the repository (OS temp dir): the checkout stays
+// clean and no .gitignore entry is needed. Fully regenerable — delete it any time.
+export const SCRATCH_DIR = resolve(tmpdir(), 'qqj-recall-perf-audit');
 export const SELECTOR_REL = 'src/v3/recall-selector.js';
 export const SELECTOR_ABS = resolve(REPO_ROOT, SELECTOR_REL);
 

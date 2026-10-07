@@ -32,7 +32,3 @@ data/
 
 # Server-local diagnostic activation; never distribute it with the extension.
 diagnostics.local.json
-
-# Scratch area for tools/perf-audit. The audit harness materializes recall-selector
-# variants here so it never writes next to src/; fully regenerable, never committed.
-.perf-audit-scratch/

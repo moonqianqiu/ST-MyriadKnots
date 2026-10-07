@@ -209,4 +209,4 @@ node tools/perf-audit/benchmark.mjs HEAD --scaling
 PERF_RUNS=5 PERF_CONTEXT=8192 node tools/perf-audit/benchmark.mjs HEAD
 ```
 
-`tools/perf-audit/lib/recall-audit.mjs` 是共享库（fixture 构造、canonical 比对、谱系断言、计时与指数拟合）；`tools/perf-audit/README.md` 载夹具设计理由。变体物化到 gitignore 的 `.perf-audit-scratch/`，**绝不写入 `src/` 旁**。
+`tools/perf-audit/lib/recall-audit.mjs` 是共享库（fixture 构造、canonical 比对、谱系断言、计时与指数拟合）；`tools/perf-audit/README.md` 载夹具设计理由。变体物化到**系统临时目录**（`SCRATCH_DIR = tmpdir()/qqj-recall-perf-audit`），即仓库之外——**绝不写入 `src/` 旁，也不在仓库内留任何痕迹**。

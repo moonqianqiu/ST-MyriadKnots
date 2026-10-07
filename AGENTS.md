@@ -100,7 +100,7 @@
   ② **跨轮记忆化不能按对象身份**：`decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效。
   ③ **缓存键必须覆盖被缓存函数的全部输入**：`historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用「它 + 内容」做 `recordFor` 的键会串记录——该方案的收益也落在噪声内（0.982×/0.989×），故剔除（§2.2 反例警示）。
   ④ **审计基线的谱系必须断言**：性能夹具曾在跨上游版本比较中给出虚假的「逐字节一致」；`tools/perf-audit/lib/recall-audit.mjs` 的 `assertUpstreamMarkers()` 让这种情况**抛异常而非静默通过**。
-- **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到 gitignore 的 `.perf-audit-scratch/`，**绝不写入 `src/` 旁**。
+- **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到**系统临时目录**（`SCRATCH_DIR = tmpdir()/qqj-recall-perf-audit`，见 `lib/recall-audit.mjs`），即仓库之外——**绝不写入 `src/` 旁，也不需 `.gitignore` 条目**。
 
 ---
 

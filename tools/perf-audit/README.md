@@ -53,10 +53,13 @@ investigation several variants were generated from v0.6.11 sources and then quie
 against a v0.6.12 baseline; the resulting "byte-identical ✓" verdicts were meaningless.
 `assertUpstreamMarkers()` now throws if a build lacks markers only present from v0.6.12 on.
 
-**2. Never write next to `src/`.** `recall-selector.js` imports its siblings with relative
-specifiers, so a variant needs either to sit beside the original (mutating the working tree)
-or to have those specifiers rewritten. `absolutizeImports()` does the latter and the scratch
-area is `.perf-audit-scratch/` (gitignored).
+**2. Never write inside the repository.** `recall-selector.js` imports its siblings with
+relative specifiers, so a variant needs either to sit beside the original (mutating the
+working tree) or to have those specifiers rewritten. `absolutizeImports()` does the latter,
+and the variant is materialized in the OS temp dir (`SCRATCH_DIR` in
+`lib/recall-audit.mjs`, i.e. `%TEMP%/qqj-recall-perf-audit` on Windows) — outside the
+checkout entirely, so no `.gitignore` entry is required and nothing can be committed by
+accident.
 
 ## Reading a benchmark result
 
@@ -68,7 +71,7 @@ alters what gets recalled, which is why it was left as separate work.
 
 ## Notes
 
-- A scratch directory is created and reused; delete `.perf-audit-scratch/` freely.
+- A scratch directory is created in the OS temp dir and reused; delete it freely.
 - Sandboxes that confine stdio reject piped child output, so `loadSelectorFromGit()` redirects
   `git show` straight into an opened file descriptor instead of capturing a pipe.
 - An unpatched build at 192 floors costs ~20 s per call. Keep the floor matrix small unless
