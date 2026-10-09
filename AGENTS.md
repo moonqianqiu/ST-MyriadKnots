@@ -49,6 +49,7 @@
 >   ③ `stableKeyMemo` + `historyStableKeyRaw`（按对象记忆化 `historyStableKey()`，仍是导出的 `historyStableKey`）；
 >   ④ `preparedMaterialMemo`（按 material 文本共享 `prepareMaterial()` 结果，使 `materialTokens` 的懒加载 `tokens` Set 得以存活）。
 >   **反例警示（勿回植）**：上游若引入「按内容键跨轮缓存 `recordFor`」须先证明键完整——`historyStableKey` **不含** `_rankText`／`towardEntityId`／`*?.sourceFloorId`，而这些正是 `recordFor()` 的输入，用它做键会把仅 `toward` 不同（上游 `cseDuplicateKey` 特意区分）的值串成同一条 record。本次实测该缓存收益在噪声内（n=129/192 为 0.982×/0.989×），已剔除。
+>   **正例（v0.7.0 已采纳，勿再删）**：上游 `recordsByValue`——`WeakMap` 按**对象身份**缓存 `recordFor()` 结果，作用域严格限于**单次 `buildStorylinePlan()`**。之所以安全：`recordFor()` 的输入是 history 数组内的**原对象**（不经 `decorate()` 的 `{...value}` 克隆），故对象键既命中又**不会在「同文本、不同 `towardEntityId`」之间串记录**，与上面的反例正交。成立前提：plan 执行期间候选对象不被原地修改（当前计算路径成立）。**红线**：绝不可把它改成按 `historyStableKey`（或「稳定键 + 文本」）跨对象／跨轮缓存，那就是反例本身。裁决依据：门禁4 等价审计对「纯上游 v0.7.0」与「本地 v0.7.0 前基线」各 **144/144 逐字节一致**。
 
 ### 2.3 自动合并正交区（3-way 自动合入，合并后核对资产在位即可）
 
@@ -95,11 +96,12 @@
 - **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5：n=48 **17.18×**、n=96 25.95×、n=129 29.22×、n=192 **35.49×**；实机卡死上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**。增长指数由 `n^1.76` 降到 `n^1.24`。
 - **等价性证据**：`node tools/perf-audit/verify-equivalence.mjs HEAD` = **144/144 逐字节一致**（`injectionText` 逐字符 + 完整结果树 canonical 深比）；四门禁全绿。判据：三者都是纯函数（`compact`/`historyStableKey`/`prepareMaterial`）按输入记忆化，`entityDerivedCache` 只上提依赖 `context` 的常量。
 - **仍未解决的（有意留作后续）**：`buildStorylinePlan` 内层仍是 **O(m²)** 对比较（四层：候选线生成／建线合并／附着／continuity 兜底）。本改动只砍常数与部分指数，**不改阶**——按修复后自身实测，n=192 634ms → 384 1924ms → 768 6883ms → **1536 18056ms**，即悬崖约从 192 楼推到 **~1500 楼**。要真正压阶只能收缩参与分组的候选池（`baseHistory` 有原则预过滤）；硬切 `.slice(0,128)` 实测可得 17×–54×但**会改变召回结果**，不可取。
-- **四条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
+- **五条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
   ① **缓存要打在热点上，且键必须廉价**：实测成本分布是 `compact` 类键推导 **42.4%** 对 `setIntersection` **0.3%**；`_coreText` 4000 字符时键推导成本是交集的 **401×**，缓存命中一次的键成本是原运算的 **15.39×**——为便宜运算付昂贵键即净亏。故本节只缓存**最贵的** `compact`/`historyStableKey`/`prepareMaterial`。
   ② **跨轮记忆化不能按对象身份**：`decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效。
   ③ **缓存键必须覆盖被缓存函数的全部输入**：`historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用「它 + 内容」做 `recordFor` 的键会串记录——该方案的收益也落在噪声内（0.982×/0.989×），故剔除（§2.2 反例警示）。
   ④ **审计基线的谱系必须断言**：性能夹具曾在跨上游版本比较中给出虚假的「逐字节一致」；`tools/perf-audit/lib/recall-audit.mjs` 的 `assertUpstreamMarkers()` 让这种情况**抛异常而非静默通过**。
+  ⑤ **对象身份缓存并非一律不可用，取决于输入是不是「原对象」且作用域是否够窄**：②说跨轮缓存不能按对象身份（候选被 `decorate()` 克隆），但 `recordFor()` 读的是 history 数组**原对象**，故上游 v0.7.0 的 `recordsByValue`（`WeakMap`，作用域仅单次 `buildStorylinePlan()`）既命中又不串 `towardEntityId`，已采纳（§2.2 正例）。判据仍是③：**键必须覆盖被缓存函数的全部输入**——对象身份天然覆盖（同一对象即同一输入），前提是缓存生命周期内该对象不被原地修改。
 - **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到**系统临时目录**（`SCRATCH_DIR = tmpdir()/qqj-recall-perf-audit`，见 `lib/recall-audit.mjs`），即仓库之外——**绝不写入 `src/` 旁，也不需 `.gitignore` 条目**。
 
 ---
@@ -116,7 +118,7 @@
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1564** = 上游 v0.6.12 树 1540 + 本地 24；实测约 69s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1588** = 上游 v0.7.0 树 1564 + 本地 24；实测约 40s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -124,8 +126,8 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.6.12`，提交 `b33c843`；空档案初始化 + 召回来源核验：`sourceRefsValid` 混合楼 rawWitness 校验、准备期限 5000ms→8000ms、`recall-selector` 去重键 `cseDuplicateKey`/`sameSelectionDuplicate`）；本次未留备份分支（合并前基线 `2344a0d` 为合并提交 b422e28 的第一父提交，且已推送 origin）；
-- **产物版本**：`manifest.json` 版本号 `0.6.12`（含 `author: "atonal519"` 字段），缓存键 `20261007.385-7b2e010282dc935d`（v0.6.12 合并后重建 → 2026-10-07 叠加**本地召回选材性能修复**后再次重建，见 §3.5）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main`（Tag `v0.7.0`，提交 `1c34be7`；含上游「Establish locally tested v0.6.12 baseline」基线重建提交 `1fddb75`——该提交一次改写 31 文件、8408+/7259-，是本次冲突的真正来源；发布内容：`recall-selector` 计划内缓存与 `recordsByValue` 对象身份缓存、CSE JSON 中段修复与情境字段规范化、连续 AI 回复待确认时的用户提示、召回来源档案根版本校验快路径）；本次留备份分支 `backup/main-before-upstream-v0.7.0`（指向合并前 `ab32d07`），**验证通过并推送后删除**；
+- **产物版本**：`manifest.json` 版本号 `0.7.0`（含 `author: "atonal519"` 字段），缓存键 `20261008.39-e0cadf4e4a535afa`（v0.7.0 合并后按「先改版本号 → 再 build → 后回填键」重建；上游同日已用序号 .35／.38，本地取未复用的 .39）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；同一场景 **20201ms → 706ms（28.62×）**，四门禁全绿（1564/1564）；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
@@ -140,3 +142,4 @@
 | v0.6.7+v0.6.8 | 10-05 | `60401dd` | 4 冲突；向量召回整体采纳；**合并损坏一例**——上游重写吞掉本地 `sameRoot` 定义致 118 红，三方归因后重植（教训沉淀 §2.2）；上游 settings-api 跨仓红，SDC v3.8.0 合并后转绿 | 1506/1508 |
 | v0.6.9~v0.6.11 | 10-06 | `c916304` | 3 冲突；唯一 union hunk（上游 `markVerificationFailure` 诊断 + 本地密封点重对齐并集）；缓存键 `20261006.15`；上游签名零触碰、无自带红测试 | 1545 |
 | v0.6.12 | 10-07 | `b422e28` | 2 冲突（dist 重建 + manifest 缓存键 `20261006.19-f5bc5d2239eb3a09` 回填）；三增强与三处 UI 调用点方言幸存（§2.2 全项核验）；上游改 `recall-selector` 去重键（`cseDuplicateKey`），预算循环热点零触碰、无自带红测试 | 1564 |
+| v0.7.0 | 10-08 | `118e68d` | 3 冲突；**缓存双方案收敛**——`recall-selector` 保留本地四项记忆化（跨轮字符串键），只采纳上游 `recordsByValue`（对象身份 `WeakMap`，作用域限单次 `buildStorylinePlan()`；§2.2 正例/§3.5 教训⑤），弃上游 `compactForPlan`/`prepareForPlan`/`searchableEntityLabels`/`compactByText`/`preparedByValue` plan 级缓存；**关键坑**——上游把 6 处 `materiallySame(` 调用自动改写为 `sameMaterial(`，其定义在被弃侧，故加薄别名 `const sameMaterial = (l, r) => materiallySame(l, r, prepareMaterial);` 使调用点字节不变、行为路由本地缓存；dist 重建 + 缓存键 `20261008.39-e0cadf4e4a535afa` 回填；等价审计对「本地合并前基线」与「纯上游 v0.7.0」各 144/144 逐字节一致；无自带红测试 | 1588 |
