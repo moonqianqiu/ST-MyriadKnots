@@ -130,7 +130,7 @@
    ```
 
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1588** = 上游 v0.7.0 树 1564 + 本地 24；实测约 40s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1606** = 上游 v0.7.1 树 1582 + 本地 24；实测约 55s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -138,8 +138,8 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.0`（提交 `1c34be7`）。注意其前置提交 `1fddb75`「Establish locally tested v0.6.12 baseline」一次改写 31 文件（8408+/7259-），是历次冲突的真正来源；上游能力摘要用 `git show 118e68d` 查看。本次未留备份分支（合并前基线 `ab32d07` = 合并提交 `118e68d` 的第一父提交，已推送 origin）；
-- **产物版本**：`manifest.json` 版本号 `0.7.0`（含 `author: "atonal519"`），缓存键 `20261008.39-e0cadf4e4a535afa`（上游同日已用 .35／.38，本地取未复用的 .39）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.1`（提交 `053a8d6`）。本次合并提交 `746b48c`，其第一父为合并前本地基线 `bbbf03e`；
+- **产物版本**：`manifest.json` 版本号 `0.7.1`（含 `author: "atonal519"`），缓存键 `20261009.47-ff373043728cf283`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
@@ -155,3 +155,4 @@
 | v0.6.9~v0.6.11 | 10-06 | `c916304` | 3 冲突；union hunk（上游 `markVerificationFailure` + 本地密封点重对齐）；键 `20261006.15` | 1545 |
 | v0.6.12 | 10-07 | `b422e28` | 2 冲突（dist 重建 + 键 `20261006.19-f5bc5d2239eb3a09`）；三增强与三处 UI 方言幸存 | 1564 |
 | v0.7.0 | 10-08 | `118e68d` | 3 冲突；保本地四项记忆化，只采上游 `recordsByValue`（§2.2）；键 `20261008.39-e0cadf4e4a535afa` | 1588 |
+| v0.7.1 | 10-09 | `746b48c` | 身份与千事重判并集；本地召回/清洗资产保留；键 `.47-ff373043728cf283` | 1606 |
