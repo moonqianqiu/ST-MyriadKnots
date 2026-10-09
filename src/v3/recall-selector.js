@@ -712,6 +712,10 @@ const materialText = value => value?._coreText ?? value?.text;
 // Set (materialTokens, below) never survived a single call and tokenizeRecallText() re-ran
 // on the same text over and over. Sharing the prepared object keeps that Set alive.
 // The returned object is only ever read, so sharing it cannot change any result.
+// Merge note (v0.7.0): upstream's alternative prepareForPlan() memoizes by OBJECT identity
+// inside a single plan, but decorate() shallow-clones every candidate, so an object key
+// misses on the clone and the lazily-built `tokens` Set still dies. The string-keyed memo
+// below survives the clone (clones share the _coreText string instance), so it is kept.
 const preparedMaterialMemo = new Map();
 const PREPARED_MATERIAL_LIMIT = 200000;
 const prepareMaterial = value => {
@@ -910,8 +914,17 @@ function buildStorylinePlan({ context, history, states, changes }) {
     return derived;
   })();
   const { entityTokens, entityNameEntries } = contextDerived;
+  // Merge note (v0.7.0): upstream introduced plan-scoped compactForPlan/prepareForPlan and
+  // renamed these call sites to sameMaterial(). We keep the local entityDerivedCache (keyed
+  // on context, so it survives across plans inside one selectRecall) and the string-keyed
+  // prepareMaterial() memo, and expose sameMaterial as a thin alias: the upstream call sites
+  // stay byte-identical, so future merges stay clean, while behaviour routes through the
+  // local caches. Same inputs, same outputs -- only the memo scope differs.
+  const sameMaterial = (left, right) => materiallySame(left, right, prepareMaterial);
   const memoryByFloor = new Map(context.oldMemories.map(memory => [memory.floorId, memory]));
+  const recordsByValue = new WeakMap();
   const recordFor = value => {
+    if (value && typeof value === 'object' && recordsByValue.has(value)) return recordsByValue.get(value);
     const memory = memoryByFloor.get(value.rawWitness?.memoryFloorId ?? value.floorId ?? value.sourceFloorId ?? value.before?.sourceFloorId ?? value.after?.sourceFloorId);
     const participants = new Set((memory?.participants ?? []).map(itemValue => itemValue.entityId).filter(Boolean));
     for (const entityId of String(value._subjectKey ?? '').split(',').filter(Boolean)) participants.add(entityId);
@@ -921,7 +934,9 @@ function buildStorylinePlan({ context, history, states, changes }) {
     for (const [entityId, labels] of entityNameEntries) {
       if (labels.some(label => compactText.includes(label))) participants.add(entityId);
     }
-    return { value, participants, tokens: relationTokens(relationText, entityTokens) };
+    const record = { value, participants, tokens: relationTokens(relationText, entityTokens) };
+    if (value && typeof value === 'object') recordsByValue.set(value, record);
+    return record;
   };
   const historyRecords = new Map(history.map(value => [historyStableKey(value), recordFor(value)]));
   const queryRelationTokens = relationTokens(context.query, entityTokens);
@@ -943,7 +958,8 @@ function buildStorylinePlan({ context, history, states, changes }) {
       && queryShared.length >= 2 && shared.length >= 2 && (sharedRatio >= 0.25 || sameFloorQueryEvidence);
     const sharedPeopleTopic = sharedPeople.length && queryShared.length > 0
       && ((shared.length >= 2 && sharedRatio >= 0.25) || strongSingle);
-    return sharedPeopleTopic || strongTopicOnly ? shared : [];
+    const result = sharedPeopleTopic || strongTopicOnly ? shared : [];
+    return result;
   };
   const lines = [];
   const assignedHistory = new Set();
@@ -963,7 +979,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
     for (const value of history) {
       const key = historyStableKey(value);
       const exactLink = value._relationAnchorStableKey === historyStableKey(anchor);
-      const same = materiallySame(anchor, value);
+      const same = sameMaterial(anchor, value);
       const evidence = value === anchor ? [] : (exactLink && value._relationTerms?.length ? value._relationTerms : topicTerms(anchor, value));
       if (value === anchor || exactLink || same || evidence.length) {
         members.push(value); evidenceByKey.set(key, evidence);
@@ -988,7 +1004,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
   for (const candidate of candidateLines) {
     if (lines.some(line => {
       const existingAnchor = line.history.find(value => historyStableKey(value) === line.anchorKey);
-      return existingAnchor && (materiallySame(candidate.anchor, existingAnchor) || topicTerms(candidate.anchor, existingAnchor).length);
+      return existingAnchor && (sameMaterial(candidate.anchor, existingAnchor) || topicTerms(candidate.anchor, existingAnchor).length);
     })) continue;
     const available = candidate.members.filter(value => !assignedHistory.has(historyStableKey(value)));
     if (new Set(available.map(value => value.floorId)).size < 2) continue;
@@ -1006,7 +1022,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
     if (!match) for (const line of lines) {
       const anchor = line.history.find(existing => historyStableKey(existing) === line.anchorKey);
       if (!anchor) continue;
-      if (materiallySame(value, anchor)) { match = line; break; }
+      if (sameMaterial(value, anchor)) { match = line; break; }
       const evidence = topicTerms(value, anchor);
       if (evidence.length) { match = line; terms = evidence; break; }
     }
@@ -1021,7 +1037,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
     for (const related of direct) {
       if (assignedHistory.has(historyStableKey(related))) continue;
       const evidence = topicTerms(value, related);
-      if (materiallySame(value, related) || evidence.length) addHistory(line, related, evidence);
+      if (sameMaterial(value, related) || evidence.length) addHistory(line, related, evidence);
     }
   }
   for (const value of history) {
@@ -1032,7 +1048,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
       if (assignedHistory.has(historyStableKey(related))) continue;
       const exactLink = related._relationAnchorStableKey === historyStableKey(value);
       const evidence = exactLink && related._relationTerms?.length ? related._relationTerms : topicTerms(value, related);
-      if (materiallySame(value, related) || evidence.length) addHistory(line, related, evidence);
+      if (sameMaterial(value, related) || evidence.length) addHistory(line, related, evidence);
     }
   }
   const lineForCse = value => {
@@ -1062,7 +1078,7 @@ function buildStorylinePlan({ context, history, states, changes }) {
         if (sourceFloors.has(itemValue.floorId) && itemValue._relationEvidence === 'source' && itemValue._relationAnchorFloorId === itemValue.floorId) return line;
         const sharedPeople = setIntersection(cseRecord.participants, itemRecord.participants);
         if (!sharedPeople.length) continue;
-        if (sourceFloors.has(itemValue.floorId) && materiallySame(value, itemValue)) return line;
+        if (sourceFloors.has(itemValue.floorId) && sameMaterial(value, itemValue)) return line;
         const shared = setIntersection(cseRecord.tokens, itemRecord.tokens)
           .filter(token => token.length >= 2 && (documentFrequency.get(token) ?? Number.MAX_SAFE_INTEGER) <= rareLimit);
         const shorterSize = Math.max(1, Math.min(cseRecord.tokens.size, itemRecord.tokens.size));

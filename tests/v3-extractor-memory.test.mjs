@@ -48,6 +48,56 @@ test('当前时间证据读取原文状态栏，避开历史区块和不明确�
   assert.equal(inferCanonicalCurrentTime('<StatusBar>Date：2026年5月8日 11:00；Event：旧事发生</StatusBar>'), null);
 });
 
+test('已存空间事实严格冷读且状态投影用一次floor索引解析来源楼', async () => {
+  const h = harness({ text: '裴晚生离开阅览室，去向未知。' });
+  h.context.chatMetadata.integrity = 'complete';
+  await h.runtime.start();
+  const floor = h.runtime.getState().floors[0];
+  await h.runtime.extractFloor(floor.floorId, { analyzeState: false });
+  const saved = await h.store.readReachable({ mode: 'runtime' });
+  const memory = saved.floorMemories.find(item => item.floorId === floor.floorId);
+  const personId = memory.participants.find(item => item.entityId)?.entityId;
+  assert.ok(saved.entities.some(item => item.id === personId && item.entityType === 'person'));
+  const spatialFacts = { schemaVersion: 1, containments: [], positions: [{ itemId: '99999999-9999-4999-8999-999999999991',
+    subjectEntityId: personId, placeEntityId: null, status: 'leftUnknown', evidenceRefs: [{ floorId: floor.floorId, anchorId: null,
+      quotedText: '裴晚生离开阅览室', occurrence: 1, evidenceMode: 'reported', supports: '离开后去向未知', sourceEntityId: personId }] }] };
+  const recordKey = `chat-${CHAT}/v3-floor-memory-${memory.id}`;
+  const record = h.backend.records.get(recordKey);
+  assert.ok(record, '目标FloorMemory已由实际runtime写入模拟存储');
+  record.data.spatialFacts = spatialFacts;
+  const coldStore = createFoundationStore({ client: h.backend.client, contextProvider: () => ({ hostChatId: h.context.chatId, chatId: CHAT,
+    characterLocator: 'character.png', personaLocator: 'persona.png' }) });
+  const cold = await coldStore.readReachable({ mode: 'full' });
+  assert.equal(cold.status, 'ready');
+  assert.deepEqual(cold.floorMemories.find(item => item.id === memory.id).spatialFacts, spatialFacts, '冷读保留字段、证据和原值');
+  assert.ok(collectFloorMemoryEntityIds(cold.floorMemories.find(item => item.id === memory.id)).has(personId), '空间事实端点进入图实体引用核对');
+  assert.throws(() => validateFloorMemory({ ...memory, spatialFacts: { ...spatialFacts, extra: true } }, { expectedChatId: CHAT }), { code: 'V3_FLOORMEMORY_INVALID' });
+
+  h.runtime.getQianshiSnapshot();
+  const originalStructuredClone = globalThis.structuredClone; let cloneCalls = 0;
+  globalThis.structuredClone = value => { cloneCalls += 1; return originalStructuredClone(value); };
+  try {
+    const version = h.runtime.getQianshiSnapshotVersion();
+    assert.ok(Number.isSafeInteger(version.projectionRevision));
+    assert.equal(cloneCalls, 0, '热投影版本读取不复制千事详情');
+    h.runtime.getQianshiSnapshot();
+    assert.equal(cloneCalls, 1, '公共详情仍通过structuredClone返回隔离副本');
+  } finally { globalThis.structuredClone = originalStructuredClone; }
+
+  const reachable = h.foundationRuntime.getReachable();
+  let findCalls = 0; const findStacks = [];
+  const originalFind = Object.getOwnPropertyDescriptor(reachable.floors, 'find');
+  Object.defineProperty(reachable.floors, 'find', { configurable: true, value(...args) { findCalls += 1; findStacks.push(new Error().stack); return Array.prototype.find.apply(this, args); } });
+  try {
+    const projected = h.runtime.getState();
+    assert.equal(projected.floors.find(item => item.floorId === floor.floorId).sourceMessageIndexes[0], floor.messageIndex);
+    assert.equal(findCalls, 1, `只应包含现有rebuild顺序查询；来源楼解析使用floorId Map\n${findStacks.join('\n')}`);
+    assert.match(findStacks[0], /src\/v3\/memory-runtime\.js:/u, '唯一生产find来自memory runtime已有的有序查询');
+  } finally {
+    if (originalFind) Object.defineProperty(reachable.floors, 'find', originalFind); else delete reachable.floors.find;
+  }
+});
+
 test('时间状态字段按同一容器局部配对，兼容分隔的 Time 行与 date/time 子项', () => {
   assert.deepEqual(inferCanonicalCurrentTime('<Ruan_Status><span>[Time: 2026-09-29 | Tuesday | 19:30 | cloudy]</span></Ruan_Status>'), { text: '2026-09-29 19:30', kind: 'explicit' });
   assert.deepEqual(inferCanonicalCurrentTime('<Status>[Time: 2026-09-29 | Tuesday]</Status>'), { text: '2026-09-29', kind: 'explicit' }, '日期-only 保留精度');
@@ -305,6 +355,107 @@ test('连续 AI 显式确认后按楼顺序接入现有摘要流水，确认前�
   assert.equal(resumedState.rememberedCount, 2, '刷新重载后已确认各楼保持可达，不再反复卡住同一连续段');
   assert.deepEqual(resumedState.unregisteredCandidates.map(item => [item.messageIndex, item.reason]), [[4, 'waitingNextUser']]);
   assert.equal(resumed.calls.length, 0, '刷新重载只读取已保存结果，不重复调用模型');
+});
+
+test('启动与正文投影只提醒最早未确认连续 AI 卡点，尾部增长不重复且新卡点可再提醒', async () => {
+  const notices = [];
+  const h = harness({
+    modernAnchors: true,
+    initialChat: [user('开始'), assistant('连续第一楼'), assistant('连续第二楼'), user('确认连续段')],
+    automation: { enabled: true, batchSize: 1 },
+    notifyUser: value => notices.push(value),
+    utility: options => JSON.parse(options.taskMessages[0].content).task === 'extractFloorSemantics'
+      ? { jsonData: { summary: '已确认摘要' } }
+      : { jsonData: { noMaterialChange: true } },
+  });
+
+  await h.runtime.start();
+  const scope = structuredClone(h.runtime.getState().consecutiveAssistantConfirmation);
+  assert.equal(h.calls.length, 0, '提醒未确认楼不调用模型');
+  assert.equal(notices.filter(item => item.action === 'openMemory').length, 1);
+  assert.match(notices[0].text, /第 1 楼起.*这些楼及之后的摘要会等待确认/u);
+  await h.runtime.start();
+  await h.runtime.refreshAutomation();
+  assert.equal(notices.filter(item => item.action === 'openMemory').length, 1, '刷新和其他通知入口不得重发同一卡点');
+
+  h.context.chat.push(assistant('之后的普通尾楼'));
+  h.emit('MESSAGE_RECEIVED', h.context.chat.length - 1);
+  await waitFor(() => h.foundationRuntime.getState().unregisteredCandidates?.some(item => item.messageIndex === 4 && item.reason === 'waitingNextUser'));
+  assert.equal(notices.filter(item => item.action === 'openMemory').length, 1, '尾部增长保留同一提醒标识');
+  assert.equal(h.calls.length, 0, '普通末尾 AI 与提醒都不启动摘要请求');
+
+  await h.runtime.confirmConsecutiveAssistants(scope);
+  await h.runtime.start();
+  assert.equal(notices.filter(item => item.action === 'openMemory').length, 1, '权威投影解决旧卡点后不再提醒它');
+  const callsAfterConfirmation = h.calls.length;
+  h.context.chat.push(assistant('新连续第一楼'), assistant('新连续第二楼'), user('确认新连续段'));
+  h.emit('MESSAGE_RECEIVED', h.context.chat.length - 1);
+  await waitFor(() => notices.filter(item => item.action === 'openMemory').length === 2);
+  assert.match(notices.filter(item => item.action === 'openMemory')[1].text, /第 4 楼起/u);
+  assert.equal(h.calls.length, callsAfterConfirmation, '提醒新卡点仍不触发模型');
+});
+
+test('普通尾楼、关闭的自动记忆不提醒，通知异常不影响连续 AI 状态', async () => {
+  const normalNotices = [];
+  const normalTail = harness({ initialChat: [user('开始'), assistant('普通末尾楼')],
+    automation: { enabled: true, batchSize: 1 }, notifyUser: value => normalNotices.push(value) });
+  await normalTail.runtime.start();
+  assert.equal(normalNotices.length, 0, '普通等待下一条用户消息的末尾楼不提醒');
+
+  const automationOffNotices = [];
+  const automationOff = harness({ modernAnchors: true,
+    initialChat: [user('开始'), assistant('连续一'), assistant('连续二'), user('确认')],
+    automation: { enabled: false, batchSize: 1 }, notifyUser: value => automationOffNotices.push(value) });
+  await automationOff.runtime.start();
+  assert.equal(automationOffNotices.length, 0, '自动记忆关闭时不提醒');
+
+  const enabledNotices = [];
+  const enabledAfterStartup = harness({ modernAnchors: true,
+    initialChat: [user('开始'), assistant('连续一'), assistant('连续二'), user('确认')],
+    automation: { enabled: false, batchSize: 1 }, notifyUser: value => enabledNotices.push(value) });
+  await enabledAfterStartup.runtime.start();
+  enabledAfterStartup.setAutomation({ enabled: true, batchSize: 1 });
+  await enabledAfterStartup.runtime.refreshAutomation();
+  await enabledAfterStartup.runtime.refreshAutomation();
+  assert.equal(enabledNotices.filter(item => item.action === 'openMemory').length, 1,
+    '启动后开启自动记忆时复用现有foundation投影提醒一次');
+  assert.equal(enabledAfterStartup.calls.length, 0, '开启自动记忆的提醒不调用模型');
+
+  const throwing = harness({ modernAnchors: true,
+    initialChat: [user('开始'), assistant('连续一'), assistant('连续二'), user('确认')],
+    automation: { enabled: true, batchSize: 1 }, notifyUser() { throw new Error('toast unavailable'); } });
+  await throwing.runtime.start();
+  assert.equal(throwing.runtime.getState().consecutiveAssistantConfirmation.candidates.length, 2,
+    '通知回调失败不影响连续 AI 确认投影');
+  assert.equal(throwing.calls.length, 0, '通知回调失败不触发模型');
+  const scope = structuredClone(throwing.runtime.getState().consecutiveAssistantConfirmation);
+  const confirmed = await throwing.runtime.confirmConsecutiveAssistants(scope);
+  assert.equal(confirmed.rememberedCount, 2, '通知失败后显式确认和摘要保存仍能完成');
+
+  const disabledNotices = [];
+  const disabled = harness({ modernAnchors: true,
+    initialChat: [user('开始'), assistant('连续一'), assistant('连续二'), user('确认')],
+    automation: { enabled: true, batchSize: 1 }, notifyUser: value => disabledNotices.push(value) });
+  disabled.setEnabled(false);
+  await disabled.runtime.start();
+  assert.equal(disabledNotices.length, 0, '插件关闭时不提醒');
+});
+
+test('SillyTavern 与 Luker 的正文事件投影新发现连续 AI 后提醒且不启动模型', async t => {
+  for (const host of ['official', 'luker']) await t.test(host, async () => {
+    const notices = [];
+    const h = harness({ host, modernAnchors: true,
+      initialChat: [user('开始'), assistant('普通尾楼')],
+      automation: { enabled: true, batchSize: 1 }, notifyUser: value => notices.push(value) });
+    await h.runtime.start();
+    assert.equal(notices.length, 0, '普通末尾 AI 尚无连续确认范围');
+    h.context.chat.push(assistant('连续一楼'), assistant('连续二楼'), user('确认连续段'));
+    h.emit('MESSAGE_RECEIVED', h.context.chat.length - 1);
+    await waitFor(() => notices.some(item => item.action === 'openMemory'), `${host}正文事件完成foundation投影后应提醒`);
+    assert.equal(notices.filter(item => item.action === 'openMemory').length, 1);
+    assert.match(notices[0].text, /连续 AI 回复等待你确认/u);
+    assert.equal(h.calls.length, 0, '新发现连续楼仍等待用户确认，不调用模型');
+  });
 });
 
 test('正常逐楼摘要准备复用增量千事索引，连续新增楼只做一次完整投影', async () => {
@@ -992,7 +1143,7 @@ test('Extractor 输入只含浅层语义提示，不暴露作用域、UUID 或�
   assert.equal(call.parseMode, 'semantic');
   assert.equal(Object.hasOwn(call, 'jsonSchema'), false);
   assert.match(EXTRACTOR_SYSTEM_PROMPT, /people、time、locations 也要分别检查并提取/);
-  assert.equal(EXTRACTOR_PROMPT_VERSION, 'qqj-v3-extractor-prompt-26');
+  assert.equal(EXTRACTOR_PROMPT_VERSION, 'qqj-v3-extractor-prompt-28');
   assert.match(EXTRACTOR_FIXED_CONTRACT, /每楼必须检查并返回 qianshi；确无事件增量时返回 events:\[\]/u);
   assert.match(EXTRACTOR_FIXED_CONTRACT, /qianshi 独立于 summary、普通 events、eventFragments/u);
   assert.match(EXTRACTOR_FIXED_CONTRACT, /一次性新事实.*matter=false；计划、持续推进或需要跟踪的事项按 matter=true/u);
@@ -6926,6 +7077,7 @@ test('千事历史计划只读，显式开始后每批一次请求并逐楼替�
   const result = await h.runtime.startQianshiHistory(plan.planId);
   assert.equal(h.calls.length, beforePlanCalls + 1, '同一批只调用一次模型');
   assert.match(h.calls.at(-1).systemPrompt, /同一场景同一事项的连续动作合成一件完整事件/u);
+  assert.match(h.calls.at(-1).systemPrompt, /同一人物、同一天或相似主题不足以认定接续/u);
   assert.match(h.calls.at(-1).systemPrompt, /每楼必须检查并返回 qianshi.*qianshi 独立于 summary/u);
   assert.match(h.calls.at(-1).systemPrompt, /事件正文必须放在 description 字段.*不得用 chatSummary 等自造字段替代 description/u);
   assert.match(h.calls.at(-1).systemPrompt, /links 中最多一个 candidateKey.*同一叙事影响多个旧事项时，按事项分别写成独立事件/u);
@@ -8844,14 +8996,15 @@ test('已有断链楼照常展示且可人工删除异常记录，不因旧坏�
   assert.equal(cold.calls.length, 0, '删除与异常定位不调用模型');
 });
 
-test('只读准备：真实memory与recall在后台inspect挂起时复用同根缓存或独立读取新checkpoint', async t => {
-  for (const useMatchingCache of [true, false]) await t.test(useMatchingCache ? '同根缓存零整图读' : '新根独立只读', async () => {
+test('只读准备：真实memory与recall在后台inspect挂起时借用精确匹配foundation图', async t => {
+  for (const cacheMode of ['sameRoot', 'newFoundation', 'staleFoundation']) await t.test(cacheMode, async () => {
     const seed = harness({ initialChat: [user('继续'), assistant('裴晚生提醒带伞。'), assistant('钟楼仍在等待。'), assistant('确认上一楼稳定。')] });
     await seed.runtime.start(); const floors = seed.runtime.getState().floors;
     await seed.runtime.extractFloor(floors[0].floorId, { analyzeState: false });
     let held = false, inspectCalls = 0, releaseInspect, markHeld;
     const heldStarted = new Promise(resolve => { markHeld = resolve; });
-    const foundationRuntime = { ...seed.foundationRuntime, inspect: async () => {
+    const initialReachable = seed.foundationRuntime.getReachable(); let exposeStaleFoundation = false;
+    const foundationRuntime = { ...seed.foundationRuntime, getReachable: () => exposeStaleFoundation ? initialReachable : seed.foundationRuntime.getReachable(), inspect: async () => {
       inspectCalls += 1;
       if (held) { markHeld(); await new Promise(resolve => { releaseInspect = resolve; }); }
       return seed.foundationRuntime.getState();
@@ -8870,15 +9023,22 @@ test('只读准备：真实memory与recall在后台inspect挂起时复用同根�
       sourceReader: options => { directReads += 1; return readRecallSource(options); },
       selector: async options => {
         selects += 1;
-        if (useMatchingCache) {
+        if (cacheMode === 'sameRoot') {
           await seed.runtime.extractFloor(floors[1].floorId, { analyzeState: false });
           await memory.refreshStatus({ preferCached: false }); await waitFor(() => memory.getState().memorySyncStatus === 'idle');
         }
         held = true; pendingRefresh = memory.refreshStatus({ preferCached: false }); await heldStarted;
-        if (!useMatchingCache) await seed.runtime.extractFloor(floors[1].floorId, { analyzeState: false });
+        if (cacheMode !== 'sameRoot') await seed.runtime.extractFloor(floors[1].floorId, { analyzeState: false });
+        if (cacheMode === 'staleFoundation') exposeStaleFoundation = true;
         const rootResult = await seed.store.readRoot(); beforeInspects = inspectCalls; beforeReads = seed.readReachableModes.length;
+        if (cacheMode === 'newFoundation') {
+          assert.ok(memory.getState().stableCount < seed.foundationRuntime.getReachable().floors.length, 'memory自己的投影仍落后一楼');
+        }
         const readonly = await memory.prepareCurrent({ rootResult, allowRefresh: false });
-        assert.equal(readonly.status, useMatchingCache ? 'ready' : 'unavailable');
+        assert.equal(readonly.status, cacheMode === 'staleFoundation' ? 'unavailable' : 'ready');
+        if (cacheMode !== 'staleFoundation') assert.equal(readonly.reachable, seed.foundationRuntime.getReachable(), '只借与fresh root匹配的foundation已验证图');
+        const mismatchedRoot = { ...rootResult, data: { ...rootResult.data, sourceSnapshotFingerprint: `sha256:${'f'.repeat(64)}` } };
+        assert.equal((await memory.prepareCurrent({ rootResult: mismatchedRoot, allowRefresh: false })).status, 'unavailable', '来源指纹不匹配时不借旧图');
         assert.equal(inspectCalls, beforeInspects); assert.equal(seed.readReachableModes.length, beforeReads);
         return selectRecall(options);
       }, pluginVersion: 'test-readonly-prepare', now: () => new Date(NOW), logger: { warn() {} } });
@@ -8886,13 +9046,13 @@ test('只读准备：真实memory与recall在后台inspect挂起时复用同根�
     try {
       const result = await Promise.race([recall.intercept([structuredClone(seed.context.chat.at(-1))], 12000, null, 'normal'),
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('只读准备不能等待维护队列')), 1500); })]);
-      assert.equal(result.lastRecall.status, 'ready'); assert.equal(selects, 1); assert.equal(directReads, useMatchingCache ? 0 : 1);
-      assert.equal(inspectCalls, beforeInspects); assert.equal(seed.readReachableModes.length, beforeReads + (useMatchingCache ? 0 : 1));
+      assert.equal(result.lastRecall.status, 'ready'); assert.equal(selects, 1); assert.equal(directReads, cacheMode === 'staleFoundation' ? 1 : 0);
+      assert.equal(inspectCalls, beforeInspects); assert.equal(seed.readReachableModes.length, beforeReads + (cacheMode === 'staleFoundation' ? 1 : 0));
       assert.equal(prepareOptions[0].allowRefresh, true); assert.equal(prepareOptions.at(-1).allowRefresh, false);
       assert.ok(prompts.some(args => args[1]?.includes('带伞')));
       const records = result.lastRecall.timings.preparationAttempts;
       assert.deepEqual(records.map(record => record.phase), ['source', 'commit']); assert.equal(records[1].status, 'ready');
-      assert.equal(records[1].stage, useMatchingCache ? 'projection' : 'read');
+      assert.equal(records[1].stage, cacheMode === 'staleFoundation' ? 'read' : 'projection');
     } finally { clearTimeout(timer); held = false; releaseInspect?.(); await pendingRefresh; }
     const rootResult = await seed.store.readRoot(); const before = inspectCalls;
     await memory.prepareCurrent({ preferCached: false, rootResult: { ...rootResult, revision: rootResult.revision + 1 } });
