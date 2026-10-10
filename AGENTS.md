@@ -28,6 +28,7 @@
 | `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本） |
 | `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突 |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数 vs 本地 `sanitizerOptions` 参数 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
+| `tests/v3-extractor-memory.test.mjs` | 上游 v0.7.2 新增调试导出写死 POSIX `/tmp/qqj-v048-271-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红） | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-271-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；断言与夹具一字未动 |
 | `src/memory-content-sanitizer.js` | 上游 v0.5.8 起「默认 keep='content'」简化实现 vs 本地四模式合同 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（仅将上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避撞名；上游缩进原样保留，该区未来零冲突） |
 | `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能 | **整文件保持与上游逐字相同**（v0.6.0 定案：世界书原文直通系上游设计意图；源码/工厂签名/import/测试含直通断言均随上游）——**勿再回植 extraOnly**（§3.2 已回归清单）；唯 `saveProfile → invalidate('peopleProfileSaved', …, { clearPersisted: true })` 联动除外（§3.4 ③） |
 | `src/v3/foundation-domain.js` | 本地 `SANITIZER_VERSION = memory-content-sanitizer-v2` 且默认 keepTags `''`（M0），上游停留 v1+`'content'`——同一宿主聊天两侧派生**不同确定性图 ID**（floor/run/checkpoint/index 全链） | **保留本地合同**；上游 fixture 测试 `tests/fixtures/tt2-native-init-failure.json`（编码上游预计算 ID）须在本地语义下重生成——按 `fstore.recordKey(record)` 捕获 run/checkpoint/floor/index（索引键含 `floorOrder-0-` 段，勿手拼 `v3-index-<id>`），run 回卷 `retryableError`+`V3_GRAPH_INDEX_ROUTE_INVALID`、无 root |
@@ -42,7 +43,7 @@
 >   **教训（v0.6.8 合并损坏实录）**：定义与使用分处两个被上游重写的区域时，使用块自动幸存、定义块可能被吞（运行时 `ReferenceError`、v3-recall 大面积 error）——用「合并树 vs 纯上游 diff」定位残余差异快速归因，勿据单侧绿误判。
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与绑定种类 `'locatorEquivalent'`——弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖」的语义冲突；私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `readTimeBody` 传入。
 > - `src/v3/time-body.js`：`currentBodyClock` 加法式内容视图兜底（canonical 探测返回 null 时以 `sanitizeMemoryContent(rawContent, { keepTags: 'content' })` 再探；用户显式配置 keepTags 时行为不变）；`readTimeBody` 签名并集 `{ sanitizerOptions = {}, storyClockReferenceTags = '', calendar = null }`（上游故事历法 `calendar` 与本地兜底正交）→ `tests/v3-time-body.test.mjs`。
-> - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。
+> - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`：须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回，故 `state.chatId`=目标任务 ≠ 显示聊天；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
 > - `src/ui/help-guide.js`：本地仅改设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义），上游高频重写本文件文案——裁决：**上游新增段落全收 + 包裹符段保持本地**（上游侧该段仍是旧的 `[[...]]` 专用描述，勿取上游侧）。
 > - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，四者都是「纯函数按输入记忆化 / 只依赖 `context` 的常量上提」，判定输入一字未动。上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
 >   ① `compactOf`（按**字符串**记忆化 `compact()`；`COMPACT_MEMO_LIMIT = 200000`）——`decorate()` 每轮 `{...value}` 克隆候选，但克隆体**共享 `_coreText`/`_rankText` 字符串实例**，故按字符串键可跨轮命中（按对象键则命中率仅 ~4.5%，见 §3.5 教训）；
@@ -130,7 +131,7 @@
    ```
 
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1606** = 上游 v0.7.1 树 1582 + 本地 24；实测约 55s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1638** = 上游 v0.7.2 树 1614 + 本地 24；实测约 47s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -138,8 +139,8 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.1`（提交 `053a8d6`）。本次合并提交 `746b48c`，其第一父为合并前本地基线 `bbbf03e`；
-- **产物版本**：`manifest.json` 版本号 `0.7.1`（含 `author: "atonal519"`），缓存键 `20261009.47-ff373043728cf283`（哈希与真实 bundle 一致）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.2`（提交 `a76216e`）。本次合并提交 `a037fa4`，其第一父为合并前本地基线 `921cb92`；
+- **产物版本**：`manifest.json` 版本号 `0.7.2`（含 `author: "atonal519"`），缓存键 `20261010.386-e234f79fdc9e617a`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
@@ -156,3 +157,4 @@
 | v0.6.12 | 10-07 | `b422e28` | 2 冲突（dist 重建 + 键 `20261006.19-f5bc5d2239eb3a09`）；三增强与三处 UI 方言幸存 | 1564 |
 | v0.7.0 | 10-08 | `118e68d` | 3 冲突；保本地四项记忆化，只采上游 `recordsByValue`（§2.2）；键 `20261008.39-e0cadf4e4a535afa` | 1588 |
 | v0.7.1 | 10-09 | `746b48c` | 身份与千事重判并集；本地召回/清洗资产保留；键 `.47-ff373043728cf283` | 1606 |
+| v0.7.2 | 10-10 | `a037fa4` | 3 冲突；完全重构跨聊天的失效门控（§2.2 UI）、空间事实与 IDB 缓存全采纳；键 `.386-e234f79fdc9e617a` | 1638 |

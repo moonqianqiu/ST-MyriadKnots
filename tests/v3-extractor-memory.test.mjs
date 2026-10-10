@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHostAdapter } from '../src/v3/host-adapter.js';
 import { createFoundationStore } from '../src/v3/foundation-store.js';
 import { createIndexedDbCoreRecordCache } from '../src/v3/indexeddb-core-cache.js';
@@ -411,7 +413,7 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
     return [id, { schemaVersion: 1, generationId: rootRead.generationId, revision: value.revision, createdAt: NOW, updatedAt: NOW, data: value.data }];
   }));
   const fixtureFs = await import('node:fs/promises');
-  await fixtureFs.writeFile('/tmp/qqj-v048-271-current-reachable.json', JSON.stringify({ identity, witness, records: fixtureRecords }), { mode: 0o600 });
+  await fixtureFs.writeFile(join(tmpdir(), 'qqj-v048-271-current-reachable.json'), JSON.stringify({ identity, witness, records: fixtureRecords }), { mode: 0o600 });
   const scope = await cache.scopeFor(identity);
   for (let attempt = 0; attempt < 1000 && !await cache.readManifest(scope, witness); attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
   assert.ok(await cache.readManifest(scope, witness), '最后一次真实root版本在strict read/CAS后才发布cache manifest');
