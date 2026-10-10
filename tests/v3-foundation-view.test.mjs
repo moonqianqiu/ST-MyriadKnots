@@ -534,6 +534,11 @@ test('状态诊断在无可刷新状态与同步删除灰态仍可复制即时�
   };
   let identityState = { status: 'preparing', identity: { chatId: rawChatId, hostChatId: privateText }, error: Object.assign(new Error(privateText), { code: 'QQJ_CHAT_BINDING_CONFLICT', httpStatus: 409 }) };
   let recallState = { recallStatus: 'running', activeRecall: { phase: 'selecting', token: privateText, chatId: rawChatId }, lastRecallError: Object.assign(new Error(privateText), { code: 'QQJ_TIMEOUT', httpStatus: 504 }) };
+  const vectorState = { status: 'error', buildDiagnostic: { status: 'failed', phase: 'embedding', batchNumber: 2, completedChunks: 16, totalChunks: 57,
+    inputCount: 16, inputCharacters: 6400, longestInputCharacters: 400, errorCode: 'VECTOR_HTTP_ERROR', httpStatus: 400,
+    request: { requestId: 'b5c5f920-53b0-4c6c-9be0-2b7b', phase: 'response', pendingStage: 'response_headers', elapsedMs: 91, deadlineMs: 30000,
+      httpStatus: 400, providerRequestId: 'sc_trace_20261010_12345678', providerError: { code: 'invalid_dimensions', type: 'invalid_request_error', param: 'dimensions', message: privateText },
+      key: privateText, body: privateText, url: 'https://private.invalid' } } };
   let managementState = { status: 'deleting', phase: 'deletingRecords', workBusy: true, error: privateText, targetChatId: rawChatId };
   let backendState = { sinceClientCreatedRequestCounts: { get: 2, put: 1, delete: 0 }, latestRead: null, latestWrite: null, lastFailure: null,
     coreCache: { available: true, hits: 271, misses: 0, corruptions: 0, writes: 4, writeFailures: 0, evictedRecords: 0, estimatedBytes: 123456 } };
@@ -545,10 +550,11 @@ test('状态诊断在无可刷新状态与同步删除灰态仍可复制即时�
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
   const recallRuntime = { getState: () => { recallReads += 1; return recallState; } };
+  const vectorRuntime = { getState: () => vectorState };
   const memoryManagement = { getState: () => { managementReads += 1; return managementState; }, deleteCurrent: async () => managementState };
   const container = new Node('main');
   const view = createV3FoundationView({
-    runtime, recallRuntime, memoryManagement, pluginVersion: '0.1.9-test',
+    runtime, recallRuntime, vectorRuntime, memoryManagement, pluginVersion: '0.1.9-test',
     sessionStateProvider: () => { sessionReads += 1; return identityState; },
     backendDiagnosticProvider: () => { backendReads += 1; return backendState; },
     documentRef, navigatorRef: { clipboard: { writeText: async () => { throw new Error('clipboard denied'); } } },
@@ -581,9 +587,14 @@ test('状态诊断在无可刷新状态与同步删除灰态仍可复制即时�
   assert.deepEqual(diagnostic.memory.lastAutomationError, { present: true, name: 'Error', code: 'V3_AUTO_MEMORY_FAILED', prepareStep: null, detail: null, location: null, lastFailedAt: null });
   assert.equal(diagnostic.cse.active.phase, 'committing'); assert.equal(diagnostic.recall.active.phase, 'selecting');
   assert.deepEqual(diagnostic.management, { status: 'deleting', phase: 'deletingRecords', workBusy: true, error: { present: true } });
+  assert.deepEqual(diagnostic.vector.build, { status: 'failed', phase: 'embedding', batchNumber: 2, completedChunks: 16, totalChunks: 57,
+    inputCount: 16, inputCharacters: 6400, longestInputCharacters: 400, errorCode: 'VECTOR_HTTP_ERROR', httpStatus: 400,
+    request: { requestId: 'b5c5f920-53b0-4c6c-9be0-2b7b', phase: 'response', pendingStage: 'response_headers', elapsedMs: 91, deadlineMs: 30000,
+      httpStatus: 400, errorCode: null, providerRequestId: 'sc_trace_20261010_12345678', providerError: { code: 'invalid_dimensions', type: 'invalid_request_error', param: 'dimensions' },
+      fetchCallMs: 'unknown', responseHeadersMs: 'unknown', responseBodyMs: 'unknown' } });
   assert.deepEqual(diagnostic.ui, { syncingOverlayActive: true, workBusy: true, deleting: true, deletePending: false });
   const serialized = JSON.stringify(diagnostic);
-  assert.doesNotMatch(serialized, new RegExp(`${privateText}|${rawChatId}|${rawHeadId}|private-floor|private-run|private-memory`));
+  assert.doesNotMatch(serialized, new RegExp(`${privateText}|${rawChatId}|${rawHeadId}|private-floor|private-run|private-memory|private\.invalid`));
   assert.equal(Object.hasOwn(diagnostic.identity, 'identity'), false); assert.equal(Object.hasOwn(diagnostic.foundation, 'chatId'), false); assert.equal(Object.hasOwn(diagnostic.foundation, 'headCheckpointId'), false);
 
   memoryState = { ...memoryState, activeMemoryWork: { ...memoryState.activeMemoryWork, phase: 'committing' }, activeAutoMemory: { ...memoryState.activeAutoMemory, phase: privateText } };
@@ -697,6 +708,49 @@ test('删除当前聊天记忆使用自绘异步确认，取消零写且确认�
   assert.match(confirmation.body, /摘要、双丝网、人物资料、时间事项、召回及历史版本/);
   assert.match(confirmation.body, /正文、手动前情和全局设置保留.*前情可另行清空/);
   assert.match(confirmation.note, /移入回收站.*并非永久擦除/);
+});
+
+test('搬家按钮与删除同处管理入口，未打开时如实提示从聊天列表访问', async () => {
+  const state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 0, rememberedCount: 0, unprocessedCount: 0, pending: null, activeRun: null, memoryWorkBusy: false, activeAutoMemory: null, activeExtraction: null, activeCse: null, rebuildStatus: 'caughtUp', rebuildHasActionableWork: false, floors: [] };
+  const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state };
+  let calls = 0;
+  const memoryManagement = { getState: () => ({ status: 'idle', migrationState: { status: 'idle' } }),
+    deleteCurrent: async () => ({}), migrateCurrent: async () => { calls += 1; return { status: 'completed', opened: false }; } };
+  const container = new Node('main');
+  const view = createV3FoundationView({ runtime, memoryManagement, documentRef }); view.mount(container);
+  const pageNode = flatten(container).find(node => node.className === 'qqj-page qqj-management-page');
+  const actions = pageNode.children.at(-1);
+  assert.equal(actions.className, 'qqj-management-delete');
+  const migration = flatten(actions).find(node => node.textContent === '搬家');
+  assert.ok(migration); assert.equal(flatten(actions).find(node => node.textContent === '删除当前聊天记忆')?.parentNode, migration.parentNode);
+  migration.click();
+  for (let attempt = 0; attempt < 20 && !flatten(container).some(node => node.textContent.includes('新聊天已保存；可从当前角色的聊天列表打开')); attempt += 1) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.match(flatten(container).map(node => node.textContent).join('|'), /新聊天已保存；可从当前角色的聊天列表打开/);
+});
+
+test('搬家启动通知后显示处理中并禁用删除，完成后恢复操作', async () => {
+  const state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 0, rememberedCount: 0, unprocessedCount: 0, pending: null, activeRun: null, memoryWorkBusy: false, activeAutoMemory: null, activeExtraction: null, activeCse: null, rebuildStatus: 'caughtUp', rebuildHasActionableWork: false, floors: [] };
+  const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state };
+  let current = { status: 'idle', workBusy: false, migrationState: { status: 'idle' } }, resolveMigration;
+  const listeners = new Set();
+  const memoryManagement = { getState: () => current, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    deleteCurrent: async () => ({}), migrateCurrent() {
+      current = { status: 'idle', workBusy: true, migrationState: { status: 'migrating' } };
+      for (const listener of listeners) listener(current);
+      return new Promise(resolve => { resolveMigration = resolve; });
+    } };
+  const container = new Node('main');
+  const view = createV3FoundationView({ runtime, memoryManagement, documentRef }); view.mount(container);
+  flatten(container).find(node => node.textContent === '搬家').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(flatten(container).some(node => node.textContent === '搬家中…'));
+  assert.equal(flatten(container).find(node => node.textContent === '删除当前聊天记忆').disabled, true);
+  current = { status: 'idle', workBusy: false, migrationState: { status: 'completed' } };
+  for (const listener of listeners) listener(current);
+  resolveMigration({ status: 'completed', opened: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(flatten(container).find(node => node.textContent === '删除当前聊天记忆').disabled, false);
 });
 
 test('删除按钮使用管理器统一忙碌投影', () => {
@@ -903,7 +957,7 @@ test('双丝网页会显示激活期间的共享刷新失败', async () => {
 test('所有用户可见楼号统一使用零基 messageIndex，非均匀楼层不猜 AI 序号', () => {
   const memory = { summaryEvidenceRefs: [], chronology: [], locations: [], participants: [], actions: [], observations: [], informationTransfers: [], privateCognition: [], commitments: [], eventFragments: [], exactAnchors: [], openLoops: [], ambiguities: [], cseSignals: [] };
   const floors = [
-    { floorId: 'floor-zero', assistantSeq: 1, messageIndex: 0, status: 'ready', memoryId: 'memory-zero', summary: '零楼摘要', summarySource: 'ai', aiSummary: '零楼摘要', extractorVersion: 'v', counts: {}, api: null, memory, cse: { status: 'ready', deltaId: 'delta-zero' } },
+    { floorId: 'floor-zero', assistantSeq: 1, messageIndex: 0, frozen: true, sourceOrigin: { sourceMessageIndex: 1 }, status: 'ready', memoryId: 'memory-zero', summary: '零楼摘要', summarySource: 'ai', aiSummary: '零楼摘要', extractorVersion: 'v', counts: {}, api: null, memory, cse: { status: 'ready', deltaId: 'delta-zero' } },
     { floorId: 'floor-two', assistantSeq: 2, messageIndex: 2, status: 'ready', memoryId: 'memory-two', summary: '二楼摘要', summarySource: 'ai', aiSummary: '二楼摘要', extractorVersion: 'v', counts: {}, api: null, memory, cse: { status: 'ready', deltaId: 'delta-two' } },
     { floorId: 'floor-five', assistantSeq: 3, messageIndex: 5, status: 'ready', memoryId: 'memory-five', summary: '五楼摘要', summarySource: 'ai', aiSummary: '五楼摘要', extractorVersion: 'v', counts: {}, api: null, memory, cse: { status: 'ready', deltaId: 'delta-five' } },
   ];
@@ -920,6 +974,7 @@ test('所有用户可见楼号统一使用零基 messageIndex，非均匀楼层�
   const recallRuntime = { getState: () => ({ recallStatus: 'ready', activeRecall: null, lastRecall: {
     status: 'ready', userMessageIndex: 4, createdAt: '2026-09-05T00:00:00.000Z', generationType: 'normal', receiptPersistence: 'persisted', selectedStates: [], injectionText: '已注入', skipReasons: [],
     selectedFloors: [{ floorId: 'floor-zero', assistantSeq: 99 }, { assistantSeq: 2 }, { floorId: 'missing-floor', assistantSeq: 3 }],
+    selectedCseChanges: [{ sourceFloorId: 'floor-zero', sourceAssistantSeq: 99, subject: '裴晚生', layer: 'core', action: 'update' }],
     coverage: { rememberedAiFloors: 3, stableAiFloors: 3, cseThroughAssistantSeq: 2 }, stages: null, timings: null,
   } }) };
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractFloor: async () => state, editSummary: async () => state, restoreAi: async () => state, markError: async () => state };
@@ -928,14 +983,15 @@ test('所有用户可见楼号统一使用零基 messageIndex，非均匀楼层�
   const view = createV3FoundationView({ runtime, recallRuntime, peopleRuntime: selectedPeople, documentRef });
   view.setPage('memories'); view.mount(container);
   let visible = flatten(container).map(node => node.textContent).filter(Boolean);
-  assert.deepEqual(flatten(container).filter(node => node.className === 'qqj-floor-number').map(node => node.textContent), ['第 5 楼', '第 2 楼', '第 0 楼']);
+  assert.deepEqual(flatten(container).filter(node => node.className === 'qqj-floor-number').map(node => node.textContent), ['第 5 楼', '第 2 楼', '来源聊天第 1 楼']);
   view.setPage('people');
   visible = flatten(container).map(node => node.textContent).filter(Boolean);
   assert.ok(visible.includes('裴晚生'), '当前人物状态继续按人物实体显示');
   view.setPage('management');
   visible = flatten(container).map(node => node.textContent).filter(Boolean);
   assert.ok(visible.includes('第 4 楼'), '触发用户楼不得 +1');
-  assert.ok(visible.includes('第 0 楼、第 2 楼、来源楼号未提供'));
+  assert.ok(visible.includes('来源聊天第 1 楼、第 2 楼、来源楼号未提供'));
+  assert.ok(visible.some(value => value.includes('来源聊天第 1 楼') && value.includes('裴晚生')), `CSE回执按floorId显示冻结来源聊天楼号: ${visible.join('|')}`);
   assert.ok(visible.includes('记忆 3/3 · CSE 到第 2 楼'));
   assert.equal(visible.some(value => /AI #|宿主楼|宿主索引/.test(value)), false);
 });

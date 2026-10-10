@@ -38,6 +38,8 @@ import { createV3RecallRuntime } from './src/v3/recall-runtime.js';
 import { createAutoHideController } from './src/v3/auto-hide.js';
 import { createPeopleWorkspaceStore, createPeopleWorkspaceRuntime, projectAnnualPeople } from './src/v3/people-workspace.js';
 import { createChatBranchInitializer } from './src/v3/chat-branch-inheritance.js';
+import { copyLatestPeople } from './src/v3/chat-branch-inheritance.js';
+import { createChatMemoryMigration } from './src/chat-memory-migration.js';
 import { installPublicMemoryBridge } from './src/v3/public-memory-bridge.js';
 import { installPublicQianshiBridge } from './src/v3/public-qianshi-bridge.js';
 import { createMyKnotsStoryClockController, createStoryClockStatusProjection, extensionStoryClockState } from './src/story-clock.js';
@@ -132,6 +134,7 @@ const processingPrompt = () => settings.get().processingPrompt;
 const coreRecordCache = isTauriTavern() ? null : createIndexedDbCoreRecordCache({ localForage: localforage, accountHandleProvider: getCurrentUserHandle });
 const foundationStore = createFoundationStore({ client: backendClient, contextProvider: () => session.identity(), isEnabled: settings.isEnabled, coreRecordCache });
 const targetFoundationStore = identity => foundationStore.forIdentity(identity);
+const timeStore = createTimeStore({ client: backendClient });
 const foundationRuntime = createFoundationRuntime({
   hostAdapter,
   store: foundationStore,
@@ -141,6 +144,7 @@ const foundationRuntime = createFoundationRuntime({
   isEnabled: settings.isEnabled,
   sanitizerOptions,
   newUuid,
+  hasTimeFloorReference: (chatId, floorId) => timeStore.hasFloorReference(chatId, floorId),
 });
 const peopleWorkspaceStore = createPeopleWorkspaceStore({ client: backendClient });
 let peopleWorkspaceRuntime;
@@ -161,7 +165,6 @@ const vectorIndex = createVectorIndex({
   }),
 });
 let v3RecallRuntime;
-const timeStore = createTimeStore({ client: backendClient });
 const timeRuntime = createTimeRuntime({
   storyCalendarProvider,
   newUuid,
@@ -339,6 +342,19 @@ const chatMemoryManagement = createChatMemoryManagement({
   peopleRuntime: peopleWorkspaceRuntime,
   vectorRuntime: vectorIndex,
   timeRuntime,
+  memoryMigration: createChatMemoryMigration({ client: backendClient, session, hostAdapter,
+    sourceStoreForIdentity: targetFoundationStore, sanitizerOptions, listHostChats, freshUuid: newUuid,
+    copyPeople: ({ sourceIdentity, targetIdentity, entities, sourceReachable }) => copyLatestPeople({ peopleStore: peopleWorkspaceStore,
+      sourceIdentity, targetIdentity, entities, snapshotSourceIds: sourceReachable?.migrationDescriptor?.recordRefs?.peopleSnapshotIds ?? [], now: new Date().toISOString() }),
+    copyTime: ({ sourceIdentity, targetIdentity, reachable }) => timeStore.copyPrefix(sourceIdentity.chatId, targetIdentity.chatId, reachable.floors, undefined, { migration: true }),
+    copyVector: ({ sourceIdentity, targetIdentity, targetNarrativeGeneration, sourceReachable }) => vectorIndex.copyPrefix(sourceIdentity, targetIdentity, targetNarrativeGeneration, sourceReachable),
+    captureStoryCalendar: sourceChatId => settings.get().storyCalendars[sourceChatId] ?? null,
+    persistStoryCalendar: (targetChatId, calendar) => {
+      const previous = { ...settings.get().storyCalendars };
+      try { settings.update({ storyCalendars: { ...previous, [targetChatId]: calendar } }, { observeSaveFailure: true }); }
+      catch (error) { try { settings.update({ storyCalendars: previous }); } catch { /* restore in-memory settings if save scheduling failed */ } throw error; }
+    },
+  }),
   autoHideController,
   coreRecordCache,
   captureHistoricalRebuildSources,
@@ -354,6 +370,7 @@ const storageManagement = createStorageManagement({
   settings,
   memoryRuntime: v3MemoryRuntime,
   foundationRuntime,
+  vectorRuntime: vectorIndex,
   activitySources: [vectorIndex, foundationRuntime, v3RecallRuntime, peopleWorkspaceRuntime, timeRuntime, chatMemoryManagement],
   isBusy: () => {
     const memory = v3MemoryRuntime.getState(), management = chatMemoryManagement.getState();

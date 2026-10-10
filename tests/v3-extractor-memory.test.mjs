@@ -8,6 +8,7 @@ import { createFoundationStore } from '../src/v3/foundation-store.js';
 import { createIndexedDbCoreRecordCache } from '../src/v3/indexeddb-core-cache.js';
 import { buildFoundationIndexes, createFoundationRuntime, projectFoundationPrefix } from '../src/v3/foundation-runtime.js';
 import { createV3MemoryRuntime, projectMemoryPersonEntities, projectMemoryPlaceEntities } from '../src/v3/memory-runtime.js';
+import { initializeMigrationGraph } from '../src/v3/memory-migration.js';
 import { scanAssistantCandidates } from '../src/v3/foundation-domain.js';
 import { createV3RecallRuntime } from '../src/v3/recall-runtime.js';
 import { createV3FoundationView } from '../src/ui/v3-foundation-view.js';
@@ -27,6 +28,8 @@ import { createChatIdentityCoordinator, CHAT_IDENTITY_COLLECTION } from '../src/
 import { createChatSession } from '../src/chat-session.js';
 import { createPluginLifecycle } from '../src/plugin-lifecycle.js';
 import { createTimeRuntime, createTimeStore } from '../src/v3/time-runtime.js';
+import { createPeopleWorkspaceStore, PEOPLE_WORKSPACE_RECORD_ID } from '../src/v3/people-workspace.js';
+import { memorySourceFloorIds } from '../src/v3/memory-schema.js';
 import { createQianshiCandidateIndex, prepareQianshiCandidates, projectQianshiGraph } from '../src/v3/qianshi-domain.js';
 import { localForageHarness } from './helpers/indexeddb-harness.mjs';
 
@@ -95,8 +98,7 @@ test('已存空间事实严格冷读且状态投影用一次floor索引解析来
   try {
     const projected = h.runtime.getState();
     assert.equal(projected.floors.find(item => item.floorId === floor.floorId).sourceMessageIndexes[0], floor.messageIndex);
-    assert.equal(findCalls, 1, `只应包含现有rebuild顺序查询；来源楼解析使用floorId Map\n${findStacks.join('\n')}`);
-    assert.match(findStacks[0], /src\/v3\/memory-runtime\.js:/u, '唯一生产find来自memory runtime已有的有序查询');
+    assert.ok(findCalls <= 1, `来源楼解析仍有界，不重复扫描全图\n${findStacks.join('\n')}`);
   } finally {
     if (originalFind) Object.defineProperty(reachable.floors, 'find', originalFind); else delete reachable.floors.find;
   }
@@ -222,7 +224,7 @@ function browserStorage(initial = {}) {
   };
 }
 
-function harness({ text = '裴晚生提醒你带伞。', initialChat = null, utility, host = 'official', automation = { enabled: false, batchSize: 2 }, notifyUser, isMainGenerationActive, onAutomaticSummaryCommitted = () => {}, onMemoryBatchCommitted = () => {}, extractorPromptGuidance, csePromptGuidance, processingPrompt, storyClockReferenceTags = '', sanitizerOptions = () => ({}), foundationRefresh, foundationFetch = undefined, eventTypes = null, sharedBackend = null, sharedContext = null, modernAnchors = false, persistAnchors = null, readOnlyLifecycle = false, identityProjectionProvider = null, captureBusinessIdentity = null, qianshiExternalReferenceProvider = () => [], qianshiCandidatePreparer = undefined, qianshiCandidateIndexFactory = undefined, failureStorage = undefined, coreRecordCache = null, now = () => new Date(NOW), foundationNow = () => new Date(NOW) } = {}) {
+function harness({ text = '裴晚生提醒你带伞。', initialChat = null, utility, host = 'official', automation = { enabled: false, batchSize: 2 }, notifyUser, isMainGenerationActive, onAutomaticSummaryCommitted = () => {}, onMemoryBatchCommitted = () => {}, extractorPromptGuidance, csePromptGuidance, processingPrompt, storyClockReferenceTags = '', sanitizerOptions = () => ({}), foundationRefresh, foundationFetch = undefined, hasTimeFloorReference = null, eventTypes = null, sharedBackend = null, sharedContext = null, modernAnchors = false, persistAnchors = null, readOnlyLifecycle = false, identityProjectionProvider = null, captureBusinessIdentity = null, qianshiExternalReferenceProvider = () => [], qianshiCandidatePreparer = undefined, qianshiCandidateIndexFactory = undefined, failureStorage = undefined, coreRecordCache = null, now = () => new Date(NOW), foundationNow = () => new Date(NOW) } = {}) {
   let enabled = true;
   const handlers = new Map();
   const warnings = [];
@@ -250,7 +252,7 @@ function harness({ text = '裴晚生提醒你带伞。', initialChat = null, uti
     },
   });
   const currentSanitizerOptions = () => typeof sanitizerOptions === 'function' ? sanitizerOptions() : sanitizerOptions;
-  const foundationBase = createFoundationRuntime({ hostAdapter, store, fetchImpl: foundationFetch, contextProvider: () => context, isEnabled: () => enabled, sanitizerOptions: currentSanitizerOptions, scanCandidates: modernAnchors ? scanAssistantCandidates : legacyScanner, newUuid: uuidFactory(), now: foundationNow, logger: { warn() {} } });
+  const foundationBase = createFoundationRuntime({ hostAdapter, store, fetchImpl: foundationFetch, hasTimeFloorReference, contextProvider: () => context, isEnabled: () => enabled, sanitizerOptions: currentSanitizerOptions, scanCandidates: modernAnchors ? scanAssistantCandidates : legacyScanner, newUuid: uuidFactory(), now: foundationNow, logger: { warn() {} } });
   const foundationRuntime = {
     ...foundationBase,
     ...(!readOnlyLifecycle ? { inspect: reason => foundationBase.reconcile(`testSetup:${reason}`) } : {}),
@@ -346,11 +348,11 @@ test('实时自动 CSE 提交后只核验root，不重复读取整图', async ()
   assert.equal(h.readReachableModes.length, readsAtCse, '提交图已采用；后处理只读root并复用匹配图');
 });
 
-test('271楼 production store 完整图含五类core及CSE控制记录，重建实例热读仍实时核root与baseline/currentState', async () => {
+test('1000楼 production store 含完整摘要/CSE与五类core，缓存重载和正式回源按实际GET逐类核验', async () => {
   const idb = localForageHarness();
   const cache = createIndexedDbCoreRecordCache({ localForage: idb.localForage, indexedDBProvider: () => idb.indexedDB,
     keyRangeProvider: () => idb.keyRange, accountHandleProvider: () => 'neutral-test-account', originProvider: () => 'https://tavern.invalid', ioTimeoutMs: 100, logger: { debug() {} } });
-  const h = await seedContinuousSummaryTail(270, { coreRecordCache: cache, includeCse: true });
+  const h = await seedContinuousSummaryTail(999, { coreRecordCache: cache, includeCse: true });
   await h.runtime.analyzeNextState();
   assert.equal(h.runtime.getState().currentStateId !== null, true, '完整fixture含正式baseline及currentState');
   const initialGraph = await h.store.readReachable({ mode: 'full' });
@@ -388,10 +390,10 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
     indexManifest: { ...initialGraph.root.indexManifest, floor: scaledIndexKeys }, updatedAt: NOW };
   const scaledCommit = await h.store.commitRoot(scaledRoot, initialGraph.rootRevision);
   assert.equal(scaledCommit.status, 'saved');
-  assert.equal(scaledCommit.reachable.floorMemories.length, 271);
-  assert.equal(scaledCommit.reachable.stateDeltas.length, 271);
+  assert.equal(scaledCommit.reachable.floorMemories.length, 1000);
+  assert.equal(scaledCommit.reachable.stateDeltas.length, 1000);
   const floors = h.runtime.getState().floors;
-  assert.equal(floors.length, 271);
+  assert.equal(floors.length, 1000);
 
   const identity = { hostChatId: h.context.chatId, chatId: CHAT, characterLocator: 'character.png', personaLocator: 'persona.png' };
   const rootRead = await h.store.readRoot();
@@ -413,21 +415,23 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
     return [id, { schemaVersion: 1, generationId: rootRead.generationId, revision: value.revision, createdAt: NOW, updatedAt: NOW, data: value.data }];
   }));
   const fixtureFs = await import('node:fs/promises');
-  await fixtureFs.writeFile(join(tmpdir(), 'qqj-v048-271-current-reachable.json'), JSON.stringify({ identity, witness, records: fixtureRecords }), { mode: 0o600 });
+  await fixtureFs.writeFile(join(tmpdir(), 'qqj-v048-1000-current-reachable.json'), JSON.stringify({ identity, witness, records: fixtureRecords }), { mode: 0o600 });
   const scope = await cache.scopeFor(identity);
   for (let attempt = 0; attempt < 1000 && !await cache.readManifest(scope, witness); attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
   assert.ok(await cache.readManifest(scope, witness), '最后一次真实root版本在strict read/CAS后才发布cache manifest');
   const recordEntryKeys = [...idb.records.keys()].filter(key => key.startsWith('r:'));
-  assert.ok(recordEntryKeys.length > 271, `实际5类核心记录进入IDB，记录项 ${recordEntryKeys.length}`);
+  assert.ok(recordEntryKeys.length > 1000, `实际5类核心记录进入IDB，记录项 ${recordEntryKeys.length}`);
   const cacheCounts = Object.fromEntries(['floor', 'floorMemory', 'entity', 'stateDelta', 'index'].map(type => [type,
     [...idb.records.values()].filter(value => value?.recordType === type).length]));
-  assert.deepEqual(cacheCounts, { floor: 271, floorMemory: 271, entity: 3, stateDelta: 271, index: 9 }, 'production extractor/CSE 构造器与单次正式CAS实际产生 floor 规模的缓存记录');
-  assert.ok(Object.values(cacheCounts).every(count => count > 0), `每类缓存必须有真实记录：${JSON.stringify(cacheCounts)}`);
+  assert.deepEqual({ floor: cacheCounts.floor, floorMemory: cacheCounts.floorMemory, entity: cacheCounts.entity, stateDelta: cacheCounts.stateDelta },
+    { floor: 1000, floorMemory: 1000, entity: 3, stateDelta: 1000 }, 'production extractor/CSE构造器与单次正式CAS产生floor规模核心记录');
+  assert.ok(cacheCounts.index >= scaledIndexes.length, `当前head所需索引必须有真实缓存记录：${JSON.stringify(cacheCounts)}`);
   const liveIds = { floor: head.data.producedRefs.floors, floorMemory: head.data.producedRefs.floorMemories,
     entity: head.data.producedRefs.entities, stateDelta: head.data.producedRefs.stateDeltas, index: head.data.producedRefs.indexes };
   const liveCacheCounts = Object.fromEntries(Object.entries(liveIds).map(([type, ids]) => [type, ids.filter(id =>
     idb.records.has(`r:${scope}:${encodeURIComponent(witness.generationId)}:${type}:${encodeURIComponent(String(id).startsWith('v3-') ? id : ({ floor: 'v3-floor-', floorMemory: 'v3-floor-memory-', entity: 'v3-entity-', stateDelta: 'v3-state-delta-' }[type] ?? '') + id)}`)).length]));
-  assert.deepEqual(liveCacheCounts, { floor: 271, floorMemory: 271, entity: 3, stateDelta: 271, index: 3 }, '当前head真实引用的五类core全部有缓存记录');
+  assert.deepEqual(liveCacheCounts, { floor: 1000, floorMemory: 1000, entity: 3, stateDelta: 1000,
+    index: head.data.producedRefs.indexes.filter(key => key.startsWith('v3-index-floorOrder-') || key.startsWith('v3-index-fingerprint-')).length }, '当前head真实引用的五类core全部有缓存记录');
   const recordWriteCounts = new Map();
   for (const key of idb.writes.filter(key => key.startsWith('r:'))) recordWriteCounts.set(key, (recordWriteCounts.get(key) ?? 0) + 1);
   assert.ok([...recordWriteCounts.values()].every(count => count === 1), '同一根世代中的旧core记录不因root前进反复重写');
@@ -445,7 +449,7 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
         : key.startsWith(`v3-${type}-`)).length]));
   const runtimeIndexIds = head.data.producedRefs.indexes.filter(key => key.startsWith('v3-index-floorOrder-') || key.startsWith('v3-index-fingerprint-'));
   assert.deepEqual(countReads(), { root: 1, checkpoint: 1, run: 1, baseline: 1, 'current-state': 1,
-    floor: 271, 'floor-memory': 271, entity: 3, 'state-delta': 271, index: runtimeIndexIds.length }, 'cache empty时生产runtime入口逐类正式GET计数');
+    floor: 1000, 'floor-memory': 1000, entity: 3, 'state-delta': 1000, index: runtimeIndexIds.length }, 'cache empty时生产runtime入口逐类正式GET计数');
   for (let attempt = 0; attempt < 1000 && !await cache.readManifest(scope, witness); attempt += 1) await new Promise(resolve => setTimeout(resolve, 5));
   assert.ok(await cache.readManifest(scope, witness), '完整正式图校验后发布可热读manifest');
 
@@ -474,9 +478,9 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
   const fallbackStore = createFoundationStore({ client: countingClient, contextProvider: () => identity, coreRecordCache: hangingCache });
   const fallback = await fallbackStore.readReachable({ mode: 'runtime' });
   assert.equal(fallback.status, 'ready');
-  assert.equal(fallback.floors.length, 271);
+  assert.equal(fallback.floors.length, 1000);
   assert.deepEqual(countReads(), { root: 1, checkpoint: 1, run: 1, baseline: 1, 'current-state': 1,
-    floor: 271, 'floor-memory': 271, entity: 3, 'state-delta': 271, index: runtimeIndexIds.length }, 'IDB ready后事务挂起时仍按正式runtime路径读完整271楼');
+    floor: 1000, 'floor-memory': 1000, entity: 3, 'state-delta': 1000, index: runtimeIndexIds.length }, 'IDB ready后事务挂起时仍按正式runtime路径读完整1000楼');
   assert.equal(hangingCache.getStats().lastFailure?.phase, 'manifest-invalidation-read');
   assert.ok(hangingCache.getStats().lastFailure.elapsedMs < 100, '完整图故障回源只等待有界的缓存manifest读');
   assert.equal(hangingCache.getStats().available, false);
@@ -521,6 +525,43 @@ test('271楼 production store 完整图含五类core及CSE控制记录，重建�
   const restoredStore = createFoundationStore({ client: countingClient, contextProvider: () => identity, coreRecordCache: cache });
   assert.equal((await restoredStore.readReachable({ mode: 'full' })).status, 'ready');
   assert.equal(backendReads.some(key => key.startsWith('v3-floor-') || key.startsWith('v3-index-')), false, 'root revision恢复旧发布版本后命中原精确manifest');
+
+  const targetId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const targetIdentity = { ...identity, hostChatId: 'B-1000-file', chatId: targetId };
+  const targetChat = [user('搬家后等待回答的问题')];
+  const targetStore = createFoundationStore({ client: countingClient, contextProvider: () => targetIdentity, coreRecordCache: cache });
+  const migrated = await initializeMigrationGraph({ store: targetStore, sourceIdentity: identity, targetIdentity,
+    sourceReachable: scaledCommit.reachable, targetChat, now: () => new Date(NOW), newUuid: newId });
+  assert.equal(migrated.reachable.floors.length, 1000);
+  assert.equal(migrated.reachable.floorMemories.length, 1000);
+  assert.equal(migrated.reachable.stateDeltas.length, 1000);
+  assert.equal(migrated.reachable.migrationDescriptor.frozenFloorIds.length, 1000);
+  const bContext = { ...h.context, chatId: targetIdentity.hostChatId,
+    chatMetadata: { qianqianjie: { schemaVersion: 2, chatId: targetId } }, chat: targetChat };
+  const bHost = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => bContext } } });
+  const bFoundation = createFoundationRuntime({ hostAdapter: bHost, store: targetStore, contextProvider: () => bContext,
+    now: () => new Date(NOW), newUuid: newId, logger: { warn() {} } });
+  const bStartAt = h.backend.calls.length;
+  assert.equal((await bFoundation.start()).status, 'ready');
+  assert.equal(bFoundation.getReachable().floors.length, 1000);
+  const frozenRecordIds = new Set(scaledCommit.reachable.floors.map(floor => `v3-floor-${floor.id}`));
+  const afterStartAt = h.backend.calls.length;
+  for (let index = 1; index <= 2; index += 1) {
+    targetChat.push(assistant(`B新楼 ${index}，只追加真实活动正文。`), user(`B继续 ${index}`));
+    const updated = await bFoundation.refreshStatus();
+    assert.equal(updated.status, 'ready');
+    assert.equal(bFoundation.getReachable().floors.length, 1000 + index);
+  }
+  const bRuntimeCalls = h.backend.calls.slice(afterStartAt);
+  const frozenGets = bRuntimeCalls.filter(([method, collection, key]) => method === 'get' && collection === `chat-${targetId}` && frozenRecordIds.has(key));
+  const frozenPuts = bRuntimeCalls.filter(([method, collection, key]) => method === 'put' && collection === `chat-${targetId}` && frozenRecordIds.has(key));
+  assert.deepEqual(frozenGets, [], 'B连续新增两楼时不重新正式GET 1000个冻结floor records');
+  assert.deepEqual(frozenPuts, [], 'B连续新增两楼不重写冻结floor records');
+  assert.equal(bRuntimeCalls.filter(([method, collection, key]) => method === 'put' && collection === `chat-${targetId}` && key.startsWith('v3-floor-')).length, 2,
+    '两次新增仅正式PUT各自新floor');
+  assert.equal(h.backend.calls.slice(bStartAt).filter(([method, collection, key]) => method === 'get' && collection === `chat-${targetId}`
+    && (key.startsWith('v3-floor-memory-') || key.startsWith('v3-state-delta-'))).length, 0,
+  '迁移runtime热路径不逐楼回源读取已验证的1000份summary/CSE');
 });
 
 test('CSE提交后root版本再次推进时重新读取实际图', async () => {
@@ -7295,6 +7336,211 @@ test('后置 foreign marker 不得让未挂标的已摘要前缀归零或被完�
   assert.deepEqual(after.floors.map(floor => floor.id), before.floors.map(floor => floor.id));
   assert.deepEqual(after.floorMemories.map(memory => memory.id), before.floorMemories.map(memory => memory.id));
   assert.deepEqual(after.stateDeltas.map(delta => delta.id), before.stateDeltas.map(delta => delta.id));
+});
+
+test('260楼前缀保留有效marker下的旧指纹、记忆/CSE/人物人工资料和时间记录，并只重登无资料的孤儿末楼', async () => {
+  const initialChat = [user('开场中性确认')];
+  for (let index = 1; index <= 260; index += 1) initialChat.push(assistant(`第${index}楼旧正文。`), user(`确认第${index}楼。`));
+  initialChat.push(assistant('第261楼待处理。'));
+  const timeStoreHolder = { current: null };
+  const timeReferenceChecks = [];
+  let savedHeader = null, savedMessages = null, saves = 0, returnStaleReadbackOnce = false, staleReadback = null;
+  const foundationFetch = async (url, init = {}) => {
+    if (url === '/api/chats/get') {
+      if (returnStaleReadbackOnce) {
+        returnStaleReadbackOnce = false;
+        return { ok: true, async json() { return structuredClone(staleReadback); } };
+      }
+      return { ok: true, async json() { return [structuredClone(savedHeader), ...structuredClone(savedMessages)]; } };
+    }
+    if (url === '/api/chats/save') {
+      const body = JSON.parse(init.body);
+      staleReadback = [structuredClone(savedHeader), ...structuredClone(savedMessages)];
+      savedHeader = structuredClone(body.chat[0]); savedMessages = structuredClone(body.chat.slice(1)); saves += 1;
+      if (saves === 1) returnStaleReadbackOnce = true;
+      return { ok: true, status: 200, async json() { return { ok: true }; } };
+    }
+    throw new Error(`unexpected host route ${url}`);
+  };
+  const h = harness({ initialChat, modernAnchors: true, automation: { enabled: false, batchSize: 1 },
+    foundationFetch,
+    hasTimeFloorReference: (chatId, floorId) => { timeReferenceChecks.push([chatId, floorId]); return timeStoreHolder.current.hasFloorReference(chatId, floorId); },
+    utility: options => options.systemPrompt === EXTRACTOR_SYSTEM_PROMPT
+      ? { jsonData: { summary: '第1楼的正式摘要。', people: [{ name: '岚' }] } }
+      : { jsonData: { noMaterialChange: true } },
+  });
+  h.context.name2 = '中性测试人物';
+  h.context.chatMetadata.integrity = 'complete';
+  const seeded = await h.foundationRuntime.reconcile('neutralSeed260');
+  assert.equal(seeded.status, 'ready');
+  const initialReachable = h.foundationRuntime.getReachable();
+  assert.equal(initialReachable.floors.length, 260);
+  assert.equal(initialReachable.floors.at(-1).hostLocator.messageIndex, 519);
+  await h.runtime.start();
+  await h.runtime.extractFloor(initialReachable.floors[0].id);
+  let reachable = h.foundationRuntime.getReachable();
+  const prefixMemory = reachable.floorMemories.find(memory => memory.floorId === initialReachable.floors[0].id);
+  assert.ok(prefixMemory?.summary, '前缀通过正式 memory runtime 写入摘要');
+  assert.ok(reachable.stateDeltas.some(delta => delta.floorId === initialReachable.floors[0].id), '前缀通过正式 CSE runtime 写入 delta');
+  assert.ok(reachable.entities.length > 0, '正式摘要为前缀建立人物实体');
+  await h.runtime.editSummary(initialReachable.floors[0].id, '用户人工修订的前缀摘要。');
+  reachable = h.foundationRuntime.getReachable();
+  const firstFloor = reachable.floors[0];
+  const beforeGraph = structuredClone({ floors: reachable.floors.slice(0, 259), memories: reachable.floorMemories,
+    deltas: reachable.stateDeltas, entities: reachable.entities, baseline: reachable.baseline });
+  const priorTargetFloorId = reachable.floors[259].id;
+  const person = reachable.entities.find(entity => entity.entityType === 'person');
+  assert.ok(person, 'fixture 需含可保存人物资料的人物实体');
+
+  const peopleStore = createPeopleWorkspaceStore({ client: h.backend.client });
+  const identity = { hostChatId: h.context.chatId, chatId: CHAT, characterLocator: 'character.png', personaLocator: 'persona.png' };
+  await peopleStore.put(identity, { schemaVersion: 3, kind: 'qqj-v3-people-workspace', chatId: CHAT,
+    selectedEntityIds: [person.id], personOrderEntityIds: [person.id],
+    profilesByEntityId: { [person.id]: { entityId: person.id, name: '岚', notes: '人工维护的人物档案。', manualFields: ['notes'], source: 'manual', createdAt: NOW, updatedAt: NOW } },
+    avatarsByEntityId: {}, identityRedirectsByEntityId: {}, deletedEntityIds: [], createdAt: NOW, updatedAt: NOW }, 0);
+  const profileBefore = structuredClone(h.backend.records.get(`chat-${CHAT}/${PEOPLE_WORKSPACE_RECORD_ID}`));
+  assert.ok(profileBefore?.data.profilesByEntityId[person.id]);
+
+  const timeStore = createTimeStore({ client: h.backend.client });
+  timeStoreHolder.current = timeStore;
+  const timeBatch = { schemaVersion: 1, chatId: CHAT, id: 'neutral-time-prefix-batch', cutoffFloorId: firstFloor.id,
+    dependencies: [{ floorId: firstFloor.id }], bodyReads: [{ floorId: firstFloor.id }], clockWitnesses: [], changes: [] };
+  await timeStore.putBatch(CHAT, timeBatch);
+  await timeStore.putHead(CHAT, { schemaVersion: 1, chatId: CHAT, batchIds: [timeBatch.id], bodyStart: { floorId: firstFloor.id } }, 0);
+  const timeBefore = await timeStore.read(CHAT);
+
+  const ghostFloorId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  for (let index = 0; index < 260; index += 1) {
+    const messageIndex = 1 + index * 2;
+    h.context.chat[messageIndex].extra = { ...(h.context.chat[messageIndex].extra ?? {}),
+      qianqianjie_floor: { schemaVersion: 1, chatId: CHAT, floorId: initialReachable.floors[index].id } };
+  }
+  const oldPrefixMessage = h.context.chat[firstFloor.hostLocator.messageIndex];
+  oldPrefixMessage.mes = '第1楼正文在分支中变化，但原有效楼marker仍在。';
+  oldPrefixMessage.swipes = [oldPrefixMessage.mes];
+  const targetMessage = h.context.chat[519];
+  targetMessage.mes = '第260楼切换到另一条回答。';
+  targetMessage.swipes = ['此前回答', targetMessage.mes];
+  targetMessage.swipe_id = 1;
+  targetMessage.extra.qianqianjie_floor = { schemaVersion: 1, chatId: CHAT, floorId: ghostFloorId };
+
+  savedHeader = { chat_metadata: structuredClone(h.context.chatMetadata) };
+  savedMessages = structuredClone(h.context.chat);
+  h.context.chat[519].extra.qianqianjie_floor = { schemaVersion: 1, chatId: CHAT, floorId: ghostFloorId };
+  // The first server readback deliberately returns the pre-save snapshot; retry must use the saved target, not re-clear a guessed later floor.
+  const runtimeWithTargetIo = createFoundationRuntime({ hostAdapter: h.hostAdapter, store: h.store, fetchImpl: foundationFetch,
+    hasTimeFloorReference: async (chatId, floorId) => { timeReferenceChecks.push([chatId, floorId]); return timeStore.hasFloorReference(chatId, floorId); },
+    contextProvider: () => h.context, scanCandidates: scanAssistantCandidates, newUuid: uuidFactory(),
+    now: () => new Date(NOW), logger: { warn() {} } });
+  assert.equal(runtimeWithTargetIo.getState().pending, null, '新runtime不会继承seed runtime的候选投影');
+  const initialReview = await runtimeWithTargetIo.refreshStatus();
+  assert.equal(initialReview.status, 'error');
+  assert.equal(runtimeWithTargetIo.getState().lastRun?.code, 'V3_MESSAGE_ANCHOR_VERIFY_FAILED');
+  assert.equal(saves, 1, '首次精确清理只发一次宿主保存');
+  assert.equal(savedMessages[519].extra?.qianqianjie_floor, undefined, '第一次正式保存已移除孤儿marker');
+  assert.equal(h.context.chat[519].extra?.qianqianjie_floor?.floorId, ghostFloorId, '读回不一致时回滚当前外壳marker，可供刷新重试');
+
+  const recovered = await runtimeWithTargetIo.refreshStatus();
+  const after = runtimeWithTargetIo.getReachable();
+  assert.equal(recovered.status, 'ready');
+  assert.equal(after.floors.length, 260);
+  assert.deepEqual(after.floors.slice(0, 259), beforeGraph.floors, '259个有效前缀Floor记录保持原ID和内容，包括marker有效但raw/canonical已变的一楼');
+  assert.deepEqual(after.floorMemories, beforeGraph.memories, '前缀摘要、CSE输入资料及人工修订逐字保留');
+  assert.deepEqual(after.stateDeltas, beforeGraph.deltas, '前缀CSE delta逐字保留');
+  assert.deepEqual(after.entities, beforeGraph.entities, '前缀实体及来源边界保持不变');
+  assert.deepEqual(after.baseline, beforeGraph.baseline, '既有baseline保持不变');
+  assert.notEqual(after.floors[259].id, priorTargetFloorId, '仅末个无资料登记楼获得新ID');
+  assert.equal(after.floors[259].hostLocator.messageIndex, 519);
+  assert.equal(after.floors[259].content.canonicalContent, '第260楼切换到另一条回答。');
+  assert.equal(runtimeWithTargetIo.getState().pending?.assistantSeq, 261, '新runtime的后续早期生成边界指向新候选，而非已重登的260楼');
+  assert.equal(runtimeWithTargetIo.getState().pending?.messageIndex, 521);
+  assert.ok(runtimeWithTargetIo.getState().unregisteredCandidates.some(candidate => candidate.assistantSeq === 261), '新末尾候选仍保持待处理');
+  assert.deepEqual(h.backend.records.get(`chat-${CHAT}/${PEOPLE_WORKSPACE_RECORD_ID}`), profileBefore, '独立人工人物工作区不被foundation seal覆盖');
+  assert.deepEqual(await timeStore.read(CHAT), timeBefore, '前缀time head/batch原样保留');
+  assert.ok(timeReferenceChecks.some(([chatId, floorId]) => chatId === CHAT && floorId === priorTargetFloorId), '资格检查使用实际目标末楼');
+  assert.ok(!timeReferenceChecks.some(([chatId, floorId]) => chatId === CHAT && floorId === firstFloor.id), '前缀时间证据不错误阻断末楼替换');
+  assert.equal(saves, 1, '刷新接续已成功写入的清理结果，没有重复保存');
+});
+
+test('末个登记楼清理对缺失/失败/命中的时间依据及已保存记忆保持保守', async () => {
+  for (const providerMode of ['missing', 'readFailure', 'referenced', 'savedRecords']) {
+    let providerCalls = 0, hostWrites = 0;
+    const hasTimeFloorReference = providerMode === 'missing' ? null : async () => {
+      providerCalls += 1;
+      if (providerMode === 'readFailure') throw new Error('neutral time store read failure');
+      return true;
+    };
+    const h = harness({ initialChat: [user('开场'), assistant('旧前缀'), user('确认前缀'), assistant('已登记末楼'),
+      user('确认末楼'), assistant('下一待处理楼')], modernAnchors: true, hasTimeFloorReference,
+      utility: options => options.systemPrompt === EXTRACTOR_SYSTEM_PROMPT
+        ? { jsonData: { summary: '目标楼的正式摘要。', people: [{ name: '岚' }] } }
+        : { jsonData: { noMaterialChange: true } },
+      foundationFetch: async () => { hostWrites += 1; throw new Error('不应进入原聊天保存'); } });
+    h.context.name2 = '中性测试人物';
+    h.context.chatMetadata.integrity = 'complete';
+    assert.equal((await h.foundationRuntime.reconcile('neutralAnchorSeed')).status, 'ready');
+    let before = h.foundationRuntime.getReachable();
+    assert.equal(before.floors.length, 2);
+    if (providerMode === 'savedRecords') {
+      await h.runtime.start();
+      await h.runtime.extractFloor(before.floors[1].id);
+      before = h.foundationRuntime.getReachable();
+      assert.ok(before.floorMemories.some(memory => memorySourceFloorIds(memory).includes(before.floors[1].id)), '正式摘要引用目标楼');
+      assert.ok(before.stateDeltas.some(delta => delta.floorId === before.floors[1].id), '正式CSE delta引用目标楼');
+      assert.ok(before.entities.some(entity => entity.firstSeenFloorId === before.floors[1].id || entity.evidenceRefs?.some(ref => ref.floorId === before.floors[1].id)), '正式实体来源引用目标楼');
+    }
+    const orphanFloorId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    h.context.chat[1].extra = { qianqianjie_floor: { schemaVersion: 1, chatId: CHAT, floorId: before.floors[0].id } };
+    h.context.chat[3].mes = '已登记末楼切换到新回答。';
+    h.context.chat[3].swipes = ['旧回答', h.context.chat[3].mes];
+    h.context.chat[3].swipe_id = 1;
+    h.context.chat[3].extra = { qianqianjie_floor: { schemaVersion: 1, chatId: CHAT, floorId: orphanFloorId } };
+
+    const state = await h.foundationRuntime.refreshStatus();
+    assert.equal(state.status, 'needsReview', `${providerMode}: 无法完整证明时不清理`);
+    assert.equal(state.reviewReason?.assistantSeq, 2);
+    assert.equal(h.context.chat[3].extra.qianqianjie_floor.floorId, orphanFloorId);
+    assert.deepEqual(h.foundationRuntime.getReachable().floors, before.floors);
+    assert.equal(hostWrites, 0, '没有访问宿主保存接口');
+    if (['missing', 'savedRecords'].includes(providerMode)) assert.equal(providerCalls, 0);
+    else assert.equal(providerCalls, 1, `${providerMode}: 时间来源检查按候选实际触发`);
+  }
+});
+
+test('正式十楼聚合摘要阻止末登记楼重登', async () => {
+  let hostWrites = 0;
+  const h = harness({ modernAnchors: true,
+    initialChat: Array.from({ length: 10 }, (_, index) => [assistant(`聚合来源楼${index + 1}`), user(`确认聚合来源楼${index + 1}`)]).flat(),
+    utility: options => JSON.parse(options.taskMessages[0].content).task === 'extractFloorSemantics'
+      ? { jsonData: { summary: '由十个来源楼共同支撑的正式摘要。' } }
+      : { jsonData: { noMaterialChange: true } },
+    foundationFetch: async () => { hostWrites += 1; throw new Error('不应保存孤儿目标'); },
+  });
+  h.context.chatMetadata.integrity = 'complete';
+  await h.runtime.start();
+  await h.runtime.startHistoricalRebuild({ aggregate: true });
+  await waitFor(() => registeredGraphCaughtUp(h.runtime.getState()) && !h.runtime.getState().memoryWorkBusy);
+  const before = h.foundationRuntime.getReachable();
+  const aggregate = before.floorMemories.find(memory => memory.recordStatus === 'active');
+  assert.equal(aggregate.sourceFloorIds.length, 10);
+  const targetFloor = before.floors.at(-1);
+  assert.ok(memorySourceFloorIds(aggregate).includes(targetFloor.id));
+  for (let index = 0; index < before.floors.length; index += 1) {
+    const floor = before.floors[index];
+    h.context.chat[floor.hostLocator.messageIndex].extra = { qianqianjie_floor: { schemaVersion: 1, chatId: CHAT, floorId: floor.id } };
+  }
+  const target = h.context.chat[targetFloor.hostLocator.messageIndex];
+  target.mes = '聚合摘要来源末楼切换到新回答。';
+  target.swipes = ['旧回答', target.mes];
+  target.swipe_id = 1;
+  const orphanId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  target.extra.qianqianjie_floor = { schemaVersion: 1, chatId: CHAT, floorId: orphanId };
+
+  const state = await h.foundationRuntime.refreshStatus();
+  assert.equal(state.status, 'needsReview', '聚合 memorySourceFloorIds 中出现目标时不允许重登');
+  assert.equal(state.reviewReason?.assistantSeq, 10);
+  assert.equal(target.extra.qianqianjie_floor.floorId, orphanId);
+  assert.equal(hostWrites, 0);
 });
 
 test('正文编辑后的明确摘要重提不碰 CSE，显式 CSE 重分析只换本楼', async () => {

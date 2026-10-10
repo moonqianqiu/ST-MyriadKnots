@@ -1,5 +1,6 @@
 import { scanAssistantCandidates, selectAssistantMessage } from './foundation-domain.js';
 import { matchFloorCandidates } from './floor-binding.js';
+import { floorProvenanceForReachable, migrationPartition, partitionScannedCandidates } from './migration-prefix.js';
 import { resolveStoryClock } from '../story-clock.js';
 import { projectTime, projectTimeSource, storyTimes, timeFingerprint, timeBodyReads, createTimeBodyRequest, TIME_INPUT_TOKENS, TIME_BODY_AUXILIARY_TOKENS, TIME_SYSTEM_PROMPT } from './time-engine.js';
 import { inferCanonicalCurrentTime } from './extractor.js';
@@ -59,7 +60,7 @@ export async function readRecentBodyStoryTimes(host, { reachable = null, sanitiz
     .map(candidate => ({ ...candidate, hostLocator: { ...candidate.hostLocator, messageIndex: candidate.hostLocator.messageIndex + startIndex } }));
   const binding = matchFloorCandidates(reachable?.floors ?? [], candidates);
   const memories = storyTimes(reachable?.floorMemories ?? [], reachable?.floors ?? [], (raw, anchor) => projectTime(raw, anchor, { calendar }));
-  const provenance = reachable?.run?.diagnostics?.floorProvenance ?? {};
+  const provenance = floorProvenanceForReachable(reachable);
   const visibleCandidates = candidates.map((candidate, index) => ({ candidate, match: binding.candidateMatches.get(index) }))
     .filter(({ candidate }) => {
       const message = chat[candidate.hostLocator.messageIndex];
@@ -118,8 +119,11 @@ function withoutStoryClockReferenceTags(rawContent, referenceTags = '') {
 }
 
 export async function readTimeBody(reachable, host, { sanitizerOptions = {}, storyClockReferenceTags = '', calendar = null } = {}) {
-  const candidates = await scanAssistantCandidates(host.chat ?? [], { sanitizerOptions, chatId: reachable.root.chatId, captureRawContent: true });
-  const binding = matchFloorCandidates(reachable.floors ?? [], candidates, {
+  const partition = migrationPartition(reachable);
+  const frozenFloors = partition.frozenFloors;
+  const scanned = await scanAssistantCandidates(host.chat ?? [], { sanitizerOptions, chatId: reachable.root.chatId, captureRawContent: true });
+  const candidates = partitionScannedCandidates(reachable, host.chat ?? [], reachable.root.chatId, scanned).live;
+  const binding = matchFloorCandidates(partition.liveFloors, candidates, {
     equivalentContent: (floor, candidate) => {
       const floorText = withoutStoryClockReferenceTags(floor?.content?.canonicalContent, storyClockReferenceTags);
       if (floorText === null) return false;
@@ -130,7 +134,7 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
   if (binding.issue) throw Object.assign(new Error('正文楼绑定不唯一，未完成检查。'), { code: 'QQJ_TIME_BINDING' });
   const manualTimes = storyTimes(reachable.floorMemories ?? [], reachable.floors ?? [], (raw, anchor) => projectTime(raw, anchor, { calendar }));
   const manualSourceTimes = storyTimes(reachable.floorMemories ?? [], reachable.floors ?? [], projectTimeSource);
-  const provenance = reachable.run?.diagnostics?.floorProvenance ?? {};
+  const provenance = floorProvenanceForReachable(reachable);
   const manualTime = floorId => Boolean(floorId && provenance[floorId]?.timeEdited === true);
   const bodies = [], floors = [];
   let previousHistory = null, previousVisible = null, previousHistorySource = null, previousVisibleSource = null;
@@ -164,7 +168,10 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     bodies.push(body);
     if (match) floors.push({ ...match.floor, assistantSeq: candidate.assistantSeq, canonicalFingerprint: candidate.canonicalFingerprint, timeSourceFingerprint, content: candidate.canonicalContent });
   }
-  return { ...reachable, ...(calendar ? { calendar } : {}), floors, bodyFloors: bodies, bodyTimes: new Map(bodies.filter(body => body.floorId).map(body => [body.floorId, body.observationTime])),
+  // Frozen source floors keep their persisted identity and references. They are
+  // never rebound to same-number B messages or reparsed from B's live chat.
+  const allFloors = [...frozenFloors, ...floors];
+  return { ...reachable, ...(calendar ? { calendar } : {}), floors: allFloors, liveFloors: floors, bodyFloors: bodies, bodyTimes: new Map(bodies.filter(body => body.floorId).map(body => [body.floorId, body.observationTime])),
     bodySignature: await timeFingerprint(bodies.map(body => [body.floorId, body.hostLocator, body.rawFingerprint, body.canonicalFingerprint])) };
 }
 

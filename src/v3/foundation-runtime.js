@@ -29,6 +29,7 @@ import { diagnosticsWithRealtimeOrigin, realtimeOriginFromReachable } from './me
 import { matchFloorCandidates } from './floor-binding.js';
 import { clearExactMessageFloorAnchor, inspectMessageFloorAnchor, messageFloorAnchorCandidateSnapshot, MESSAGE_FLOOR_ANCHOR_KEY, readTargetChat } from './message-floor-anchor.js';
 import { captureTargetChatDescriptor } from './host-adapter.js';
+import { migrationPartition, partitionScannedCandidates } from './migration-prefix.js';
 
 const EVENTS = Object.freeze([
   'CHAT_CHANGED', 'CHAT_RENAMED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED',
@@ -72,7 +73,60 @@ function orphanTailAnchorRepair(value, candidates, bindings) {
       || (!exactMarker && (!match.sanitizerFingerprintMatches || !fingerprintsMatch))) return null;
   }
   if ([...repaired.candidateMatches.keys()].some(index => index >= floors.length)) return null;
-  return Object.freeze({ chatId: anchor.chatId, floorId: anchor.floorId, messageIndex: candidate.hostLocator.messageIndex });
+  return Object.freeze({ mode: 'appendTail', chatId: anchor.chatId, floorId: anchor.floorId,
+    assistantSeq: candidate.assistantSeq, messageIndex: candidate.hostLocator.messageIndex });
+}
+
+function exactOrphanMarkerRepair(value, candidates, bindings, stableCount) {
+  const floors = value?.floors ?? [];
+  const issue = bindings?.issue;
+  const index = floors.length - 1;
+  if (!value?.root || index < 0 || issue?.code !== 'markerConflict' || issue.markerStatus !== 'valid'
+    || issue.candidateIndex !== index || stableCount <= index) return null;
+  const candidate = candidates[index];
+  const anchor = candidate?.messageAnchor?.anchor;
+  const prior = floors[index];
+  if (!anchor || value.root.chatId !== anchor.chatId || floors.some(floor => floor.id === anchor.floorId)
+    || candidate?.assistantSeq !== prior.assistantSeq
+    || candidate?.hostLocator?.messageIndex !== prior.hostLocator?.messageIndex) return null;
+  const sameOrphan = candidates.filter(item => item?.messageAnchor?.status === 'valid'
+    && item.messageAnchor.anchor.chatId === anchor.chatId && item.messageAnchor.anchor.floorId === anchor.floorId);
+  if (sameOrphan.length !== 1) return null;
+  const withoutOrphan = candidates.map((item, candidateIndex) => candidateIndex === index
+    ? Object.freeze({ ...item, messageAnchor: Object.freeze({ status: 'none', anchor: null }) }) : item);
+  const aligned = matchFloorCandidates(floors, withoutOrphan);
+  if (aligned.issue || aligned.matches.length !== floors.length - 1
+    || aligned.unmatchedFloorIndexes.length !== 1 || aligned.unmatchedFloorIndexes[0] !== index
+    || !aligned.unmatchedCandidateIndexes.includes(index)) return null;
+  for (let floorIndex = 0; floorIndex < index; floorIndex += 1) {
+    const match = aligned.candidateMatches.get(floorIndex);
+    const exactMarker = match?.kind === 'marker' && match.markerStatus === 'valid'
+      && match.candidate?.messageAnchor?.anchor?.chatId === value.root.chatId
+      && match.candidate.messageAnchor.anchor.floorId === match.floor?.id;
+    if (!match || match.floorIndex !== floorIndex || match.candidateIndex !== floorIndex || !match.locatorMatches
+      || (!exactMarker && (!match.rawFingerprintMatches || !match.canonicalFingerprintMatches))) return null;
+  }
+  if (aligned.unmatchedCandidateIndexes.some(candidateIndex => candidateIndex < floors.length && candidateIndex !== index)) return null;
+  const targetFloorId = prior.id;
+  if (migrationPartition(value).isFrozenFloor(targetFloorId)) return null;
+  if ((value.floorMemories ?? []).some(memory => memorySourceFloorIds(memory).includes(targetFloorId))) return null;
+  const stateUsesTarget = state => {
+    if (!state || typeof state !== 'object') return false;
+    if (state.headFloorId === targetFloorId || state.floorId === targetFloorId || state.sourceFloorId === targetFloorId
+      || state.baselineSourceFloorId === targetFloorId) return true;
+    return Object.values(state).some(item => Array.isArray(item)
+      ? item.some(stateUsesTarget)
+      : item && typeof item === 'object' && stateUsesTarget(item));
+  };
+  if ((value.stateDeltas ?? []).some(delta => delta.floorId === targetFloorId || stateUsesTarget(delta))) return null;
+  if (value.run?.diagnostics?.floorProvenance?.[targetFloorId]) return null;
+  if ((value.currentStates ?? []).some(stateUsesTarget)) return null;
+  const evidenceUsesTarget = item => (item?.evidenceRefs ?? []).some(ref => ref?.floorId === targetFloorId);
+  if ((value.entities ?? []).some(entity => entity.firstSeenFloorId === targetFloorId || entity.lastSeenFloorId === targetFloorId
+    || evidenceUsesTarget(entity) || (entity.mergeEvidenceRefs ?? []).some(ref => ref?.floorId === targetFloorId)
+    || (entity.aliases ?? []).some(alias => evidenceUsesTarget(alias)))) return null;
+  return Object.freeze({ mode: 'replaceLastFloor', chatId: anchor.chatId, floorId: anchor.floorId,
+    priorFloorId: prior.id, assistantSeq: candidate.assistantSeq, messageIndex: candidate.hostLocator.messageIndex });
 }
 
 function normalizedIdentity(contextProvider) {
@@ -146,7 +200,7 @@ function activeFloorViews(floors, candidates) {
   return floors.map((floor, index) => {
     const candidate = candidates[index];
     if (!candidate) return floor;
-    return { ...floor, assistantSeq: index + 1, predecessorFloorId: floors[index - 1]?.id ?? null, hostLocator: { ...candidate.hostLocator } };
+    return { ...floor, assistantSeq: candidate.assistantSeq ?? floor.assistantSeq, predecessorFloorId: floors[index - 1]?.id ?? null, hostLocator: { ...candidate.hostLocator } };
   });
 }
 function restoreActiveFloorViews(floors, indexes) {
@@ -191,12 +245,14 @@ export function createFoundationRuntime({
   newUuid = newIdentityUuid,
   logger = console,
   fetchImpl = globalThis.fetch,
+  hasTimeFloorReference = null,
   targetChatIo = null,
   targetRecoveryLeaf = false,
 } = {}) {
   if (typeof hostAdapter?.snapshot !== 'function') throw new TypeError('V3 runtime HostAdapter 无效');
   if (!store || ['readReachable', 'readRecord', 'putRecord', 'replaceRecord', 'settleRun', 'commitRoot', 'invalidate', 'recordKey'].some(name => typeof store[name] !== 'function')) throw new TypeError('V3 runtime store 无效');
   if (prepareSession !== null && typeof prepareSession !== 'function') throw new TypeError('V3 runtime prepareSession 无效');
+  if (hasTimeFloorReference !== null && typeof hasTimeFloorReference !== 'function') throw new TypeError('V3 runtime time reference reader 无效');
   if (typeof scanCandidates !== 'function') throw new TypeError('V3 runtime candidate scanner 无效');
   let sessionEpoch = 0;
   let cache = null;
@@ -220,6 +276,30 @@ export function createFoundationRuntime({
   let emptyRealtimeObservation = null;
   let inspectedStableCount = 0;
   const subscribers = new Set();
+  const migrationInputWitnesses = new WeakMap();
+
+  async function scanGraphCandidates(chat, chatId, options = {}) {
+    const scanned = await scanCandidates(chat, { sanitizerOptions: sanitizerOptions(), chatId, ...options });
+    const prepared = partitionScannedCandidates(cache, chat, chatId, scanned);
+    if (prepared.all !== scanned) migrationInputWitnesses.set(prepared.all, Object.freeze({
+      descriptorId: prepared.descriptorId ?? cache?.migrationDescriptor?.id ?? null,
+      aliasWitnesses: prepared.aliasWitnesses,
+    }));
+    return prepared.all;
+  }
+
+  async function inputSnapshotForCandidates(candidates, stableCount) {
+    const migration = migrationInputWitnesses.get(candidates);
+    if (!migration) return foundationInputSnapshot(candidates, stableCount);
+    const realCandidates = candidates.filter(candidate => candidate?.archiveCandidate !== true);
+    const realStableCount = candidates.slice(0, stableCount).filter(candidate => candidate?.archiveCandidate !== true).length;
+    const base = await foundationInputSnapshot(realCandidates, realStableCount);
+    const witness = { descriptorId: migration.descriptorId, aliasWitnesses: migration.aliasWitnesses };
+    return Object.freeze({
+      payload: Object.freeze({ ...base.payload, migration: Object.freeze(witness) }),
+      fingerprint: await hash(JSON.stringify({ fingerprint: base.fingerprint, ...witness })),
+    });
+  }
 
   const enabled = () => {
     try { return (typeof isEnabled === 'function' ? isEnabled() : isEnabled) === true; }
@@ -425,7 +505,7 @@ export function createFoundationRuntime({
       const matchedFloor = match?.floor ?? null;
       const manuallySaved = matchedFloor?.stability?.stabilizedBy === 'manual'
         && match.rawFingerprintMatches && match.canonicalFingerprintMatches && match.sanitizerFingerprintMatches;
-      const permanentlySaved = Boolean(matchedFloor && (marker?.status === 'valid' || savedFloorIds.has(matchedFloor.id) || manuallySaved));
+      const permanentlySaved = Boolean(matchedFloor && (candidates[count].archiveCandidate === true || marker?.status === 'valid' || savedFloorIds.has(matchedFloor.id) || manuallySaved));
       const requestConfirmed = marker?.status === 'none' && matchedFloor
         && requestConfirmations.has(matchedFloor.id);
       const manuallyConfirmed = Array.isArray(manualConfirmation)
@@ -436,6 +516,21 @@ export function createFoundationRuntime({
         && manualConfirmationMatches(candidates[count - 1], manualConfirmation.at(-1))) break;
     }
     return count;
+  }
+  async function findOrphanAnchorRepair(value, candidates, bindings, { confirmLatest = false, stableThrough = null, manualConfirmation = null } = {}) {
+    const tailRepair = orphanTailAnchorRepair(value, candidates, bindings);
+    if (tailRepair) return tailRepair;
+    let stableCount = 0;
+    try { stableCount = stableCountFor(candidates, value?.floors ?? [], confirmLatest, stableThrough, manualConfirmation); }
+    catch { return null; }
+    const replacement = exactOrphanMarkerRepair(value, candidates, bindings, stableCount);
+    if (!replacement || !hasTimeFloorReference) return null;
+    try {
+      const referenced = await hasTimeFloorReference(value.root.chatId, replacement.priorFloorId);
+      return referenced ? null : replacement;
+    } catch {
+      return null;
+    }
   }
 
   function graphReviewReason(value, candidates) {
@@ -509,7 +604,7 @@ export function createFoundationRuntime({
     try {
       captured = capture();
       projectedChatId = captured.identity.chatId;
-      const candidates = await scanCandidates(captured.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: captured.identity.chatId });
+      let candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId);
       if (inspectEpoch !== sessionEpoch) return publicState;
       if (allowCached && !lastError && cacheMatchesCandidates(candidates)) {
         inspectedStableCount = cache.floors.length;
@@ -537,6 +632,10 @@ export function createFoundationRuntime({
       if (['ready', 'needsReseal'].includes(loaded.status)) {
         const orderedFloors = [...loaded.floors].sort((left, right) => left.assistantSeq - right.assistantSeq);
         cache = { ...loaded, floors: restoreActiveFloorViews(orderedFloors, loaded.indexes) };
+        if (loaded.migrationDescriptor) {
+          candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId);
+          inspectedStableCount = stableCountFor(candidates, cache.floors, false, null);
+        }
         lastRun = runSummary(loaded.run, 'inspected');
       } else if (loaded.status === 'uninitialized') {
         cache = { root: null, rootRevision: 0, checkpoint: null, run: null, floors: [], floorMemories: [], entities: [], indexes: [] };
@@ -702,12 +801,12 @@ export function createFoundationRuntime({
     if (current(operation) !== 'current') throw statusError('stale');
     if (targetRecoveryLeaf && targetChatIo?.requireSourceValidation === true) await targetChatIo.readLatest();
     const captured = capture();
-    const candidates = await scanCandidates(captured.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: captured.identity.chatId });
+    const candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId);
     if (current(operation) !== 'current') throw statusError('stale');
     const bindings = matchFloorCandidates(cache?.floors ?? [], candidates);
     if (bindings.issue) throw statusError('needsReview', '当前消息记忆标识存在冲突，本次操作不再提交。');
     const stableCount = stableCountFor(candidates, cache?.floors ?? [], confirmLatest, stableThrough, manualConfirmation);
-    const snapshot = await foundationInputSnapshot(candidates, stableCount);
+    const snapshot = await inputSnapshotForCandidates(candidates, stableCount);
     return { candidates, stableCount, snapshot };
   }
 
@@ -753,7 +852,7 @@ export function createFoundationRuntime({
     try { captured = capture(); } catch { return publicState; }
     if (captured.host.context.groupId !== null && captured.host.context.groupId !== undefined) return publicState;
     const evidence = { identity: captured.identity, epoch: sessionEpoch, newLen: captured.host.chat.length };
-    const candidates = await scanCandidates(captured.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: captured.identity.chatId });
+    const candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId);
     if (!tailDeletionMatches(evidence, candidates, cache?.floors ?? [], stableCountFor(candidates, cache?.floors ?? [], false))) return publicState;
     const messageSnapshot = messages => JSON.stringify(messages.map(message => ({
       is_user: message?.is_user, is_system: message?.is_system, mes: message?.mes,
@@ -888,6 +987,7 @@ export function createFoundationRuntime({
         newUuid,
         logger,
         fetchImpl,
+        hasTimeFloorReference,
         targetChatIo: targetIo,
         targetRecoveryLeaf: true,
       });
@@ -901,6 +1001,9 @@ export function createFoundationRuntime({
         const reachable = fixedRuntime.getReachable?.();
         if (reachable?.root && (cache?.rootRevision ?? 0) <= reachable.rootRevision) cache = reachable;
         inspectedStableCount = targetState.inspectedStableCount ?? inspectedStableCount;
+        pending = fixedRuntime.getPendingCandidate?.() ?? null;
+        unregisteredCandidates = targetState.unregisteredCandidates;
+        consecutiveAssistantConfirmation = targetState.consecutiveAssistantConfirmation;
         reviewReason = targetState.reviewReason ?? null;
         lastError = targetState.lastError ?? null;
         lastRun = targetState.lastRun ?? lastRun;
@@ -917,14 +1020,10 @@ export function createFoundationRuntime({
       let retryCandidateFingerprint = null;
       const inspectedSnapshot = targetHost.snapshot();
       const inspectedReachable = fixedRuntime.getReachable?.();
-      if (inspectedReachable?.root
-        && inspected.reviewReason.actualCount === inspected.reviewReason.expectedCount + 1
-        && inspected.reviewReason.assistantSeq === inspected.reviewReason.expectedCount + 1) {
-        const candidates = await scanCandidates(inspectedSnapshot.chat, {
-          sanitizerOptions: captured.sanitizerOptions, chatId: captured.identity.chatId,
-        });
+      if (inspectedReachable?.root) {
+        const candidates = await scanGraphCandidates(inspectedSnapshot.chat, captured.identity.chatId, { sanitizerOptions: captured.sanitizerOptions });
         const bindings = matchFloorCandidates(inspectedReachable.floors, candidates);
-        retryRepair = orphanTailAnchorRepair(inspectedReachable, candidates, bindings);
+        retryRepair = await findOrphanAnchorRepair(inspectedReachable, candidates, bindings);
         if (retryRepair && retryRepair.messageIndex === inspected.reviewReason.messageIndex) {
           retryCandidateFingerprint = messageFloorAnchorCandidateSnapshot(inspectedSnapshot.chat[retryRepair.messageIndex]);
         } else retryRepair = null;
@@ -937,15 +1036,21 @@ export function createFoundationRuntime({
       const result = await fixedRuntime.reconcile('orphanTailRecovery');
       if (serverAlreadyCleared && result.status === 'ready') {
         const reachable = fixedRuntime.getReachable?.();
-        const registeredFloor = reachable?.floors?.find(floor => floor.assistantSeq === inspected.reviewReason.expectedCount + 1
-          && floor.hostLocator?.messageIndex === retryRepair.messageIndex);
-        const pendingTail = fixedRuntime.getState().unregisteredCandidates?.some(candidate =>
-          candidate.assistantSeq === inspected.reviewReason.expectedCount + 1
+        const latestCandidates = targetSnapshot.chat
+          ? await scanGraphCandidates(targetSnapshot.chat, captured.identity.chatId, { sanitizerOptions: captured.sanitizerOptions }) : [];
+        const latestCandidate = latestCandidates.find(candidate => candidate.assistantSeq === retryRepair.assistantSeq
+          && candidate.hostLocator?.messageIndex === retryRepair.messageIndex);
+        const registeredFloor = reachable?.floors?.find(floor => floor.assistantSeq === retryRepair.assistantSeq
+          && floor.hostLocator?.messageIndex === retryRepair.messageIndex
+          && floor.content?.rawFingerprint === latestCandidate?.rawFingerprint
+          && floor.content?.canonicalFingerprint === latestCandidate?.canonicalFingerprint);
+        const pendingTail = retryRepair.mode === 'appendTail' && fixedRuntime.getState().unregisteredCandidates?.some(candidate =>
+          candidate.assistantSeq === retryRepair.assistantSeq
           && candidate.messageIndex === retryRepair.messageIndex && candidate.reason === 'waitingNextUser');
-        const latestCandidate = targetSnapshot.chat?.[retryRepair.messageIndex];
+        const latestMessage = targetSnapshot.chat?.[retryRepair.messageIndex];
         if ((registeredFloor || pendingTail)
-          && inspectMessageFloorAnchor(latestCandidate, captured.identity.chatId).status === 'none'
-          && messageFloorAnchorCandidateSnapshot(latestCandidate) === retryCandidateFingerprint) {
+          && inspectMessageFloorAnchor(latestMessage, captured.identity.chatId).status === 'none'
+          && messageFloorAnchorCandidateSnapshot(latestMessage) === retryCandidateFingerprint) {
           targetIo.onPersisted({ header: targetHeader, chat: targetChat }, {
             ...retryRepair, candidateFingerprint: retryCandidateFingerprint,
           });
@@ -964,9 +1069,10 @@ export function createFoundationRuntime({
   }
 
   async function seal(operation, { candidates, stableCount, confirmLatest = false, stableThrough = operation?.stableThrough ?? null, manualConfirmation = operation?.manualConfirmation ?? null, sourceSnapshot = null, rebaseAttempt = 0 }) {
-    const snapshot = sourceSnapshot ?? await foundationInputSnapshot(candidates, stableCount);
+    const snapshot = sourceSnapshot ?? await inputSnapshotForCandidates(candidates, stableCount);
     const existing = cache.floors;
     const stableCandidates = candidates.slice(0, stableCount);
+    const frozenFloorIds = new Set(migrationPartition(cache).frozenFloorIds);
     const memoryFloorIds = new Set((cache.floorMemories ?? []).filter(memory => memory.recordStatus === 'active').flatMap(memorySourceFloorIds));
     const bindings = matchFloorCandidates(existing, stableCandidates);
     if (bindings.issue?.code === 'markerRejected') throw statusError('needsReview', '消息记忆标识无效或来自其他聊天，未静默接管。');
@@ -1020,7 +1126,8 @@ export function createFoundationRuntime({
         });
         floors.push(created); newFloors.push(created); continue;
       }
-      const rebound = validateFoundationFloor({ ...prior, assistantSeq: index + 1,
+      if (frozenFloorIds.has(prior.id)) { floors.push(prior); continue; }
+      const rebound = validateFoundationFloor({ ...prior, assistantSeq: stableCandidates[index].assistantSeq ?? index + 1,
         predecessorFloorId: floors.at(-1)?.id ?? null, hostLocator: { ...stableCandidates[index].hostLocator }, updatedAt: nowValue }, { expectedChatId: operation.chatId });
       floors.push(rebound);
     }
@@ -1091,6 +1198,7 @@ export function createFoundationRuntime({
       sourceSnapshotFingerprint: checkpoint.sourceSnapshotFingerprint,
       stableBoundary: { assistantSeq: floors.length, floorId: boundaryFloor?.id ?? null, canonicalFingerprint: boundaryFloor?.content?.canonicalFingerprint ?? null },
       baselineId: baseline?.id ?? null, activeRunId: null,
+      ...(cache.root?.migrationDescriptorId ? { migrationDescriptorId: cache.root.migrationDescriptorId } : {}),
       indexManifest: { ...emptyIndexManifest(), floor: indexKeys.filter(key => key.includes('-floorOrder-') || key.includes('-fingerprint-')), entity: indexKeys.filter(key => key.includes('-entity-')), reverseRef: indexKeys.filter(key => key.includes('-reverseRef-')) },
       activeStateRefs: currentState ? [currentState.id] : [], activeThreadRefs: [],
     }, { expectedChatId: operation.chatId });
@@ -1199,22 +1307,23 @@ export function createFoundationRuntime({
         if (!loaded || current(operation) !== 'current') return publishOperation(operation, 'stale');
         const scanMetrics = {};
         const started = globalThis.performance?.now?.() ?? Date.now();
-        let candidates = await scanCandidates(captured.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: captured.identity.chatId, metrics: scanMetrics });
+        let candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId, { metrics: scanMetrics });
         const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - started;
         if (current(operation) !== 'current') return publishOperation(operation, 'stale');
         metrics = Object.freeze({ assistantFloors: candidates.length, canonicalCharacters: candidates.reduce((sum, item) => sum + item.canonicalContent.length, 0), scanMs: elapsed, maximumChunkMs: scanMetrics.maximumChunkMs ?? elapsed, algorithm: 'ordered-O(n)' });
         let candidateBindings = matchFloorCandidates(loaded.floors, candidates);
-        const orphanRepair = orphanTailAnchorRepair(loaded, candidates, candidateBindings);
+        const orphanRepair = await findOrphanAnchorRepair(loaded, candidates, candidateBindings,
+          { confirmLatest, stableThrough, manualConfirmation: operation.manualConfirmation });
         if (orphanRepair && operation.orphanRepairAttempted !== true && !targetRecoveryLeaf) {
           operation.orphanRepairAttempted = true;
-          if (operation.recoveryTarget) return runOrphanTargetRecovery(operation.recoveryTarget);
+          if (operation.recoveryTarget) return await runOrphanTargetRecovery(operation.recoveryTarget);
         }
         if (orphanRepair && operation.orphanRepairAttempted !== true && targetRecoveryLeaf && targetChatIo) {
           operation.orphanRepairAttempted = true;
           await clearExactMessageFloorAnchor({ hostAdapter, targetChat: targetChatIo, ...orphanRepair, signal: operation.controller.signal, fetchImpl });
           if (current(operation) !== 'current') return publishOperation(operation, 'stale');
           const repairedHost = capture();
-          candidates = await scanCandidates(repairedHost.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: repairedHost.identity.chatId });
+          candidates = await scanGraphCandidates(repairedHost.host.chat, repairedHost.identity.chatId);
           if (current(operation) !== 'current') return publishOperation(operation, 'stale');
           candidateBindings = matchFloorCandidates(loaded.floors, candidates);
         }
@@ -1233,7 +1342,7 @@ export function createFoundationRuntime({
           }
         }
         const stableCount = stableCountFor(candidates, loaded.floors, confirmLatest, stableThrough, operation.manualConfirmation);
-        const sourceSnapshot = await foundationInputSnapshot(candidates, stableCount);
+    const sourceSnapshot = await inputSnapshotForCandidates(candidates, stableCount);
         if (!loaded.root && stableCount === 0) {
           emptyRealtimeObservation = Object.freeze({ chatId: operation.chatId });
           updateCandidateProjection(candidates, [], 0);
@@ -1399,7 +1508,7 @@ export function createFoundationRuntime({
     if (!cache) await inspect('manualConfirmConsecutiveInspect', { allowCached: false });
     if (!cache) return publicState;
     const captured = capture();
-    const candidates = await scanCandidates(captured.host.chat, { sanitizerOptions: sanitizerOptions(), chatId: captured.identity.chatId });
+    const candidates = await scanGraphCandidates(captured.host.chat, captured.identity.chatId);
     if (captured.identity.chatId !== projectedChatId || scope?.chatId !== captured.identity.chatId) return publish('stale');
     const bindings = matchFloorCandidates(cache.floors ?? [], candidates);
     if (bindings.issue) return reconcile('manualConfirmConsecutive');
@@ -1425,6 +1534,7 @@ export function createFoundationRuntime({
     confirmLatest: () => pending ? reconcile('manualConfirm', { confirmLatest: true }) : Promise.resolve(publish('ready')),
     confirmConsecutiveAssistants,
     invalidate, setEnabled, adoptReachable, holdExtractionConfirmation, getState: () => publicState,
+    getPendingCandidate: () => pending,
     getReachable: () => cache,
     subscribe(listener) { if (typeof listener !== 'function') throw new TypeError('V3 foundation listener 必须是函数'); subscribers.add(listener); return () => subscribers.delete(listener); },
     identityProvider: () => normalizedIdentity(contextProvider),
