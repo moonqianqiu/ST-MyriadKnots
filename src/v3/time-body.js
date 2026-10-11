@@ -32,7 +32,9 @@ export async function clockContentFingerprint(rawContent, referenceTags = '') {
 // 本地剥壳投影（时间专用）：canonical 结构化读取无果时，对 canonical 同文剥掉标签壳再读一次。
 // 排除名单须随 extractor.js inferCanonicalCurrentTime 的 excludedTags 同步——think/history 等
 // 平台惯例块整块移除（思维链时间戳不得揭示为当前时间），其余闭合标签块只剥壳留内文。
-const TIME_EXCLUDED_TAGS = ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline'];
+// 'record' 单数为本投影侧补齐：上游 excluded 正则为 records?（单复数生效）而其 excludedTags
+// 数组漏单数——结构化路径靠正则排除、投影路径靠本数组排除，缺单数会让 <record> 块被剥壳揭示。
+const TIME_EXCLUDED_TAGS = ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'record', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline'];
 const TIME_EXCLUDED_TAG_SET = new Set(TIME_EXCLUDED_TAGS);
 const TIME_TAG_TOKEN = /<(\/?)([\p{L}][\p{L}\p{N}_-]*~?)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
 

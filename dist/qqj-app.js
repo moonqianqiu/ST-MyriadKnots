@@ -34777,6 +34777,7 @@ var BC = [
 	"event",
 	"timeline",
 	"records",
+	"record",
 	"details",
 	"think",
 	"thinking",

@@ -279,12 +279,13 @@ test('正文开头裸时间：canonical 直读，content 壳内裸日期由剥�
   }
 });
 
-test('剥壳投影：奇怪包裹壳内裸日期零配置可读，排除块整块移除，歧义不落值', async () => {
+test('剥壳投影：奇怪包裹壳内裸日期零配置可读，think 时间戳不揭示，双日期歧义不落值', async () => {
   const cases = [
     ['<正文>2026年5月10日，晴。阿岚停留。</正文>', '2026-05-10'],
     ['<正文><div>2026年5月10日，晴。阿岚停留。</div></正文>', '2026-05-10'],
     ['<正文 data-x="a>b">2026年5月10日，晴。阿岚停留。</正文>', '2026-05-10'],
     ['<think>2019年3月1日，那场大火。</think>2026年5月10日，晴。阿岚停留。', '2026-05-10'],
+    // null 来自双日期歧义守卫，而非闪回被排除——单日期形态的定案见下一条测试。
     ['<闪回>2019年3月1日</闪回>2026年5月10日，晴。阿岚停留。', null],
     ['<think>2019年3月1日，那场大火。</think>', null],
   ];
@@ -294,6 +295,38 @@ test('剥壳投影：奇怪包裹壳内裸日期零配置可读，排除块整�
     await h.seal();
     const body = await h.body();
     assert.equal(body.bodyFloors[0].observationTime.date, expected, rawContent);
+  }
+});
+
+test('剥壳投影不猜标签语义：未声明闪回按裸日期启发式读取，extraTags 声明即排除', async () => {
+  const message = '<闪回>2019年3月1日，那场大火。</闪回>阿岚停留。';
+  const undeclared = await harness({ count: 1 });
+  undeclared.chat[0].mes = message;
+  await undeclared.seal();
+  const undeclaredBody = await undeclared.body();
+  assert.equal(undeclaredBody.bodyFloors[0].observationTime.date, '2019-03-01');
+
+  const declared = await harness({ count: 1, sanitizer: { extraTags: ['闪回'] } });
+  declared.chat[0].mes = message;
+  await declared.seal();
+  const declaredBody = await declared.body();
+  assert.equal(declaredBody.bodyFloors[0].observationTime.date, null);
+  const recent = await readRecentBodyStoryTimes(declared.hostAdapter.snapshot(), {
+    reachable: declared.source,
+    sanitizerOptions: { extraTags: ['闪回'] },
+    limit: 1,
+  });
+  assert.equal(recent.length, 0);
+});
+
+test('剥壳投影排除名单行为守卫：名单内块（含 record 单数）都不揭示日期', async () => {
+  // 名单与 src/v3/time-body.js TIME_EXCLUDED_TAGS 保持一致（有意重复：测试即合同，上游漂移即红）。
+  for (const name of ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'record', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline']) {
+    const h = await harness({ count: 1 });
+    h.chat[0].mes = `<${name}>2019年3月1日，备注。</${name}>阿岚停留。`;
+    await h.seal();
+    const body = await h.body();
+    assert.equal(body.bodyFloors[0].observationTime.date, null, name);
   }
 });
 
