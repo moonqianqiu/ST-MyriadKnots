@@ -133,7 +133,7 @@
    ```
 
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1701** = 上游 v0.7.6 树 + 本地守卫；实测约 90s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1702** = 上游 v0.7.6 树 + 本地守卫；实测约 90s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -142,7 +142,7 @@
 ## 5. 当前仓库状态底数（基线备忘）
 
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.6`（提交 `53f4338`，含 v0.7.5 固定目标聊天快照/分支防串聊与 v0.7.6 分支向量索引前缀复制）。本次合并提交 `28a33b7`，其第一父为合并前本地基线 `2146c23`；
-- **产物版本**：`manifest.json` 版本号 `0.7.6`（含 `author: "atonal519"`），缓存键 `20261011.394-24c675ad85f85093`（哈希与真实 bundle 一致）；
+- **产物版本**：`manifest.json` 版本号 `0.7.6`（含 `author: "atonal519"`），缓存键 `20261011.395-d96c7b27eba46a43`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
@@ -161,4 +161,6 @@
 | v0.7.1 | 10-09 | `746b48c` | 身份与千事重判并集；本地召回/清洗资产保留；键 `.47-ff373043728cf283` | 1606 |
 | v0.7.2 | 10-10 | `a037fa4` | 3 冲突；完全重构跨聊天的失效门控（§2.2 UI）、空间事实与 IDB 缓存全采纳；键 `.386-e234f79fdc9e617a` | 1638 |
 | v0.7.3+v0.7.4 | 10-10 | `9c8667b` | 5 冲突；bootstrap/time-body 并集；迁移模块上游直通（§2.3）；键 `.387-16163a91ab386e31` | 1681 |
-| v0.7.5+v0.7.6 | 10-11 | `28a33b7` | 2 冲突；上游自带 2 认领挂/红测试代修（坐标校验）；extractor 夹具 1000 未变；键 `.394` | 1701 |
+| v0.7.5+v0.7.6 | 10-11 | `28a33b7` | 2 冲突；上游自带 2 认领挂/红测试代修；嵌套 record 修复；键 `.395` | 1702 |
+
+> **审计更新（2026-10-11）**：`src/v3/extractor.js` 的 `excludedTags` 已补入 `record` 单数；嵌套 `<status><record>…</record></status>` 不再经父块 `plain` 文本进入时间读取，回归锁定于 `tests/v3-time-body.test.mjs`。§2.2 时间体条目中的该缺口描述仅保留为历史取证。

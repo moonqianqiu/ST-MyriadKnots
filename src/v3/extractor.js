@@ -1448,7 +1448,7 @@ export function inferCanonicalCurrentTime(canonicalContent, { allowOpeningFallba
   const add = (candidate, priority, depth = 0) => { if (candidate) candidates.push({ ...candidate, priority, depth }); };
   const isStatusName = name => /(?:^|[_-])status(?:$|[_-])/iu.test(name) || /^(?:statusbar|story_status)$/iu.test(name);
   const excluded = /^(?:chat_history|status_history|history|events?|timeline|records?|details|think|thinking|snow|reasoning|archive|log|due|deadline)$/iu;
-  const excludedTags = ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline'];
+  const excludedTags = ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'record', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline'];
   const blocks = readMemoryTagBlocks(safeSource).filter(block => block.closed
     && !excluded.test(block.name) && !block.ancestors.some(name => excluded.test(name)));
   for (const block of blocks) {

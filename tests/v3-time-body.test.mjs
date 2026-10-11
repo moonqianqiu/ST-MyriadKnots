@@ -348,6 +348,17 @@ test('剥壳投影排除名单行为守卫：名单内块（含 record 单数）
   }
 });
 
+test('嵌套 record 也不会经父状态块 plain 文本泄漏为当前时间', async () => {
+  const h = await harness({ count: 1 });
+  h.chat[0].mes = '<status><record>当前时间：2019年3月1日</record></status>阿岚停留。';
+  await h.seal();
+  const body = await h.body();
+  assert.equal(body.bodyFloors[0].observationTime.date, null);
+  assert.equal(body.bodyFloors[0].observationTime.clock, null);
+  const recent = await readRecentBodyStoryTimes(h.hostAdapter.snapshot(), { reachable: h.source, limit: 1 });
+  assert.equal(recent.length, 0);
+});
+
 test('补救路径：显式配置 keepTags=content 时，壳内正文与时钟恢复可读', async () => {
   const h = await harness({ count: 1, sanitizer: { keepTags: ['content'] } });
   h.chat[0].mes = '<content>2026年5月10日 14:30 阿岚继续调查。</content>';

@@ -21814,6 +21814,7 @@ function T_(e, { allowOpeningFallback: t = !0 } = {}) {
 		"event",
 		"timeline",
 		"records",
+		"record",
 		"details",
 		"think",
 		"thinking",
