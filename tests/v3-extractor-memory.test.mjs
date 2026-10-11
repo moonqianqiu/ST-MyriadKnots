@@ -3268,6 +3268,12 @@ test('生产式冷启动等待真实身份认领后只读一次完整图并恢�
     chat: structuredClone(seeded.context.chat),
     chatMetadata: structuredClone(seeded.context.chatMetadata),
   };
+  // 上游 v0.7.5 起 session.prepare 在认领前校验固定聊天坐标（characterName+avatar 缺一即抛
+  // V3_MESSAGE_ANCHOR_TARGET_INVALID），纯上游树本测试同样挂起（裸 await bindingStarted 无超时）；
+  // 本地补 name2 使坐标可计算，测试意图（认领挂起→释放→收敛）不变。
+  context.name2 = '冷启动测试人物';
+  context.characterAvatar = context.characterAvatar ?? 'character.png';
+  context.personaAvatar = context.personaAvatar ?? 'persona.png';
   const handlers = new Map();
   context.eventSource = { on(name, listener) { const values = handlers.get(name) ?? []; values.push(listener); handlers.set(name, values); } };
   const hostAdapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => context } } });

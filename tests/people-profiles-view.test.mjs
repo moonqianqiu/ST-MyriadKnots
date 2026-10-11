@@ -112,7 +112,9 @@ async function waitFor(predicate, message = '等待条件超时') {
 test('千人首次打开等待既有身份认领，成功后清除读取中且不重复认领', async () => {
   let release, claims = 0, refreshes = 0;
   const gate = new Promise(resolve => { release = resolve; });
-  const context = { characterId: 0, chatId: '新聊天', characters: [{ avatar: 'char.png' }], userAvatar: 'me.png', chatMetadata: { qianqianjie: { schemaVersion: 2, chatId: CHAT } }, async saveMetadata() {} };
+  // 上游 v0.7.5 起 session.prepare 在认领前校验固定聊天坐标（characterName 缺失即抛
+  // V3_MESSAGE_ANCHOR_TARGET_INVALID），补 character.name 适配新校验，测试意图不变。
+  const context = { characterId: 0, chatId: '新聊天', characters: [{ name: '冷启动人物', avatar: 'char.png' }], userAvatar: 'me.png', chatMetadata: { qianqianjie: { schemaVersion: 2, chatId: CHAT } }, async saveMetadata() {} };
   const session = createChatSession({ contextProvider: () => context, identityCoordinator: { async prepare() { claims += 1; await gate; return CHAT; } } });
   const pending = session.prepare();
   const h = runtimeHarness();
