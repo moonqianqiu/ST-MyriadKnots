@@ -238,6 +238,7 @@ test('通用状态行与独立场景头进入楼层和近期时钟，状态结�
 test('同父字段容器允许其他包装节点，非法状态日期不压住正文合法时间', async () => {
   for (const rawContent of [
     '<time_bar><section><date>11月14日</date><time>19:20</time></section><note>decorative label</note></time_bar>阿岚停留。',
+    // 正文须在首行：开口锚点只认位于文本最前的时间，状态块前置属既有限制下的不可读形态（与兜底删除无关）。
     '2026年9月29日 18:00 阿岚停留。\n<Status>[Time: 2026-13-44 | 19:30]</Status>',
   ]) {
     const h = await harness({ count: 1 });
@@ -279,6 +280,22 @@ test('正文开头裸时间从 canonical 读取；content 壳内裸日期不回�
   assert.equal(wrappedBody.bodyFloors[0].observationTime.date, null);
   assert.equal(wrappedBody.bodyFloors[0].observationTime.clock, null);
   assert.equal(wrapped.calls(), 0);
+});
+
+test('补救路径：显式配置 keepTags=content 时，壳内正文与时钟恢复可读', async () => {
+  const h = await harness({ count: 1, sanitizer: { keepTags: ['content'] } });
+  h.chat[0].mes = '<content>2026年5月10日 14:30 阿岚继续调查。</content>';
+  await h.seal();
+  const body = await h.body();
+  assert.equal(body.bodyFloors[0].content, '2026年5月10日 14:30 阿岚继续调查。');
+  assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
+  assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
+  const recent = await readRecentBodyStoryTimes(h.hostAdapter.snapshot(), {
+    reachable: h.source,
+    sanitizerOptions: { keepTags: ['content'] },
+    limit: 1,
+  });
+  assert.equal(recent.at(-1)?.observationTime.clock, '14:30');
 });
 
 test('同楼原文状态栏时间优先于 content 正文中的当前时间', async () => {
