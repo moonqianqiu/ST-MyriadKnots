@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHostAdapter } from '../src/v3/host-adapter.js';
+import { captureTargetChatDescriptor, createHostAdapter } from '../src/v3/host-adapter.js';
 import { createFoundationStore } from '../src/v3/foundation-store.js';
 import { createFoundationRuntime } from '../src/v3/foundation-runtime.js';
 import { createV3MemoryRuntime } from '../src/v3/memory-runtime.js';
@@ -15,6 +15,9 @@ import { createChatIdentityCoordinator, CHAT_IDENTITY_COLLECTION } from '../src/
 import { createChatSession } from '../src/chat-session.js';
 import { createPluginLifecycle } from '../src/plugin-lifecycle.js';
 import { deterministicUuid } from '../src/v3/foundation-domain.js';
+import { createVectorIndex, VECTOR_INDEX_ID } from '../src/v3/vector-index.js';
+import { projectVectorSources } from '../src/v3/vector-source.js';
+import { selectRecallMemories } from '../src/v3/recall-source.js';
 
 const SOURCE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NOW = '2026-09-05T00:00:00.000Z';
@@ -61,6 +64,40 @@ function context(hostChatId, qqjChatId, chat, characterAvatar = 'character.png')
 
 function identity(hostChatId, chatId, characterLocator = 'character.png') {
   return { hostChatId, chatId, characterLocator, personaLocator: 'persona.png' };
+}
+
+function targetChatApi(context, { afterSave = null, beforeGet = null, hasIntegrity = true } = {}) {
+  let header = { chat_metadata: structuredClone(context.chatMetadata) };
+  if (!hasIntegrity) delete header.chat_metadata.integrity;
+  let messages = structuredClone(context.chat);
+  let saves = 0;
+  return {
+    get saves() { return saves; },
+    get persistedHeader() { return structuredClone(header); },
+    reloadFromContext() {
+      header = { chat_metadata: structuredClone(context.chatMetadata) };
+      messages = structuredClone(context.chat);
+    },
+    async fetch(url, options = {}) {
+      if (url === '/api/chats/get') {
+        await beforeGet?.({ header, messages });
+        return { ok: true, async json() { return [{ ...structuredClone(header) }, ...structuredClone(messages)]; } };
+      }
+      assert.equal(url, '/api/chats/save');
+      const body = JSON.parse(options.body);
+      assert.equal(body.force, false);
+      assert.equal(body.ch_name, context.name2);
+      const currentIntegrity = header.chat_metadata?.integrity;
+      if (currentIntegrity !== undefined) assert.equal(body.chat[0]?.chat_metadata?.integrity, currentIntegrity, '宿主保存必须携带当前 integrity');
+      header = structuredClone(body.chat[0]);
+      messages = structuredClone(body.chat.slice(1));
+      saves += 1;
+      if (hasIntegrity) header.chat_metadata.integrity = `test-integrity-${saves}`;
+      else delete header.chat_metadata.integrity;
+      afterSave?.({ header, messages, saves });
+      return { ok: true, async json() { return hasIntegrity ? { integrity: header.chat_metadata.integrity } : {}; } };
+    },
+  };
 }
 
 async function waitFor(predicate, message) {
@@ -303,6 +340,280 @@ test('1000楼正式foundation图搬家保留完整冻结前缀并按B身份独�
   assert.equal((await targetStore.readReachable({ mode: 'runtime' })).floors.length, 1000);
 });
 
+test('输入快照后、固定目标首次读取前发生的人工作文修改按冲突保留', async () => {
+  const backend = backendHarness();
+  const sourceChat = [assistant('源楼 A'), user('继续 A'), assistant('源楼 B'), user('继续 B')];
+  const sourceContext = context('source-conflict', SOURCE, sourceChat);
+  const sourceIdentity = identity(sourceContext.chatId, SOURCE);
+  const hostAdapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => sourceContext } } });
+  const sourceStore = createFoundationStore({ client: backend.client, contextProvider: () => sourceIdentity });
+  const sourceRuntime = createFoundationRuntime({ hostAdapter, store: sourceStore, contextProvider: () => sourceContext,
+    now: () => new Date(NOW), newUuid: uuidFactory(), logger: { warn() {} } });
+  await sourceRuntime.start();
+  const source = await sourceStore.readReachable();
+  const targetHostChatId = 'target-conflict';
+  const targetChatId = await deterministicUuid(['qqj-chat-independent-v2', SOURCE, targetHostChatId, 'character.png']);
+  const targetContext = context(targetHostChatId, targetChatId, structuredClone(sourceChat));
+  const owner = { hostChatId: targetHostChatId, characterLocator: 'character.png', personaLocator: 'persona.png' };
+  backend.records.set(`${CHAT_IDENTITY_COLLECTION}/binding-${targetChatId}`, {
+    revision: 1,
+    data: { schemaVersion: 1, kind: 'qqj-chat-identity-binding', chatId: targetChatId, owner,
+      state: 'preparing', sourceChatId: SOURCE, createdAt: NOW, updatedAt: NOW },
+  });
+  let edited = false;
+  const targetApi = targetChatApi(targetContext, { beforeGet({ messages }) {
+    if (edited) return;
+    edited = true;
+    messages[0].mes = messages[0].swipes[0] = '输入捕获后的人工作文';
+  } });
+  const targetAdapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => targetContext } } });
+  const initializer = createChatBranchInitializer({ client: backend.client, hostAdapter: targetAdapter, now: () => new Date(NOW), fetchImpl: targetApi.fetch });
+  const coordinator = createChatIdentityCoordinator({ client: backend.client, now: () => new Date(NOW), initializeBranch: initializer });
+  const session = createChatSession({ contextProvider: () => targetContext, identityCoordinator: coordinator,
+    captureTaskInputs: ({ raw, host }) => ({ chat: structuredClone(raw.chat), chatMetadata: structuredClone(raw.chatMetadata),
+      target: captureTargetChatDescriptor({ context: raw, chat: raw.chat, chatId: host.hostChatId }, {
+        hostChatId: host.hostChatId, chatId: host.chatId, characterLocator: host.characterAvatar, personaLocator: host.personaAvatar,
+      }), sanitizerOptions: {} }) });
+  await assert.rejects(session.prepare(), error => error?.code === 'V3_BRANCH_TARGET_CHANGED');
+  assert.equal(targetApi.saves, 0, '人工作文冲突发生在固定目标写入之前');
+  assert.equal(backend.records.has(`chat-${targetChatId}/v3-root`), false);
+  assert.equal((await createFoundationStore({ client: backend.client, contextProvider: () => sourceIdentity }).readReachable()).floors.length, source.floors.length);
+});
+
+test('普通分支 prepare经native/Luker正式入口保存后继承前缀向量并可查询', async () => {
+  for (const hostKind of ['SillyTavern', 'Luker']) {
+    const backend = backendHarness();
+    const sourceChat = [user('开场'), assistant('前缀楼记录苹果饼的配方。'), user('继续前缀'), assistant('未来楼记录烘焙后的结果。'), user('未来楼之后')];
+    const sourceContext = context(`vector-source-${hostKind}`, SOURCE, sourceChat);
+    const sourceIdentity = identity(sourceContext.chatId, SOURCE);
+    const sourceAdapter = createHostAdapter({ globalRef: { [hostKind]: { getContext: () => sourceContext } } });
+    const sourceStore = createFoundationStore({ client: backend.client, contextProvider: () => sourceIdentity });
+    const sourceFoundation = createFoundationRuntime({ hostAdapter: sourceAdapter, store: sourceStore, contextProvider: () => sourceContext,
+      now: () => new Date(NOW), newUuid: uuidFactory(), logger: { warn() {} } });
+    assert.equal((await sourceFoundation.start()).status, 'ready');
+    const sourceMemory = createV3MemoryRuntime({ foundationRuntime: sourceFoundation, store: sourceStore, hostAdapter: sourceAdapter,
+      automationSettings: () => ({ enabled: false, batchSize: 1 }),
+      generateAnalysisTask: async () => ({ jsonData: { noMaterialChange: true } }),
+      generateUtilityTask: async options => options.systemPrompt === EXTRACTOR_SYSTEM_PROMPT
+        ? { jsonData: { summary: '前缀楼记载苹果饼配方。' } } : { jsonData: { noMaterialChange: true } },
+      now: () => new Date(NOW), newUuid: uuidFactory(), logger: { warn() {} } });
+    await sourceMemory.start();
+    const sourceMemoryFloors = sourceMemory.getState().floors;
+    for (const floor of sourceMemoryFloors) assert.ok(['running', 'complete'].includes(
+      (await sourceMemory.extractFloor(floor.floorId, { analyzeState: false })).status));
+    const sourceReachable = await sourceStore.readReachable({ mode: 'full' });
+    assert.equal(sourceReachable.floors.length, 2);
+    const selected = selectRecallMemories(sourceReachable);
+    const projection = await projectVectorSources(selected.activeMemories, selected.floors, { includeSummaries: false });
+    const sourceVectorSource = { status: 'ready', chatId: SOURCE, narrativeGeneration: sourceReachable.root.narrativeGeneration,
+      rawSources: projection.rawSources };
+    assert.equal(sourceVectorSource.rawSources.length, 2, '前后楼均有正式摘要/原文资格，分支只应选前缀');
+    let embedCalls = 0;
+    const api = { embed: async (_config, texts) => { embedCalls++; return texts.map(() => [1, 0]); } };
+    const vectorConfig = { url: 'https://vector.invalid/v1', model: 'neutral-test-embedding', key: 'test-only', dimensions: null };
+    const vectorIndex = createVectorIndex({ client: backend.client, api, configProvider: () => vectorConfig,
+      identityProvider: () => sourceIdentity, sourceProvider: async () => sourceVectorSource });
+    assert.equal((await vectorIndex.build()).status, 'ready');
+    assert.equal(embedCalls, 1);
+    const sourceBefore = chatRecords(backend.records, SOURCE);
+
+    const targetHostChatId = `vector-target-${hostKind}`;
+    const targetChatId = await deterministicUuid(['qqj-chat-independent-v2', SOURCE, targetHostChatId, 'character.png']);
+    const targetChat = structuredClone(sourceChat.slice(0, 3));
+    const targetContext = context(targetHostChatId, targetChatId, targetChat);
+    const targetOwner = { hostChatId: targetHostChatId, characterLocator: 'character.png', personaLocator: 'persona.png' };
+    backend.records.set(`${CHAT_IDENTITY_COLLECTION}/binding-${targetChatId}`, { revision: 1,
+      data: { schemaVersion: 1, kind: 'qqj-chat-identity-binding', chatId: targetChatId, owner: targetOwner,
+        state: 'preparing', sourceChatId: SOURCE, createdAt: NOW, updatedAt: NOW } });
+    let activeContext = targetContext;
+    const hostAdapter = createHostAdapter({ globalRef: { [hostKind]: { getContext: () => activeContext } } });
+    const targetApi = targetChatApi(targetContext);
+    const initializer = createChatBranchInitializer({ client: backend.client, hostAdapter, vectorRuntimeProvider: () => vectorIndex,
+      now: () => new Date(NOW), fetchImpl: targetApi.fetch });
+    const coordinator = createChatIdentityCoordinator({ client: backend.client, now: () => new Date(NOW), initializeBranch: initializer });
+    const session = createChatSession({ contextProvider: () => activeContext, identityCoordinator: coordinator,
+      captureTaskInputs: ({ raw, host }) => ({ chat: structuredClone(raw.chat), chatMetadata: structuredClone(raw.chatMetadata),
+        target: captureTargetChatDescriptor({ context: raw, chat: raw.chat, chatId: host.hostChatId, source: hostKind }, {
+          hostChatId: host.hostChatId, chatId: host.chatId, characterLocator: host.characterAvatar, personaLocator: host.personaAvatar,
+        }), sanitizerOptions: {} }) });
+    const prepared = await session.prepare();
+    assert.equal(prepared.status, 'ready');
+    const targetStore = createFoundationStore({ client: backend.client, contextProvider: () => identity(targetHostChatId, targetChatId) });
+    const targetReachable = await targetStore.readReachable({ mode: 'full' });
+    assert.equal(targetReachable.status, 'ready');
+    assert.equal(targetReachable.floors.length, 1);
+    assert.equal(targetApi.saves, 1, 'branch metadata通过实际目标保存合同持久化');
+    assert.equal(embedCalls, 1, '分支复制没有重新embedding');
+    const manifest = backend.records.get(`chat-${targetChatId}/${VECTOR_INDEX_ID}`)?.data;
+    assert.equal(manifest?.chatId, targetChatId);
+    assert.equal(manifest?.narrativeGeneration, targetReachable.root.narrativeGeneration);
+    const targetSelected = selectRecallMemories(targetReachable);
+    const targetProjection = await projectVectorSources(targetSelected.activeMemories, targetSelected.floors, { includeSummaries: false });
+    const targetVectorSource = { status: 'ready', chatId: targetChatId, narrativeGeneration: targetReachable.root.narrativeGeneration,
+      rawSources: targetProjection.rawSources };
+    const targetIndex = createVectorIndex({ client: backend.client, api, configProvider: () => vectorConfig,
+      identityProvider: () => identity(targetHostChatId, targetChatId), sourceProvider: async () => targetVectorSource });
+    const result = await targetIndex.query({ source: targetVectorSource, queryContext: { text: '苹果饼配方' } });
+    assert.deepEqual(result.candidates.map(candidate => candidate.witness.floorId), [targetReachable.floors[0].id]);
+    assert.equal(embedCalls, 2, 'B查询单独发送一次查询向量');
+    assert.equal(chatRecords(backend.records, SOURCE), sourceBefore, '复制和查询不改写源聊天索引/记忆');
+
+    const failedTargetHostId = `vector-copy-failure-${hostKind}`;
+    const failedTargetChatId = await deterministicUuid(['qqj-chat-independent-v2', SOURCE, failedTargetHostId, 'character.png']);
+    const failedTargetContext = context(failedTargetHostId, failedTargetChatId, structuredClone(sourceChat.slice(0, 3)));
+    const failedOwner = { hostChatId: failedTargetHostId, characterLocator: 'character.png', personaLocator: 'persona.png' };
+    backend.records.set(`${CHAT_IDENTITY_COLLECTION}/binding-${failedTargetChatId}`, { revision: 1,
+      data: { schemaVersion: 1, kind: 'qqj-chat-identity-binding', chatId: failedTargetChatId, owner: failedOwner,
+        state: 'preparing', sourceChatId: SOURCE, createdAt: NOW, updatedAt: NOW } });
+    const failedAdapter = createHostAdapter({ globalRef: { [hostKind]: { getContext: () => failedTargetContext } } });
+    const failedApi = targetChatApi(failedTargetContext);
+    const failedInitializer = createChatBranchInitializer({ client: backend.client, hostAdapter: failedAdapter,
+      vectorRuntimeProvider: () => ({ copyPrefix: async () => { throw new Error('simulated derived-cache failure'); } }),
+      now: () => new Date(NOW), fetchImpl: failedApi.fetch });
+    const failedSession = createChatSession({ contextProvider: () => failedTargetContext,
+      identityCoordinator: createChatIdentityCoordinator({ client: backend.client, now: () => new Date(NOW), initializeBranch: failedInitializer }),
+      captureTaskInputs: ({ raw, host }) => ({ chat: structuredClone(raw.chat), chatMetadata: structuredClone(raw.chatMetadata),
+        target: captureTargetChatDescriptor({ context: raw, chat: raw.chat, chatId: host.hostChatId, source: hostKind }, {
+          hostChatId: host.hostChatId, chatId: host.chatId, characterLocator: host.characterAvatar, personaLocator: host.personaAvatar,
+        }), sanitizerOptions: {} }) });
+    assert.equal((await failedSession.prepare()).status, 'ready', '派生缓存异常不阻断身份/分支完成');
+    assert.equal(backend.records.get(`${CHAT_IDENTITY_COLLECTION}/binding-${failedTargetChatId}`).data.state, 'ready');
+    assert.equal(backend.records.has(`chat-${failedTargetChatId}/${VECTOR_INDEX_ID}`), false);
+    session.dispose?.();
+  }
+});
+
+test('260楼旧 preparing 在第248楼时间倒退场景下经 native/Luker 正式初始化、保存并继续宿主写入', async () => {
+  const NEW_TIME = '2026-10-10T12:00:00.000Z';
+  const OLD_TIME = '2026-10-09T19:00:00.000Z';
+  for (const hostKind of ['SillyTavern', 'Luker']) {
+    const backend = backendHarness();
+    const sourceChat = [user('开场')];
+    for (let index = 1; index <= 247; index += 1) {
+      sourceChat.push(assistant(`第${index}楼的唯一正文 ${index}`), user(`第${index}楼之后`));
+    }
+    const sourceContext = context(`source-${hostKind}`, SOURCE, sourceChat);
+    const sourceIdentity = identity(sourceContext.chatId, SOURCE);
+    const sourceAdapter = createHostAdapter({ globalRef: { [hostKind]: { getContext: () => sourceContext } } });
+    const sourceStore = createFoundationStore({ client: backend.client, contextProvider: () => sourceIdentity });
+    let sourceClock = OLD_TIME;
+    const sourceRuntime = createFoundationRuntime({ hostAdapter: sourceAdapter, store: sourceStore, contextProvider: () => sourceContext,
+      now: () => new Date(sourceClock), newUuid: uuidFactory(), logger: { warn() {} } });
+    assert.equal((await sourceRuntime.start()).status, 'ready');
+    const first247 = await sourceStore.readReachable({ mode: 'full' });
+    assert.equal(first247.floors.length, 247);
+    assert.ok(first247.floors.every(floor => Date.parse(floor.createdAt) <= Date.parse(OLD_TIME)
+      && Date.parse(floor.updatedAt) <= Date.parse(OLD_TIME)), '前247楼在旧 preparing 时间内已实际建图');
+    sourceClock = NEW_TIME;
+    for (let index = 248; index <= 260; index += 1) {
+      sourceContext.chat.push(assistant(`第${index}楼的唯一正文 ${index}`), user(`第${index}楼之后`));
+    }
+    assert.equal((await sourceRuntime.refreshStatus()).status, 'ready');
+    const source = await sourceStore.readReachable({ mode: 'full' });
+    assert.equal(source.floors.length, 260);
+    assert.equal(source.floors[247].hostLocator.messageIndex, 495);
+    assert.ok(Date.parse(source.floors[246].createdAt) <= Date.parse(OLD_TIME));
+    assert.ok(Date.parse(source.floors[247].createdAt) > Date.parse(OLD_TIME), '第248楼必须晚于 preparing binding 17小时');
+    const sourceBefore = chatRecords(backend.records, SOURCE);
+
+    const targetHostChatId = `target-${hostKind}`;
+    const targetChatId = await deterministicUuid(['qqj-chat-independent-v2', SOURCE, targetHostChatId, 'character.png']);
+    const targetChat = structuredClone(sourceChat);
+    const targetContext = context(targetHostChatId, targetChatId, targetChat);
+    targetContext.chatMetadata.qianqianjie.extraOwnerField = `preserve-${hostKind}`;
+    if (hostKind === 'Luker') targetContext.chatMetadata.integrity = `initial-${hostKind}`;
+    const owner = { hostChatId: targetHostChatId, characterLocator: 'character.png', personaLocator: 'persona.png' };
+    backend.records.set(`${CHAT_IDENTITY_COLLECTION}/binding-${targetChatId}`, {
+      revision: 1,
+      data: { schemaVersion: 1, kind: 'qqj-chat-identity-binding', chatId: targetChatId, owner,
+        state: 'preparing', sourceChatId: SOURCE, createdAt: OLD_TIME, updatedAt: OLD_TIME },
+    });
+    let activeContext = targetContext;
+    const hostAdapter = createHostAdapter({ globalRef: { [hostKind]: { getContext: () => activeContext } } });
+    const targetApi = targetChatApi(targetContext, { hasIntegrity: hostKind === 'Luker' });
+    let enterTargetSave, releaseTargetSave;
+    const targetSaveEntered = new Promise(resolve => { enterTargetSave = resolve; });
+    const targetSaveReleased = new Promise(resolve => { releaseTargetSave = resolve; });
+    let targetSaveDelayed = false;
+    const fetchImpl = async (url, options = {}) => {
+      if (hostKind === 'SillyTavern' && url === '/api/chats/save' && !targetSaveDelayed) {
+        targetSaveDelayed = true;
+        enterTargetSave();
+        await targetSaveReleased;
+      }
+      return targetApi.fetch(url, options);
+    };
+    const initializeBranch = createChatBranchInitializer({ client: backend.client, hostAdapter, now: () => new Date(NEW_TIME), fetchImpl });
+    const coordinator = createChatIdentityCoordinator({ client: backend.client, now: () => new Date(NEW_TIME), initializeBranch });
+    const session = createChatSession({
+      contextProvider: () => activeContext,
+      identityCoordinator: coordinator,
+      captureTaskInputs: ({ raw, host }) => ({
+        chat: structuredClone(raw.chat),
+        chatMetadata: structuredClone(raw.chatMetadata),
+        target: captureTargetChatDescriptor({ context: raw, chat: raw.chat, chatId: host.hostChatId, source: hostKind }, {
+          hostChatId: host.hostChatId, chatId: host.chatId, characterLocator: host.characterAvatar, personaLocator: host.personaAvatar,
+        }),
+        sanitizerOptions: {},
+      }),
+    });
+
+    const firstPreparation = session.prepare();
+    let laterTargetId = null;
+    if (hostKind === 'SillyTavern') {
+      await targetSaveEntered;
+      laterTargetId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      const laterContext = context(`later-${hostKind}`, laterTargetId, [user('后来打开的聊天')]);
+      const laterOwner = { hostChatId: laterContext.chatId, characterLocator: 'character.png', personaLocator: 'persona.png' };
+      backend.records.set(`${CHAT_IDENTITY_COLLECTION}/binding-${laterTargetId}`, {
+        revision: 1,
+        data: { schemaVersion: 1, kind: 'qqj-chat-identity-binding', chatId: laterTargetId, owner: laterOwner,
+          state: 'ready', sourceChatId: null, createdAt: NEW_TIME, updatedAt: NEW_TIME },
+      });
+      activeContext = laterContext;
+      const aborts = [];
+      const lifecycle = createPluginLifecycle({ session, aborters: [{ abortAll: () => aborts.push('abort') }], getUi: () => null });
+      lifecycle.onChatChanged();
+      releaseTargetSave();
+    }
+    const prepared = await firstPreparation;
+    if (laterTargetId) {
+      assert.equal(prepared.identity.chatId, targetChatId, '迟到完成返回任务开始时固定的目标身份');
+      await waitFor(() => session.getState().status === 'ready' && session.getState().identity?.chatId === laterTargetId,
+        '后来打开聊天的页面身份准备未完成');
+      assert.deepEqual(activeContext.chatMetadata.qianqianjie, { schemaVersion: 2, chatId: laterTargetId }, '旧任务不能改写后来打开聊天的 metadata');
+      assert.equal(backend.records.has(`chat-${laterTargetId}/v3-root`), false, '旧任务结果不得改投后来聊天');
+    }
+    assert.equal(prepared.status, 'ready');
+    assert.equal(prepared.identity.chatId, targetChatId);
+    const inherited = await createFoundationStore({ client: backend.client, contextProvider: () => identity(targetHostChatId, targetChatId) }).readReachable({ mode: 'full' });
+    assert.equal(inherited.status, 'ready');
+    assert.equal(inherited.floors.length, 260);
+    assert.ok(inherited.root.indexManifest.floor.length >= 3, '260楼目标应产生多片 floorOrder 索引');
+    const clonedMiddle = inherited.floors[247], sourceMiddle = source.floors[247];
+    assert.equal(clonedMiddle.createdAt, sourceMiddle.createdAt, '源创建时间保留');
+    assert.equal(clonedMiddle.updatedAt, sourceMiddle.updatedAt, '17小时前的 preparing 时间不得让第248楼 updatedAt 倒退');
+    assert.ok(Date.parse(clonedMiddle.updatedAt) >= Date.parse(clonedMiddle.createdAt));
+    assert.equal(inherited.floors[247].content.canonicalFingerprint, source.floors[247].content.canonicalFingerprint);
+    assert.equal(chatRecords(backend.records, SOURCE), sourceBefore, '初始化没有改动源图');
+    assert.equal(targetApi.saves, 1);
+    assert.equal(targetContext.chatMetadata.qianqianjie.chatId, targetChatId);
+    assert.equal(targetContext.chatMetadata.qianqianjie.extraOwnerField, `preserve-${hostKind}`);
+    assert.equal(targetApi.persistedHeader.chat_metadata.qianqianjie.extraOwnerField, `preserve-${hostKind}`, '宿主存档保留QQJ metadata同级字段');
+    if (hostKind === 'SillyTavern') assert.equal(Object.hasOwn(targetContext.chatMetadata, 'integrity'), false, 'native无 integrity 字段的保存合同保持有效');
+    if (hostKind === 'Luker') {
+      assert.equal(targetContext.chatMetadata.integrity, 'test-integrity-1', '成功固定目标保存后同步宿主 integrity');
+      const nextSave = await targetApi.fetch('/api/chats/save', { method: 'POST', body: JSON.stringify({
+        ch_name: targetContext.name2, file_name: targetContext.chatId, avatar_url: 'character.png',
+        chat: [{ chat_metadata: structuredClone(targetContext.chatMetadata) }, ...structuredClone(targetContext.chat)], force: false,
+      }) });
+      assert.equal(nextSave.ok, true);
+      assert.equal(targetApi.saves, 2, '页面后续宿主保存携带新 integrity 后通过');
+    }
+    assert.equal((await createFoundationStore({ client: backend.client, contextProvider: () => identity(targetHostChatId, targetChatId) }).readReachable()).status, 'ready');
+  }
+});
+
 test('已保存摘要但CSE未齐的携带AI成为B真实活动楼并复用摘要，不回写冻结来源', async () => {
   const backend = backendHarness();
   const aChat = [user('原提问'), assistant('已完成摘要的旧回复'), user('等待续写')];
@@ -461,7 +772,7 @@ test('CHAT_CHANGED 初始化同角色副本时只继承实际前缀，保留摘�
   let peopleWritesStarted = 0;
   let saveChatCalls = 0;
   let readbackCalls = 0;
-  activeContext.saveChat = async () => { saveChatCalls += 1; return true; };
+  const targetApi = targetChatApi(activeContext);
   const branchClient = {
     async get(collection, key) { return backend.client.get(collection, key); },
     async put(collection, key, data, expectedRevision) {
@@ -502,12 +813,21 @@ test('CHAT_CHANGED 初始化同角色副本时只继承实际前缀，保留摘�
     client: branchClient,
     hostAdapter,
     now: () => new Date(NOW),
-    fetchImpl: async () => ({ ok: true, async json() {
-      readbackCalls += 1;
-      return branchReadbackAvailable
-        ? [{ chat_metadata: structuredClone(activeContext.chatMetadata) }, ...structuredClone(activeContext.chat)]
-        : [{ chat_metadata: structuredClone(activeContext.chatMetadata) }, ...activeContext.chat.map(message => ({ ...structuredClone(message), extra: {} }))];
-    } }),
+    fetchImpl: async (url, options = {}) => {
+      if (url === '/api/chats/save') {
+        saveChatCalls += 1;
+        return targetApi.fetch(url, options);
+      }
+      if (url === '/api/chats/get' && targetApi.saves) readbackCalls += 1;
+      if (url === '/api/chats/get' && targetApi.saves && !branchReadbackAvailable) return {
+        ok: true,
+        async json() {
+          const payload = await (await targetApi.fetch(url, options)).json();
+          return [payload[0], ...payload.slice(1).map(message => ({ ...message, extra: {} }))];
+        },
+      };
+      return targetApi.fetch(url, options);
+    },
   });
   const cloneSession = createChatSession({
     contextProvider: () => activeContext,
@@ -518,7 +838,8 @@ test('CHAT_CHANGED 初始化同角色副本时只继承实际前缀，保留摘�
       now: () => new Date(NOW),
     }),
   });
-  const lifecycle = createPluginLifecycle({ session: cloneSession, getUi: () => null, logger: { warn() {} } });
+  const lifecycleErrors = [];
+  const lifecycle = createPluginLifecycle({ session: cloneSession, getUi: () => null, logger: { warn: (...args) => lifecycleErrors.push(args) } });
   lifecycle.onChatChanged();
   await firstFailure;
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -559,8 +880,12 @@ test('CHAT_CHANGED 初始化同角色副本时只继承实际前缀，保留摘�
   assert.equal(readbackCalls, 1);
   assert.equal((await createFoundationStore({ client: backend.client, contextProvider: () => identity('复制聊天', preparedTargetId) }).readReachable()).status, 'ready', '消息保存失败前目标图已经按相同确定性 ID 就绪');
   branchReadbackAvailable = true;
+  if (!targetApi.saves) targetApi.reloadFromContext();
+  lifecycleErrors.length = 0;
   lifecycle.onChatChanged();
-  await waitFor(() => cloneSession.getState().status === 'ready', 'CHAT_CHANGED 重入未完成分支初始化');
+  await waitFor(() => cloneSession.getState().status === 'ready' || lifecycleErrors.length > 0,
+    `CHAT_CHANGED 重入未完成分支初始化（${cloneSession.getState().error?.code ?? cloneSession.getState().status}）`);
+  assert.equal(lifecycleErrors.length, 0, lifecycleErrors[0]?.[1]?.message ?? 'lifecycle retry failed');
   const prepared = cloneSession.getState();
   const targetChatId = prepared.identity.chatId;
   assert.equal(prepared.status, 'ready');
@@ -650,9 +975,10 @@ test('分支半成品无 root 且精确 marker 前缀已编辑时改用新目标
       return backend.client.put(collection, key, data, expectedRevision);
     },
   };
+  const targetApi = targetChatApi(activeContext);
   const initializeBranch = createChatBranchInitializer({
     client: branchClient, hostAdapter, now: () => new Date(NOW),
-    fetchImpl: async () => ({ ok: true, async json() { return [{ chat_metadata: structuredClone(activeContext.chatMetadata) }, ...structuredClone(activeContext.chat)]; } }),
+    fetchImpl: targetApi.fetch,
   });
   const freshTarget = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const coordinator = createChatIdentityCoordinator({
@@ -674,6 +1000,7 @@ test('分支半成品无 root 且精确 marker 前缀已编辑时改用新目标
   assert.ok(oldFloors.size >= 1, '首次失败必须真实留下至少一个 floor 半成品');
 
   activeContext.chat[0].mes = activeContext.chat[0].swipes[0] = '公共 A（分支内人工编辑）';
+  targetApi.reloadFromContext();
   failPartial = false;
   session.invalidate();
   const recovered = await session.prepare();
@@ -760,7 +1087,7 @@ test('源 root 不存在时仍清理副本携带的旧 marker/receipt，并以�
   const hostAdapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => activeContext } } });
   const initializer = createChatBranchInitializer({
     client: backend.client, hostAdapter, now: () => new Date(NOW),
-    fetchImpl: async () => ({ ok: true, async json() { return [{ chat_metadata: structuredClone(activeContext.chatMetadata) }, ...structuredClone(activeContext.chat)]; } }),
+    fetchImpl: targetChatApi(activeContext).fetch,
   });
   const coordinator = createChatIdentityCoordinator({ client: backend.client, listHostChats: async () => ['空源原聊天', '空源副本'], initializeBranch: initializer, now: () => new Date(NOW) });
   const session = createChatSession({ contextProvider: () => activeContext, identityCoordinator: coordinator });
