@@ -201,6 +201,22 @@ test('显式 keepTags 排除 content 时，时间读取不从原文重新捞回�
   assert.equal(recent.length, 0);
 });
 
+test('时间控制信号遵守 extraTags 隔离：排除块内状态栏与 QQJ 戳均不可读，块外仍可读', async () => {
+  const h = await harness({ count: 1, sanitizer: { extraTags: ['flashback'] } });
+  h.chat[0].mes = '<flashback><StatusBar>当前状态：2019年3月1日</StatusBar><!-- QQJ-start | date=2019年3月1日 | weekday=周五 | time=08:00 --><!-- QQJ-end | date=2019年3月1日 | weekday=周五 | time=09:00 --></flashback><StatusBar>当前状态：2026年5月10日 14:30</StatusBar>正文。';
+  await h.seal();
+  const body = await h.body();
+  assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
+  assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
+
+  const onlyExcluded = await harness({ count: 1, sanitizer: { extraTags: ['flashback'] } });
+  onlyExcluded.chat[0].mes = '<flashback><StatusBar>当前状态：2019年3月1日</StatusBar><!-- QQJ-start | date=2019年3月1日 | weekday=周五 | time=08:00 --><!-- QQJ-end | date=2019年3月1日 | weekday=周五 | time=09:00 --></flashback>正文。';
+  await onlyExcluded.seal();
+  const excludedBody = await onlyExcluded.body();
+  assert.equal(excludedBody.bodyFloors[0].observationTime.date, null);
+  assert.equal(excludedBody.bodyFloors[0].observationTime.clock, null);
+});
+
 test('通用状态行与独立场景头进入楼层和近期时钟，状态结束时间优先于场景开始时间', async () => {
   const cases = [
     ['<Ruan_Status><span>[Time: 2026-09-29 | Tuesday | 19:30 | cloudy]</span></Ruan_Status>阿岚停留。', '2026-09-29', '19:30'],

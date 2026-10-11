@@ -6,10 +6,22 @@ import { projectTime, projectTimeSource, storyTimes, timeFingerprint, timeBodyRe
 import { inferCanonicalCurrentTime } from './extractor.js';
 import { estimateRecallTokens } from './recall-selector.js';
 import { normalizeStoryClockReferenceTags } from '../story-clock.js';
-import { stripMemoryTagBlocks } from '../memory-content-sanitizer.js';
+import { extraOnlySanitizerOptions, sanitizeMemoryContent, stripMemoryTagBlocks } from '../memory-content-sanitizer.js';
 
-export async function clockContentFingerprint(rawContent, referenceTags = '') {
+function controlSource(rawContent, sanitizerOptions = {}) {
   const raw = String(rawContent ?? '');
+  const protectedValues = [];
+  const protectedRaw = raw.replace(/<!--[\s\S]*?-->|<\s*br\s*\/?>/giu, value => {
+    const token = `QQJ_CONTROL_TOKEN_${protectedValues.length}_END`;
+    protectedValues.push(value);
+    return token;
+  });
+  const extraOnly = sanitizeMemoryContent(protectedRaw, extraOnlySanitizerOptions(sanitizerOptions));
+  return extraOnly.replace(/QQJ_CONTROL_TOKEN_(\d+)_END/gu, (token, index) => protectedValues[Number(index)] ?? token);
+}
+
+export async function clockContentFingerprint(rawContent, referenceTags = '', sanitizerOptions = {}) {
+  const raw = controlSource(rawContent, sanitizerOptions);
   const clocks = [...raw.matchAll(/<!--\s*(?:QQJ|SDC|myknots)-(?:start|end)\b[\s\S]*?-->/giu)].map(match => match[0]);
   const configured = new Set([...normalizeStoryClockReferenceTags(referenceTags), 'bbs_start', 'bbs_end'].map(name => name.toLocaleLowerCase('en-US')));
   const open = new Map(), references = [];
@@ -71,10 +83,11 @@ function unwrapTagShellsForTime(source) {
   return out + cleaned.slice(cursor);
 }
 
-function currentBodyClock(rawContent, canonicalContent, referenceTags, calendar = null) {
-  const timestamp = resolveStoryClock(rawContent, referenceTags, calendar);
+function currentBodyClock(rawContent, canonicalContent, referenceTags, sanitizerOptions = {}, calendar = null) {
+  const source = controlSource(rawContent, sanitizerOptions);
+  const timestamp = resolveStoryClock(source, referenceTags, calendar);
   if (timestamp && timestamp.status !== 'incomplete') return timestamp;
-  const statusSource = stripMemoryTagBlocks(rawContent, 'content');
+  const statusSource = stripMemoryTagBlocks(source, 'content');
   const status = inferCanonicalCurrentTime(statusSource, { allowOpeningFallback: false });
   if (status?.kind === 'ambiguous') return Object.freeze({ status: 'ambiguous', source: 'status', signature: status.signature ?? 'ambiguous-status-time' });
   if (status?.text) return Object.freeze({ status: 'available', source: 'status', text: status.text, signature: JSON.stringify([status.kind, status.text]) });
@@ -122,7 +135,7 @@ export async function readRecentBodyStoryTimes(host, { reachable = null, sanitiz
       reliable.push({ messageIndex, floorId, observationTime, manual: true });
       continue;
     }
-    const clock = currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, calendar);
+    const clock = currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, sanitizerOptions, calendar);
     if (!clock) continue;
     if (clock.status === 'ambiguous') {
       previous = null;
@@ -188,9 +201,9 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     const visible = message && message.is_system !== true && message.is_hidden !== true && message.hidden !== true;
     const previous = visible ? previousVisible : previousHistory;
     const previousSource = visible ? previousVisibleSource : previousHistorySource;
-    const clock = currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, calendar);
+    const clock = currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, sanitizerOptions, calendar);
     // 历法改变日期可计算性，但不能改变旧正文读回的来源见证。
-    const sourceClock = calendar ? currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags) : clock;
+    const sourceClock = calendar ? currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, sanitizerOptions) : clock;
     const sourceRaw = sourceClock?.text ?? '';
     const raw = clock?.text ?? '';
     const manual = manualTime(match?.floor.id);
@@ -206,7 +219,7 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     const timeSourceFingerprint = await timeFingerprint(manual ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : sourceTime.raw]
       : sourceClock?.status === 'ambiguous' ? ['ambiguous-body-time', sourceClock.signature]
         : sourceRaw ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : sourceRaw] : ['no-body-time']);
-    const clockFingerprint = await clockContentFingerprint(candidate.rawContent, storyClockReferenceTags);
+    const clockFingerprint = await clockContentFingerprint(candidate.rawContent, storyClockReferenceTags, sanitizerOptions);
     const body = { stable: Boolean(candidate.stabilityProof), timeSourceKind: manual ? 'manual' : raw || ambiguous ? 'body' : 'unknown', timeSourceFingerprint, floorId: match?.floor.id ?? null, assistantSeq: candidate.assistantSeq, canonicalFingerprint: candidate.canonicalFingerprint,
       rawFingerprint: candidate.rawFingerprint, clockContentFingerprint: clockFingerprint, rawContent: candidate.rawContent, hostLocator: candidate.hostLocator, content: candidate.canonicalContent, observationTime: time };
     bodies.push(body);
