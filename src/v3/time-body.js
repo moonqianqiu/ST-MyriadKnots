@@ -6,7 +6,7 @@ import { projectTime, projectTimeSource, storyTimes, timeFingerprint, timeBodyRe
 import { inferCanonicalCurrentTime } from './extractor.js';
 import { estimateRecallTokens } from './recall-selector.js';
 import { normalizeStoryClockReferenceTags } from '../story-clock.js';
-import { sanitizeMemoryContent, stripMemoryTagBlocks } from '../memory-content-sanitizer.js';
+import { stripMemoryTagBlocks } from '../memory-content-sanitizer.js';
 
 export async function clockContentFingerprint(rawContent, referenceTags = '') {
   const raw = String(rawContent ?? '');
@@ -36,11 +36,7 @@ function currentBodyClock(rawContent, canonicalContent, referenceTags, calendar 
   const status = inferCanonicalCurrentTime(statusSource, { allowOpeningFallback: false });
   if (status?.kind === 'ambiguous') return Object.freeze({ status: 'ambiguous', source: 'status', signature: status.signature ?? 'ambiguous-status-time' });
   if (status?.text) return Object.freeze({ status: 'available', source: 'status', text: status.text, signature: JSON.stringify([status.kind, status.text]) });
-  // 本地 M0 直通合同下 canonicalContent 保留 <content> 等标签壳，时间提取的标签门禁会拒绝；
-  // 此时追加内容视图探测（与上方状态路径及上游 v0.5.9 时间链路硬编码 'content' 的口径一致）。
-  // 仅在用户 canonical 无果时兜底：已显式配置 keepTags 的用户行为不变；ambiguous 结果不触发兜底。
-  const content = inferCanonicalCurrentTime(canonicalContent)
-    ?? inferCanonicalCurrentTime(sanitizeMemoryContent(rawContent, { keepTags: 'content' }));
+  const content = inferCanonicalCurrentTime(canonicalContent);
   if (content?.text) return Object.freeze({ status: 'available', source: 'content', text: content.text, signature: JSON.stringify([content.kind, content.text]) });
   return timestamp?.status === 'incomplete' ? null : timestamp;
 }

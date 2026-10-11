@@ -186,6 +186,21 @@ test('状态栏在清洗前从目标 AI 楼原文进入时间推演', async () =
   assert.equal(source.bodyFloors[0].observationTime.clock, '14:30');
 });
 
+test('显式 keepTags 排除 content 时，时间读取不从原文重新捞回被排除内容', async () => {
+  const h = await harness({ count: 1, sanitizer: { keepTags: ['keep'] } });
+  h.chat[0].mes = '<keep>正文</keep><content>当前时间：2026年5月10日</content>';
+  await h.seal();
+  const source = await h.body();
+  assert.equal(source.bodyFloors[0].content, '正文');
+  assert.equal(source.bodyFloors[0].observationTime.date, null);
+  const recent = await readRecentBodyStoryTimes(h.hostAdapter.snapshot(), {
+    reachable: h.source,
+    sanitizerOptions: { keepTags: ['keep'] },
+    limit: 1,
+  });
+  assert.equal(recent.length, 0);
+});
+
 test('通用状态行与独立场景头进入楼层和近期时钟，状态结束时间优先于场景开始时间', async () => {
   const cases = [
     ['<Ruan_Status><span>[Time: 2026-09-29 | Tuesday | 19:30 | cloudy]</span></Ruan_Status>阿岚停留。', '2026-09-29', '19:30'],
@@ -223,7 +238,7 @@ test('通用状态行与独立场景头进入楼层和近期时钟，状态结�
 test('同父字段容器允许其他包装节点，非法状态日期不压住正文合法时间', async () => {
   for (const rawContent of [
     '<time_bar><section><date>11月14日</date><time>19:20</time></section><note>decorative label</note></time_bar>阿岚停留。',
-    '<Status>[Time: 2026-13-44 | 19:30]</Status><content>2026年9月29日 18:00 阿岚停留。</content>',
+    '2026年9月29日 18:00 阿岚停留。\n<Status>[Time: 2026-13-44 | 19:30]</Status>',
   ]) {
     const h = await harness({ count: 1 });
     h.chat[0].mes = rawContent;
@@ -244,23 +259,26 @@ test('同父字段容器允许其他包装节点，非法状态日期不压住�
   }
 });
 
-test('raw无可用戳或状态时才从清洗后的正文开头回退时间', async () => {
-  for (const rawContent of [
-    '<content>2026年5月10日 14:30 阿岚继续调查。</content>',
-    '<!-- SDC-start | date=2026年5月9日 | time=08:00 -->2026年5月10日 14:30 阿岚继续调查。',
-  ]) {
-    const h = await harness({ count: 1 });
-    h.chat[0].mes = rawContent;
-    await h.seal();
-    const body = await h.body();
-    assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
-    assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
-    const context = await h.runtime.currentStoryContext({ status: 'ready', chatId: CHAT, narrativeGeneration: 'gen', headCheckpointId: 'head' });
-    assert.equal(context.currentTime.date, '2026-05-10');
-    assert.equal(context.currentTime.clock, '14:30');
-    assert.equal(context.recentStoryTimes.at(-1).clock, '14:30');
-    assert.equal(h.calls(), 0);
-  }
+test('正文开头裸时间从 canonical 读取；content 壳内裸日期不回读原文', async () => {
+  const h = await harness({ count: 1 });
+  h.chat[0].mes = '<!-- SDC-start | date=2026年5月9日 | time=08:00 -->2026年5月10日 14:30 阿岚继续调查。';
+  await h.seal();
+  const body = await h.body();
+  assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
+  assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
+  const context = await h.runtime.currentStoryContext({ status: 'ready', chatId: CHAT, narrativeGeneration: 'gen', headCheckpointId: 'head' });
+  assert.equal(context.currentTime.date, '2026-05-10');
+  assert.equal(context.currentTime.clock, '14:30');
+  assert.equal(context.recentStoryTimes.at(-1).clock, '14:30');
+  assert.equal(h.calls(), 0);
+
+  const wrapped = await harness({ count: 1 });
+  wrapped.chat[0].mes = '<content>2026年5月10日 14:30 阿岚继续调查。</content>';
+  await wrapped.seal();
+  const wrappedBody = await wrapped.body();
+  assert.equal(wrappedBody.bodyFloors[0].observationTime.date, null);
+  assert.equal(wrappedBody.bodyFloors[0].observationTime.clock, null);
+  assert.equal(wrapped.calls(), 0);
 });
 
 test('同楼原文状态栏时间优先于 content 正文中的当前时间', async () => {

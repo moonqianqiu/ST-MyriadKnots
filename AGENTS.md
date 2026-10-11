@@ -42,7 +42,7 @@
 >   正交性备忘：上游千事删除撤回（`qianshiDeletionProvider`/`withoutDeletedQianshi` 冻结回执临时撤回，不重跑模型不重签）与三增强正交；witness 赋值在密封**前**，本地重对齐调 `receiptMaterial` 时 witness 尚未定义；冻结复用路径本就不校验指纹，均自洽。
 >   **教训（v0.6.8 合并损坏实录）**：定义与使用分处两个被上游重写的区域时，使用块自动幸存、定义块可能被吞（运行时 `ReferenceError`、v3-recall 大面积 error）——用「合并树 vs 纯上游 diff」定位残余差异快速归因，勿据单侧绿误判。
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与绑定种类 `'locatorEquivalent'`——弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖」的语义冲突；私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `readTimeBody` 传入。
-> - `src/v3/time-body.js`：`currentBodyClock` 加法式内容视图兜底（canonical 探测返回 null 时以 `sanitizeMemoryContent(rawContent, { keepTags: 'content' })` 再探；用户显式配置 keepTags 时行为不变）；`readTimeBody` 签名并集 `{ sanitizerOptions = {}, storyClockReferenceTags = '', calendar = null }`（上游故事历法 `calendar` 与本地兜底正交）→ `tests/v3-time-body.test.mjs`。
+> - `src/v3/time-body.js`：`currentBodyClock` 已回归与上游逐字一致（2026-10-11 定案删除本地 content 兜底：本 fork 正文无 `<content>` 包裹惯例，带标签特殊块由用户在 extraTags 声明排除；时间读取只信按用户 sanitizerOptions 生成的 canonical 视图，被排除块构造上不可读）。本地残留仅 `readTimeBody` 向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）→ `tests/v3-time-body.test.mjs`。
 > - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`：须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回，故 `state.chatId`=目标任务 ≠ 显示聊天；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
 > - `src/ui/help-guide.js`：本地仅改设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义），上游高频重写本文件文案——裁决：**上游新增段落全收 + 包裹符段保持本地**（上游侧该段仍是旧的 `[[...]]` 专用描述，勿取上游侧）。
 > - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，四者都是「纯函数按输入记忆化 / 只依赖 `context` 的常量上提」，判定输入一字未动。上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
@@ -133,7 +133,7 @@
    ```
 
    *标准*：11/11 全通过（前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1681** = 上游 v0.7.4 树 + 本地守卫；实测约 75s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1682** = 上游 v0.7.4 树 + 本地守卫；实测约 75s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -142,7 +142,7 @@
 ## 5. 当前仓库状态底数（基线备忘）
 
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.4`（提交 `e4027f9`，含 v0.7.3 一键聊天记忆迁移）。本次合并提交 `9c8667b`，其第一父为合并前本地基线 `76f16bd`；
-- **产物版本**：`manifest.json` 版本号 `0.7.4`（含 `author: "atonal519"`），缓存键 `20261010.387-16163a91ab386e31`（哈希与真实 bundle 一致）；
+- **产物版本**：`manifest.json` 版本号 `0.7.4`（含 `author: "atonal519"`），缓存键 `20261011.389-000eb5efb3dbe467`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 

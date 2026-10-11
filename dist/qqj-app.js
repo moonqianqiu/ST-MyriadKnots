@@ -34784,7 +34784,7 @@ function BC(e, t, n, r = null) {
 		text: a.text,
 		signature: JSON.stringify([a.kind, a.text])
 	});
-	let o = S_(t) ?? S_(se(e, { keepTags: "content" }));
+	let o = S_(t);
 	return o?.text ? Object.freeze({
 		status: "available",
 		source: "content",
