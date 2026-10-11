@@ -260,26 +260,41 @@ test('同父字段容器允许其他包装节点，非法状态日期不压住�
   }
 });
 
-test('正文开头裸时间从 canonical 读取；content 壳内裸日期不回读原文', async () => {
-  const h = await harness({ count: 1 });
-  h.chat[0].mes = '<!-- SDC-start | date=2026年5月9日 | time=08:00 -->2026年5月10日 14:30 阿岚继续调查。';
-  await h.seal();
-  const body = await h.body();
-  assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
-  assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
-  const context = await h.runtime.currentStoryContext({ status: 'ready', chatId: CHAT, narrativeGeneration: 'gen', headCheckpointId: 'head' });
-  assert.equal(context.currentTime.date, '2026-05-10');
-  assert.equal(context.currentTime.clock, '14:30');
-  assert.equal(context.recentStoryTimes.at(-1).clock, '14:30');
-  assert.equal(h.calls(), 0);
+test('正文开头裸时间：canonical 直读，content 壳内裸日期由剥壳投影揭示', async () => {
+  for (const rawContent of [
+    '<!-- SDC-start | date=2026年5月9日 | time=08:00 -->2026年5月10日 14:30 阿岚继续调查。',
+    '<content>2026年5月10日 14:30 阿岚继续调查。</content>',
+  ]) {
+    const h = await harness({ count: 1 });
+    h.chat[0].mes = rawContent;
+    await h.seal();
+    const body = await h.body();
+    assert.equal(body.bodyFloors[0].observationTime.date, '2026-05-10');
+    assert.equal(body.bodyFloors[0].observationTime.clock, '14:30');
+    const context = await h.runtime.currentStoryContext({ status: 'ready', chatId: CHAT, narrativeGeneration: 'gen', headCheckpointId: 'head' });
+    assert.equal(context.currentTime.date, '2026-05-10');
+    assert.equal(context.currentTime.clock, '14:30');
+    assert.equal(context.recentStoryTimes.at(-1).clock, '14:30');
+    assert.equal(h.calls(), 0);
+  }
+});
 
-  const wrapped = await harness({ count: 1 });
-  wrapped.chat[0].mes = '<content>2026年5月10日 14:30 阿岚继续调查。</content>';
-  await wrapped.seal();
-  const wrappedBody = await wrapped.body();
-  assert.equal(wrappedBody.bodyFloors[0].observationTime.date, null);
-  assert.equal(wrappedBody.bodyFloors[0].observationTime.clock, null);
-  assert.equal(wrapped.calls(), 0);
+test('剥壳投影：奇怪包裹壳内裸日期零配置可读，排除块整块移除，歧义不落值', async () => {
+  const cases = [
+    ['<正文>2026年5月10日，晴。阿岚停留。</正文>', '2026-05-10'],
+    ['<正文><div>2026年5月10日，晴。阿岚停留。</div></正文>', '2026-05-10'],
+    ['<正文 data-x="a>b">2026年5月10日，晴。阿岚停留。</正文>', '2026-05-10'],
+    ['<think>2019年3月1日，那场大火。</think>2026年5月10日，晴。阿岚停留。', '2026-05-10'],
+    ['<闪回>2019年3月1日</闪回>2026年5月10日，晴。阿岚停留。', null],
+    ['<think>2019年3月1日，那场大火。</think>', null],
+  ];
+  for (const [rawContent, expected] of cases) {
+    const h = await harness({ count: 1 });
+    h.chat[0].mes = rawContent;
+    await h.seal();
+    const body = await h.body();
+    assert.equal(body.bodyFloors[0].observationTime.date, expected, rawContent);
+  }
 });
 
 test('补救路径：显式配置 keepTags=content 时，壳内正文与时钟恢复可读', async () => {

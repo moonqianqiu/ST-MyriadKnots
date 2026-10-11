@@ -29,6 +29,46 @@ export async function clockContentFingerprint(rawContent, referenceTags = '') {
   return timeFingerprint([clocks, references]);
 }
 
+// 本地剥壳投影（时间专用）：canonical 结构化读取无果时，对 canonical 同文剥掉标签壳再读一次。
+// 排除名单须随 extractor.js inferCanonicalCurrentTime 的 excludedTags 同步——think/history 等
+// 平台惯例块整块移除（思维链时间戳不得揭示为当前时间），其余闭合标签块只剥壳留内文。
+const TIME_EXCLUDED_TAGS = ['chat_history', 'status_history', 'history', 'events', 'event', 'timeline', 'records', 'details', 'think', 'thinking', 'snow', 'reasoning', 'archive', 'log', 'due', 'deadline'];
+const TIME_EXCLUDED_TAG_SET = new Set(TIME_EXCLUDED_TAGS);
+const TIME_TAG_TOKEN = /<(\/?)([\p{L}][\p{L}\p{N}_-]*~?)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+
+function unwrapTagShellsForTime(source) {
+  const original = String(source ?? '');
+  const commentStripped = original.replace(/<!--[\s\S]*?-->/gu, ' ');
+  const cleaned = stripMemoryTagBlocks(commentStripped, TIME_EXCLUDED_TAGS);
+  const spans = [];
+  const open = new Map();
+  for (const token of cleaned.matchAll(TIME_TAG_TOKEN)) {
+    const key = token[2].toLocaleLowerCase('en-US');
+    if (TIME_EXCLUDED_TAG_SET.has(key)) continue;
+    if (token[1] === '/') {
+      const openSpan = open.get(key)?.pop();
+      if (openSpan) spans.push(openSpan, [token.index, token.index + token[0].length]);
+    } else if (!/\/\s*>$/u.test(token[0])) {
+      const stack = open.get(key) ?? [];
+      stack.push([token.index, token.index + token[0].length]);
+      open.set(key, stack);
+    }
+  }
+  // null 仅表示投影与 canonical 完全相同（无排除块移除、无壳可剥）；排除块移除本身
+  // 已可能改变文本（如 think 块整块消失），此时即使无壳可剥也须返回投影供重读。
+  if (!spans.length) return cleaned === commentStripped ? null : cleaned;
+  spans.sort((left, right) => left[0] - right[0]);
+  let out = '', cursor = 0;
+  // 移除的壳以空格占位（与 stripMemoryTagBlocks 同惯例）：防止剥壳后相邻文本把两个日期
+  // 粘成一段（「…日2026年」接缝会让后一个日期因词边界规则失配，只剩噪声日期可读）。
+  for (const [start, end] of spans) {
+    if (start < cursor) continue;
+    out += cleaned.slice(cursor, start) + ' ';
+    cursor = end;
+  }
+  return out + cleaned.slice(cursor);
+}
+
 function currentBodyClock(rawContent, canonicalContent, referenceTags, calendar = null) {
   const timestamp = resolveStoryClock(rawContent, referenceTags, calendar);
   if (timestamp && timestamp.status !== 'incomplete') return timestamp;
@@ -36,7 +76,13 @@ function currentBodyClock(rawContent, canonicalContent, referenceTags, calendar 
   const status = inferCanonicalCurrentTime(statusSource, { allowOpeningFallback: false });
   if (status?.kind === 'ambiguous') return Object.freeze({ status: 'ambiguous', source: 'status', signature: status.signature ?? 'ambiguous-status-time' });
   if (status?.text) return Object.freeze({ status: 'available', source: 'status', text: status.text, signature: JSON.stringify([status.kind, status.text]) });
-  const content = inferCanonicalCurrentTime(canonicalContent);
+  let content = inferCanonicalCurrentTime(canonicalContent);
+  // 剥壳投影不是第二真相源：它是 canonical 的换视角投影（不碰原文），显式配置排除的块
+  // 构造上不在 canonical 内，故无需门禁；结构化解释（上方 canonical 读取）永远优先。
+  if (!content) {
+    const projected = unwrapTagShellsForTime(canonicalContent);
+    if (projected !== null) content = inferCanonicalCurrentTime(projected);
+  }
   if (content?.text) return Object.freeze({ status: 'available', source: 'content', text: content.text, signature: JSON.stringify([content.kind, content.text]) });
   return timestamp?.status === 'incomplete' ? null : timestamp;
 }
