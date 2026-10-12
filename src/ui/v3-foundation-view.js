@@ -199,6 +199,13 @@ function errorDiagnostic(value, sourceKnown = true) {
   }
   return result;
 }
+function preparationErrorFields(value) {
+  if (!value || typeof value !== 'object') return {};
+  const fields = {};
+  if (typeof value.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,79}$/u.test(value.name)) fields.name = value.name;
+  if (Number.isSafeInteger(value.code) || typeof value.code === 'string' && /^(?:(?:QQJ|V3|CHAT_SESSION|QIANQIANJIE|QIANSHI)_[A-Z0-9_]{1,80}|BACKEND_TIMEOUT)$/u.test(value.code)) fields.code = value.code;
+  return fields;
+}
 function automationErrorDiagnostic(value, sourceKnown = true) {
   const result = errorDiagnostic(value, sourceKnown);
   if (result.present !== true) return result;
@@ -246,7 +253,7 @@ const searchSnippet = (value, query, limit = 110) => {
   return `${start > 0 ? '…' : ''}${source.slice(start, end).replace(/\s+/gu, ' ').trim()}${end < source.length ? '…' : ''}`;
 };
 
-export function createV3FoundationView({ runtime, recallRuntime = null, vectorRuntime = null, peopleRuntime = null, timeRuntime = null, memoryManagement = null, sessionStateProvider = null, backendDiagnosticProvider = null, pluginVersion = 'unknown', uiDiagnosticProvider = null, documentRef = globalThis.document, navigatorRef = globalThis.navigator, confirmImpl = options => globalThis.confirm?.(typeof options === 'string' ? options : `${options?.title ?? '请确认'}\n\n${options?.body ?? ''}`) === true, chooseImpl = null, infoImpl = () => Promise.resolve(true), customImpl = null } = {}) {
+export function createV3FoundationView({ runtime, recallRuntime = null, vectorRuntime = null, peopleRuntime = null, timeRuntime = null, memoryManagement = null, sessionStateProvider = null, backendDiagnosticProvider = null, pluginDiagnosticProvider = null, pluginVersion = 'unknown', uiDiagnosticProvider = null, documentRef = globalThis.document, navigatorRef = globalThis.navigator, confirmImpl = options => globalThis.confirm?.(typeof options === 'string' ? options : `${options?.title ?? '请确认'}\n\n${options?.body ?? ''}`) === true, chooseImpl = null, infoImpl = () => Promise.resolve(true), customImpl = null } = {}) {
   if (!runtime || ['getState', 'refreshStatus', 'confirmLatest'].some(name => typeof runtime[name] !== 'function')) throw new TypeError('V3 foundation view runtime 无效');
   if (recallRuntime && typeof recallRuntime.getState !== 'function') throw new TypeError('V3 recall view runtime 无效');
   if (peopleRuntime && typeof peopleRuntime.getState !== 'function') throw new TypeError('V3 people workspace runtime 无效');
@@ -437,6 +444,12 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
   const stateDiagnostic = () => {
     const memory = readDiagnosticState(() => runtime.getState());
     const identity = readDiagnosticState(sessionStateProvider);
+    const hasPluginDiagnosticProvider = typeof pluginDiagnosticProvider === 'function';
+    let pluginDiagnostic = null, pluginDiagnosticReadFailed = false;
+    if (hasPluginDiagnosticProvider) {
+      try { pluginDiagnostic = pluginDiagnosticProvider(); }
+      catch { pluginDiagnosticReadFailed = true; }
+    }
     const recall = readDiagnosticState(() => recallRuntime?.getState?.());
     const vector = readDiagnosticState(() => vectorRuntime?.getState?.());
     const management = readDiagnosticState(() => memoryManagement?.getState?.());
@@ -451,7 +464,19 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         status: identityKnown ? enumDiagnostic(identity.status, DIAGNOSTIC_STATUS) : 'unknown',
         identityPresent: identityKnown ? Boolean(identity.identity) : 'unknown',
         error: errorDiagnostic(identity?.error, identityKnown),
+        preparationFailure: (() => {
+          const failure = identity?.preparationFailure;
+          if (!failure) return { present: identityKnown ? false : 'unknown' };
+          return { present: true, ...errorDiagnostic(failure, true), ...preparationErrorFields(failure), prepareStep: enumDiagnostic(failure.prepareStep, DIAGNOSTIC_PREPARE_STEP), detail: AUTOMATION_DETAILS.has(failure.detail) ? failure.detail : null, location: typeof failure.location === 'string' && /^(?:src\/[A-Za-z0-9_./-]+\.js|index\.js|dist\/qqj-app\.js):[1-9]\d{0,6}:[1-9]\d{0,6}$/u.test(failure.location) ? failure.location : null };
+        })(),
       },
+      pluginLifecycle: (() => {
+        if (!hasPluginDiagnosticProvider || pluginDiagnosticReadFailed) return { phase: 'unknown', failure: { present: 'unknown' } };
+        if (!pluginDiagnostic) return { phase: 'unknown', failure: { present: false } };
+        const failure = pluginDiagnostic.failure;
+        if (!failure) return { phase: enumDiagnostic(pluginDiagnostic.phase, new Set(['settingsSave', 'pluginEnable', 'startup', 'identityPrepare'])), failure: { present: false } };
+        return { phase: enumDiagnostic(pluginDiagnostic.phase, new Set(['settingsSave', 'pluginEnable', 'startup', 'identityPrepare'])), failure: { present: true, ...errorDiagnostic(failure, true), ...preparationErrorFields(failure), prepareStep: enumDiagnostic(failure.prepareStep, DIAGNOSTIC_PREPARE_STEP), detail: AUTOMATION_DETAILS.has(failure.detail) ? failure.detail : null, location: typeof failure.location === 'string' && /^(?:src\/[A-Za-z0-9_./-]+\.js|index\.js|dist\/qqj-app\.js):[1-9]\d{0,6}:[1-9]\d{0,6}$/u.test(failure.location) ? failure.location : null } };
+      })(),
       foundation: {
         status: enumDiagnostic(memory?.status, DIAGNOSTIC_STATUS),
         foundationStatus: enumDiagnostic(memory?.foundationStatus, DIAGNOSTIC_STATUS),
@@ -1439,16 +1464,20 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
 
   function renderRecallDetails(state = recallState) {
     const drawer = setDetailsState(element('details', 'qqj-management-drawer'), 'recall-details', false), record = state?.lastRecall ?? null, status = state?.recallStatus ?? 'idle';
-    const recallStatus = record?.legacyReadOnly ? '旧版只读记录 · 不代表本轮已注入' : record?.restoredReceipt ? '聊天记录中的回执 · 恢复显示' : statusCopy(status);
+    const terminationStatus = record?.terminationEvent === 'GENERATION_STOPPED' ? '召回已停止'
+      : record?.terminationEvent === 'GENERATION_ENDED' ? '生成已结束，召回未完成'
+        : record?.status === 'stale' && record?.skipReasons?.includes('stopped') ? '召回已停止' : null;
+    const recallStatus = record?.legacyReadOnly ? '旧版只读记录 · 不代表本轮已注入' : record?.restoredReceipt ? '聊天记录中的回执 · 恢复显示' : terminationStatus ?? statusCopy(status);
     const summary = element('summary', 'qqj-section-summary'); summary.append(element('strong', '', record?.restoredReceipt ? '最近一次召回结果' : '最近召回回执'), element('span', 'v3-memory-status', recallStatus)); drawer.append(summary);
     const body = element('div', 'qqj-management-drawer-body'); if (receiptFeedback) body.append(element('p', 'v3-foundation-feedback error', receiptFeedback));
     if (!record) { body.append(element('p', 'settings-hint', state?.activeRecall ? `正在处理 ${state.activeRecall.generationType} · ${state.activeRecall.phase}` : '下一次正文生成后，这里会保留最近一次召回结果。')); drawer.append(body); return drawer; }
     const coverage = record.coverage, stages = record.stages, timings = record.timings, sourceReads = timings?.sourceReadAttempts;
     const uncommitted = ['error', 'stale'].includes(record.status);
     const phaseCopy = value => ({ input: '输入准备', source: '来源读取', selecting: '选材', commit: '提交前核验', receipt: '回执保存' })[value] ?? '未记录阶段';
+    const stepCopy = value => ({ input: '输入准备', source: '来源读取', identity: '身份读取', root: '根版本读取', prepare: '准备缓存', read: '独立来源读取', projection: '来源投影', timeProjection: '时间投影', bodyWitness: '正文关联核验', qianshiProgress: '千事进度准备', queryContext: '查询上下文', prequelSelection: '前情选择', receiptValidation: '已有回执校验', receiptSourceVerification: '回执来源核验', semanticQuery: '语义查询', candidateBuild: '候选构建', utilityTask: '模型选材', responseParse: '结果解析', localSelection: '本地选材', qianshiSeal: '千事结果校验', commitVerification: '提交前核验', deletionWitness: '删除状态核验', receiptSeal: '回执封签', receiptSaveCall: '回执保存请求', receiptSaveWait: '等待回执保存', receiptSaveReturned: '回执保存返回', receiptSaveFailed: '回执保存失败', complete: '完成' })[value] ?? '未记录步骤';
     const preparationCopy = values => (Array.isArray(values) ? values : []).slice(0, 2).map(value => {
       const stages = { identity: '身份读取', root: '根版本读取', prepare: '准备缓存', read: '独立来源读取', projection: '来源投影' };
-      const status = { ready: '完成', timeout: '超时', stale: '已失效', unavailable: '不可用', disabled: '已关闭' };
+      const status = { ready: '完成', inProgress: '等待中（终止时）', timeout: '超时', stale: '已失效', unavailable: '不可用', disabled: '已关闭' };
       return `${phaseCopy(value.phase)} · ${value.mode === 'fresh' ? '只读核验' : '常规准备'} · ${status[value.status] ?? '未记录'}于${stages[value.stage] ?? '未知阶段'}${Number.isFinite(value.totalMs) ? ` · ${value.totalMs} ms` : ''}${Number.isFinite(value.budgetMs) ? ` / 期限 ${value.budgetMs} ms` : ''} · ${Object.entries(stages).filter(([stage]) => Number.isFinite(value[`${stage}Ms`])).map(([stage, label]) => `${label} ${value[`${stage}Ms`]} ms`).join(' · ')}`;
     }).join('；');
     const selectionCopy = value => ({ notStarted: '未执行选材', incomplete: '选材未完成', completed: '选材已完成', receiptCandidate: '回执复用候选，未提交', reused: '已复用回执' })[value] ?? (record.reusedReceipt ? '复用回执，未发起新选材' : record.restoredReceipt ? '历史回执未记录阶段' : stages ? '选材已完成' : '未执行选材');
@@ -1483,7 +1512,9 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
       : Number.isFinite(selector?.utilityRoundTripMs) && Number.isFinite(selector?.localSelectionMs)
       ? `接口往返（含传输） ${Number(selector.utilityRoundTripMs).toFixed(1)} ms · 本地选材 ${Number(selector.localSelectionMs).toFixed(1)} ms`
       : '接口往返与本地选材未记录';
-    let timingCopy = record.reusedReceipt
+    let timingCopy = record.terminationEvent === 'GENERATION_STOPPED' || record.terminationEvent === 'GENERATION_ENDED'
+      ? `${terminationStatus} · ${Number.isFinite(timings?.totalMs) ? `本轮召回等待 ${Number(timings.totalMs).toFixed(1)} ms` : '本轮召回等待未记录'}${Number.isFinite(timings?.sourceMs) ? ` · 读取 ${Number(timings.sourceMs).toFixed(1)} ms` : ''}${Number.isFinite(timings?.selectorMs) ? ` · 选材 ${Number(timings.selectorMs).toFixed(1)} ms` : ''} · ${selectorBreakdown}`
+      : record.reusedReceipt
       ? `${Number.isFinite(timings?.totalMs) ? `本轮复用耗时 ${Number(timings.totalMs).toFixed(1)} ms` : '本轮复用耗时未记录'} · 未发起新选材请求 · 原回执${selectorBreakdown}`
       : record.restoredReceipt
         ? `历史原始耗时：${Number.isFinite(timings?.totalMs) ? `总等待 ${Number(timings.totalMs).toFixed(1)} ms · ` : ''}${Number.isFinite(timings?.selectorMs) ? `选材总等待 ${Number(timings.selectorMs).toFixed(1)} ms · ` : ''}${selectorBreakdown}${Number.isFinite(timings?.sourceMs) ? ` · 读取 ${Number(timings.sourceMs).toFixed(1)} ms` : ''}`
@@ -1500,7 +1531,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const selectorMetadataCopy = selector?.code ? `${selectorFailureCopy(selector.code)}${selector.httpStatus ? ` · HTTP ${selector.httpStatus}` : ''}${selector.formatStage ? ` · 格式阶段 ${selector.formatStage}` : ''}${selector.sourceStage ? ` · 阶段 ${selector.sourceStage}` : ''}${selector.finishReason ? ` · 结束原因 ${selector.finishReason}` : ''}${selector.sourceLabel && selector.sourceLabel !== '未命名 API' ? ` · 来源 ${selector.sourceLabel}` : ''}${selector.model && selector.model !== 'unknown' ? ` · 模型 ${selector.model}` : ''}${Number.isSafeInteger(selector.transportAttempts) ? ` · 网络尝试 ${selector.transportAttempts}` : ''}${Number.isSafeInteger(selector.requestCharacters) ? ` · 请求约 ${selector.requestCharacters} 字符 / ${selector.requestEstimatedTokens} token` : ''}` : '';
     const errorMetadataCopy = record.error ? `${record.error.code}${record.error.httpStatus ? ` · HTTP ${record.error.httpStatus}` : ''}${record.error.formatStage ? ` · 格式阶段 ${record.error.formatStage}` : ''}${record.error.sourceStage ? ` · 阶段 ${record.error.sourceStage}` : ''}${record.error.finishReason ? ` · 结束原因 ${record.error.finishReason}` : ''}${record.error.sourceLabel && record.error.sourceLabel !== '未命名 API' ? ` · 来源 ${record.error.sourceLabel}` : ''}${record.error.model && record.error.model !== 'unknown' ? ` · 模型 ${record.error.model}` : ''}${Number.isSafeInteger(record.error.transportAttempts) ? ` · 网络尝试 ${record.error.transportAttempts}` : ''}` : '';
     const details = element('dl', 'v3-foundation-grid'); details.append(row('触发用户楼', userFloorCopy(record.userMessageIndex)), row('生成时间', localTimeCopy(record.createdAt)), row('生成类型', generationTypeCopy(record.generationType)), row('收据', record.legacyReadOnly ? '旧版只读记录' : record.restoredReceipt ? '从聊天记录读取 · 仅恢复历史展示，不会再次注入' : `${record.reusedReceipt ? '复用' : '新算'} · ${persistenceCopy[record.receiptPersistence] ?? record.receiptPersistence ?? '未知'}`), row('召回旧楼', floors), row('当前人物状态', states), row('人物状态历史变化', changes), row('覆盖范围', coverage ? `记忆 ${coverage.rememberedAiFloors}/${coverage.stableAiFloors} · ${coverage.cseThroughAssistantSeq ? `CSE 到${floorCopy(foundationState, { assistantSeq: coverage.cseThroughAssistantSeq }, '终点楼号未提供')}` : 'CSE 尚未覆盖'}` : '本轮未读取'), stageRow('筛选阶段', stageCopy), row('选材方式', selector?.code ? '智能选材失败' : selectorModeCopy(selector?.mode)), row('智能选材计数', selectorCountCopy), ...(selectorMetadataCopy ? [row('选材失败诊断', selectorMetadataCopy)] : []), ...(errorMetadataCopy ? [row('失败诊断', errorMetadataCopy)] : []), row('耗时', timingCopy), row('来源读取', sourceReadCopy), row('普通过滤说明', filterReasons.join('、') || '无'));
-    if (record.diagnosticPhase) details.append(row('所示诊断阶段', `${record.diagnosticAttempt ? `第 ${record.diagnosticAttempt} 次尝试 · ` : ''}${phaseCopy(record.diagnosticPhase)} · ${selectionCopy(record.selectionStatus)}${uncommitted ? ' · 本轮未注入' : ''}`));
+    if (record.diagnosticPhase) details.append(row('所示诊断阶段', `${record.diagnosticAttempt ? `第 ${record.diagnosticAttempt} 次尝试 · ` : ''}${phaseCopy(record.diagnosticPhase)} · ${selectionCopy(record.selectionStatus)}${record.pendingStep ? ` · ${terminationStatus ? '终止时步骤' : '正在'} ${stepCopy(record.pendingStep)}` : ''}${record.lastCompletedStep ? ` · 上一步 ${stepCopy(record.lastCompletedStep)}` : ''}${uncommitted ? ' · 本轮未注入' : ''}`));
     // 准备子阶段只展示枚举与计时；历史回执没有尝试列表时沿已封签的可选计时恢复。
     if (!record.attemptDiagnostics?.length && timings?.preparationAttempts?.length) details.append(row('准备等待', preparationCopy(timings.preparationAttempts)));
     for (const attempt of record.attemptDiagnostics ?? []) {
