@@ -6,6 +6,7 @@ export const SETTINGS_ID = 'qianqianjie';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   pluginEnabled: true,
+  coreCacheEnabled: true,
   storyClockEnabled: true,
   timeEvolutionEnabled: false,
   storyCalendars: {},
@@ -185,6 +186,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     if (!APPEARANCE_THEMES.has(settings.appearanceTheme)) settings.appearanceTheme = 'auto';
     settings.inlineRecallVisible = settings.inlineRecallVisible !== false;
     settings.inlineMemoryVisible = settings.inlineMemoryVisible !== false;
+    settings.coreCacheEnabled = settings.coreCacheEnabled !== false;
     settings.fabShow = settings.fabShow !== false;
     settings.appearanceScale = normalizeScale(settings.appearanceScale);
     settings.apiTimeoutSec = normalizeTimeout(settings.apiTimeoutSec);
@@ -206,6 +208,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     if (own(patch, 'apiAdditionalParams')) parseAdditionalParams(patch.apiAdditionalParams);
     const settings = get();
     if (own(patch, 'pluginEnabled')) settings.pluginEnabled = patch.pluginEnabled !== false;
+    if (own(patch, 'coreCacheEnabled')) settings.coreCacheEnabled = patch.coreCacheEnabled !== false;
     if (own(patch, 'timeEvolutionEnabled')) settings.timeEvolutionEnabled = patch.timeEvolutionEnabled === true;
     if (own(patch, 'storyCalendars')) settings.storyCalendars = normalizeStoryCalendars(patch.storyCalendars);
     if (own(patch, 'storyClockEnabled')) settings.storyClockEnabled = patch.storyClockEnabled !== false;

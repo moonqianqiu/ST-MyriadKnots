@@ -1,9 +1,9 @@
 {
   "display_name": "千千结",
   "loading_order": 999,
-  "js": "dist/qqj-app.js?v=20261013.84-c8fb4019a5778016",
+  "js": "dist/qqj-app.js?v=20261014.89-e973510603efafb3",
   "generate_interceptor": "qqj_v3_recall_interceptor",
-  "version": "0.7.12",
+  "version": "0.7.13",
   "description": "千千结长期记忆工具",
   "author": "atonal519"
 }

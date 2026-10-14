@@ -7681,7 +7681,7 @@ async function Vo({ store: e, targetIdentity: t, cachedReachable: n = null } = {
 }
 //#endregion
 //#region manifest.json
-var Ho = "0.7.12", Uo = "qianqianjie", Wo = "/api/plugins/st-bainiaodata", Go = "qqj-bainiao-v1", Ko = Symbol.for("qqj.bainiao.tt.locks.v1"), qo = (e, t) => Object.assign(Error(t), { status: e }), Jo = (e) => JSON.parse(JSON.stringify(e)), Yo = (e) => {
+var Ho = "0.7.13", Uo = "qianqianjie", Wo = "/api/plugins/st-bainiaodata", Go = "qqj-bainiao-v1", Ko = Symbol.for("qqj.bainiao.tt.locks.v1"), qo = (e, t) => Object.assign(Error(t), { status: e }), Jo = (e) => JSON.parse(JSON.stringify(e)), Yo = (e) => {
 	if (e?.aborted) throw e.reason ?? new DOMException("Aborted", "AbortError");
 }, Xo = new TextEncoder(), Zo = (e) => ({
 	format: "qqj-tt-json-v2",
@@ -10241,6 +10241,7 @@ function pl({ controller: e, documentRef: t = globalThis.document, labelFor: n =
 //#region src/settings.js
 var ml = "qianqianjie", hl = Object.freeze({
 	pluginEnabled: !0,
+	coreCacheEnabled: !0,
 	storyClockEnabled: !0,
 	timeEvolutionEnabled: !1,
 	storyCalendars: {},
@@ -10440,7 +10441,7 @@ function Pl({ extensionSettings: e, save: t = () => {}, now: n, random: r } = {}
 			apiPresets: []
 		};
 		for (let [e, n] of Object.entries(hl)) _l(t, e) || (t[e] = Array.isArray(n) ? [] : n && typeof n == "object" ? {} : n);
-		return gl.has(t.apiMode) || (t.apiMode = "auto"), Array.isArray(t.apiExcludeParams) || (t.apiExcludeParams = []), Array.isArray(t.apiPresets) || (t.apiPresets = []), Array.isArray(t.sourceWorldInfoExcludedBooks) || (t.sourceWorldInfoExcludedBooks = []), yl.has(t.appearanceTheme) || (t.appearanceTheme = "auto"), t.inlineRecallVisible = t.inlineRecallVisible !== !1, t.inlineMemoryVisible = t.inlineMemoryVisible !== !1, t.fabShow = t.fabShow !== !1, t.appearanceScale = bl(t.appearanceScale), t.apiTimeoutSec = Tl(t.apiTimeoutSec), t.autoMemoryBatchSize = Cl(t.autoMemoryBatchSize), t.timeEvolutionEnabled = t.timeEvolutionEnabled === !0, t.storyCalendars = Sl(t.storyCalendars), t.autoHideEnabled = t.autoHideEnabled === !0, t.autoHideKeepAiCount = wl(t.autoHideKeepAiCount), t.storageAutoCleanupEnabled = t.storageAutoCleanupEnabled === !0, t.storageAutoCleanupProgress = xl(t.storageAutoCleanupProgress), t.storyClockReferenceTags = tl(t.storyClockReferenceTags).join(","), t;
+		return gl.has(t.apiMode) || (t.apiMode = "auto"), Array.isArray(t.apiExcludeParams) || (t.apiExcludeParams = []), Array.isArray(t.apiPresets) || (t.apiPresets = []), Array.isArray(t.sourceWorldInfoExcludedBooks) || (t.sourceWorldInfoExcludedBooks = []), yl.has(t.appearanceTheme) || (t.appearanceTheme = "auto"), t.inlineRecallVisible = t.inlineRecallVisible !== !1, t.inlineMemoryVisible = t.inlineMemoryVisible !== !1, t.coreCacheEnabled = t.coreCacheEnabled !== !1, t.fabShow = t.fabShow !== !1, t.appearanceScale = bl(t.appearanceScale), t.apiTimeoutSec = Tl(t.apiTimeoutSec), t.autoMemoryBatchSize = Cl(t.autoMemoryBatchSize), t.timeEvolutionEnabled = t.timeEvolutionEnabled === !0, t.storyCalendars = Sl(t.storyCalendars), t.autoHideEnabled = t.autoHideEnabled === !0, t.autoHideKeepAiCount = wl(t.autoHideKeepAiCount), t.storageAutoCleanupEnabled = t.storageAutoCleanupEnabled === !0, t.storageAutoCleanupProgress = xl(t.storageAutoCleanupProgress), t.storyClockReferenceTags = tl(t.storyClockReferenceTags).join(","), t;
 	}, a = (e = !1) => {
 		try {
 			return t();
@@ -10450,7 +10451,7 @@ function Pl({ extensionSettings: e, save: t = () => {}, now: n, random: r } = {}
 	}, o = (e, { observeSaveFailure: t = !1 } = {}) => {
 		_l(e, "apiAdditionalParams") && kl(e.apiAdditionalParams);
 		let n = i();
-		_l(e, "pluginEnabled") && (n.pluginEnabled = e.pluginEnabled !== !1), _l(e, "timeEvolutionEnabled") && (n.timeEvolutionEnabled = e.timeEvolutionEnabled === !0), _l(e, "storyCalendars") && (n.storyCalendars = Sl(e.storyCalendars)), _l(e, "storyClockEnabled") && (n.storyClockEnabled = e.storyClockEnabled !== !1), _l(e, "storyClockPrompt") && (n.storyClockPrompt = vl(e.storyClockPrompt)), _l(e, "storyClockReferenceTags") && (n.storyClockReferenceTags = tl(e.storyClockReferenceTags).join(",")), _l(e, "autoMemoryBatchSize") && (n.autoMemoryBatchSize = Cl(e.autoMemoryBatchSize)), _l(e, "autoHideEnabled") && (n.autoHideEnabled = e.autoHideEnabled === !0), _l(e, "autoHideKeepAiCount") && (n.autoHideKeepAiCount = wl(e.autoHideKeepAiCount)), _l(e, "storageAutoCleanupEnabled") && (n.storageAutoCleanupEnabled = e.storageAutoCleanupEnabled === !0), _l(e, "storageAutoCleanupProgress") && (n.storageAutoCleanupProgress = xl(e.storageAutoCleanupProgress)), _l(e, "apiMode") && (n.apiMode = gl.has(e.apiMode) ? e.apiMode : "auto"), _l(e, "selectedSevenDaysPresetId") && (n.selectedSevenDaysPresetId = vl(e.selectedSevenDaysPresetId).trim()), _l(e, "summaryPresetId") && (n.summaryPresetId = vl(e.summaryPresetId).trim()), _l(e, "recallPresetId") && (n.recallPresetId = vl(e.recallPresetId).trim()), _l(e, "vectorEnabled") && (n.vectorEnabled = e.vectorEnabled === !0);
+		_l(e, "pluginEnabled") && (n.pluginEnabled = e.pluginEnabled !== !1), _l(e, "coreCacheEnabled") && (n.coreCacheEnabled = e.coreCacheEnabled !== !1), _l(e, "timeEvolutionEnabled") && (n.timeEvolutionEnabled = e.timeEvolutionEnabled === !0), _l(e, "storyCalendars") && (n.storyCalendars = Sl(e.storyCalendars)), _l(e, "storyClockEnabled") && (n.storyClockEnabled = e.storyClockEnabled !== !1), _l(e, "storyClockPrompt") && (n.storyClockPrompt = vl(e.storyClockPrompt)), _l(e, "storyClockReferenceTags") && (n.storyClockReferenceTags = tl(e.storyClockReferenceTags).join(",")), _l(e, "autoMemoryBatchSize") && (n.autoMemoryBatchSize = Cl(e.autoMemoryBatchSize)), _l(e, "autoHideEnabled") && (n.autoHideEnabled = e.autoHideEnabled === !0), _l(e, "autoHideKeepAiCount") && (n.autoHideKeepAiCount = wl(e.autoHideKeepAiCount)), _l(e, "storageAutoCleanupEnabled") && (n.storageAutoCleanupEnabled = e.storageAutoCleanupEnabled === !0), _l(e, "storageAutoCleanupProgress") && (n.storageAutoCleanupProgress = xl(e.storageAutoCleanupProgress)), _l(e, "apiMode") && (n.apiMode = gl.has(e.apiMode) ? e.apiMode : "auto"), _l(e, "selectedSevenDaysPresetId") && (n.selectedSevenDaysPresetId = vl(e.selectedSevenDaysPresetId).trim()), _l(e, "summaryPresetId") && (n.summaryPresetId = vl(e.summaryPresetId).trim()), _l(e, "recallPresetId") && (n.recallPresetId = vl(e.recallPresetId).trim()), _l(e, "vectorEnabled") && (n.vectorEnabled = e.vectorEnabled === !0);
 		for (let t of [
 			"vectorPresetId",
 			"vectorUrl",
@@ -25013,7 +25014,16 @@ function Vy({ settings: e, apiTools: t, vectorApi: n, vectorIndex: r, v3Foundati
 			for (let t of be) t.input.checked = t.months === e;
 			return Te(e);
 		});
-		Se.addEventListener("change", () => Te(be.find(({ input: e }) => e.checked)?.months ?? 12));
+		if (Se.addEventListener("change", () => Te(be.find(({ input: e }) => e.checked)?.months ?? 12)), !as()) {
+			let t = J("label", "setting-switch");
+			t.id = "qqj-settings-core-cache";
+			let n = J("input");
+			n.type = "checkbox", n.checked = e.get().coreCacheEnabled !== !1, n.setAttribute("aria-label", "浏览器缓存（IndexedDB）"), t.append(J("span", "", "浏览器缓存（IndexedDB）"), n), t.addEventListener("click", (e) => e.stopPropagation());
+			let r = J("p", "settings-hint", "关闭不会删除记忆，之后直接从正式存储读取，打开长聊天可能更慢。更改后整页刷新酒馆生效。"), i = J("p", "settings-result");
+			i.id = "qqj-settings-core-cache-result", n.addEventListener("change", () => {
+				e.update({ coreCacheEnabled: n.checked }), i.textContent = "设置已修改；整页刷新酒馆后生效。", i.className = "settings-result success";
+			}), oe.append(t, r, i);
+		}
 		let Ee = Bc({
 			documentRef: x,
 			title: "存储管理",
@@ -49366,7 +49376,7 @@ var lA = () => ({
 }, EA = () => TA().calendar, DA = MC({
 	settings: eA,
 	contextProvider: $k
-}), OA = () => eA.get().summaryPrompt, kA = () => eA.get().csePrompt, AA = () => eA.get().profilePrompt, jA = () => eA.get().processingPrompt, MA = as() ? null : YC({
+}), OA = () => eA.get().summaryPrompt, kA = () => eA.get().csePrompt, AA = () => eA.get().profilePrompt, jA = () => eA.get().processingPrompt, MA = as() || eA.get().coreCacheEnabled === !1 ? null : YC({
 	localForage: p,
 	accountHandleProvider: m
 }), NA = XS({
@@ -49732,7 +49742,10 @@ globalThis.addEventListener?.("beforeunload", rj.cleanup, { once: !0 }), globalT
 	prepareSession: () => wA.prepare(),
 	backendDiagnosticProvider: () => ({
 		...uA.getDiagnosticSnapshot(),
-		coreCache: MA?.getStats?.() ?? { available: !1 }
+		coreCache: {
+			...MA?.getStats?.() ?? { available: !1 },
+			enabled: !!MA
+		}
 	}),
 	pluginVersion: Ho,
 	inlineRenderer: ej,
