@@ -158,6 +158,8 @@ const materialTokens = value => value.tokens ??= new Set(tokenizeRecallText(valu
 | 192 | 19104 ms | **560 ms** | 34.09× |
 | **129 / ctx=20000（实机上报场景）** | **20201 ms** | **706 ms** | **28.62×** |
 
+> **复测批次补记**：另有同口径后续复测（median-of-5、ctx=8192）给出略高值 **n=48 17.18× → n=192 35.49×**。上表 16.73×/34.09× 与之为不同批次，两者均为实测——引用加速比时须同时给出批次口径，勿混用。
+
 增长指数 **n^1.76 → n^1.24**。缓存内存（n=192 稠密单次）：`compactMemo 621 entries / ~0.05MB`、`preparedMemo 305 entries / ~0.04MB`；上限 20 万 → 正常会话不触发 `clear()`，常驻开销可忽略。
 
 ### 4.6 未解决：阶未变
@@ -168,12 +170,15 @@ const materialTokens = value => value.tokens ??= new Set(tokenizeRecallText(valu
 
 ---
 
-## 5. 四条教训
+## 5. 五条教训
 
 1. **缓存要打在热点上，且键必须廉价。** 成本分布是 `compact` 类键推导 **42.4%** 对 `setIntersection` **0.3%**；`_coreText` 4000 字符时键推导成本是交集的 **401×**，缓存命中一次的键成本是原运算的 **15.39×**。为便宜运算付昂贵键 = 净亏（§2.3）。
 2. **跨轮记忆化不能按对象身份。** `decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效（F1 因此生效）。
 3. **缓存键必须覆盖被缓存函数的全部输入。** `historyStableKey` 不含 `_rankText`／`towardEntityId`／`*?.sourceFloorId`，用它（或「它 + 内容」）做 `recordFor` 的键会串记录（§4.3）。
 4. **审计基线的谱系必须断言。** 审计中途曾出现一整批结论作废——`g1.mjs`/`stack.mjs`/`stage2.mjs` 的基线文件在上游 v0.6.12 同步后被重建，而下游变体仍是 v0.6.11 文本，导致**跨上游版本比较**得出虚假的「byte-identical ✓」。`tools/perf-audit/lib/recall-audit.mjs` 的 `assertUpstreamMarkers()` 就是为了让这种错误**抛异常而不是静默通过**。
+5. **对象身份缓存并非一律不可用，取决于输入是不是「原对象」、作用域是否够窄。** 教训 2 的「`decorate()` 克隆」前提**不适用于** `recordFor`：它读的是 history 数组内的**原对象**（不经 `{...value}` 克隆），故按对象身份缓存既命中，又**不会在「同文本、不同 `towardEntityId`」之间串记录**——与教训 3 的反例正好正交。上游 v0.7.0 的 `recordsByValue`（`WeakMap`，作用域严格限于**单次 `buildStorylinePlan()`**）即属此类，已采纳且**勿再删**。**红线**：绝不可把它改成按 `historyStableKey`（或「稳定键 + 文本」）跨对象／跨轮缓存——那就是教训 3 的反例本身。成立前提：plan 执行期间候选对象不被原地修改（当前计算路径成立）。判据同教训 3。
+
+> **溯源**：教训 5 对应 AGENTS.md §2.2「正例（v0.7.0 已采纳）」，红线表述以该处为准。
 
 ---
 

@@ -5,6 +5,8 @@
 > **用途**：供后续会话/开发者在执行"合并上游"、"升级维护"、"排查改动"时，迅速掌握本 fork 的核心定制、版本惯例、冲突裁决规则与架构设计决策，确保合并上游时不丢弃本地核心资产。
 > **体例**：本文件只维护**当前契约**与**索引**；历次合并的逐版本实录与验证数据随 git 历史沉淀（`git log -p AGENTS.md` 按版本回查，`git show <合并提交>` 看合并能力摘要）。每次合并后仅在 §5.1 索引表追加一行，并把新的持久性裁决沉淀进 §2/§3 相应契约。
 > **防回胀（硬规则）**：本文件每次会话都整体注入，体积即复现开销。① **§5.1 每行硬上限 120 字符**，只写「冲突数 + 裁决关键词 +（有则）缓存键」，细节落 §2/§3 或留 git 历史；② **同一事实只写一处**——规格与锚点归 §2.2，动机与理由归 §3，另一侧只留 `§x.y` 指针；③ 精确签名、`file:line` 锚点、缓存键序号规则、「勿回植/勿再删」红线与四门禁阈值**永久保留**，压缩只针对措辞与已外置的取证。
+> **不可压核心（精简白名单）**：§1.3 缓存键规则、§1.4 合并流程、§2.1 各行的「路径 + 裁决关键词」、§2.2 全部签名/常量/`file:line` 锚点/红线、§3.1 M0-M3+P5+40 例金样、§4 四门禁命令与阈值、§5 版本号与缓存键——压缩只动措辞与已外置取证，上述内容一字不删。
+> **取证外置**：合并实录与教训全文见 `docs/merge-notes.md`；召回性能取证见 `docs/audit-recall-budget-loop-2026-10.md`。本文件只留契约、锚点与指针。
 
 ---
 
@@ -12,7 +14,7 @@
 
 1. **版本声明 (`manifest.json`)**：跟随上游官方发布版本号。
 2. **生产单文件 (`dist/qqj-app.js`)**：由 `npm run build`（Vite + Rolldown）编译生成；源码任何变动后**必须重新构建 bundle**，否则入口加载测试失败。
-3. **缓存键规则 (`js` 字段)**：格式强制 `dist/qqj-app.js?v=YYYYMMDD.<全局递增序号>-<bundle SHA-256 前16位小写>`；`tests/production-entry-load.test.mjs` 校验哈希与实际 bundle 摘要一致。**序号全库历史内全局递增、同日不得复用——合并上游后注意上游同日已用的序号，取未用过的更大值（`git log --all -S 'YYYYMMDD.'` 复核）；键日期取构建当日，可与上游发布日不同；哈希取自真实重建产物，禁止手写或沿用旧值**（曾发生文档记录与实际产物哈希漂移的「漏 bump 假通过」失效模式）。构建顺序铁律：**先把版本号改到位 → 再 build（bundle 内嵌版本常量）→ 最后回填缓存键**。
+3. **缓存键规则 (`js` 字段)**：格式强制 `dist/qqj-app.js?v=YYYYMMDD.<全局递增序号>-<bundle SHA-256 前16位小写>`；`tests/production-entry-load.test.mjs` 校验哈希与实际 bundle 摘要一致。**序号全库历史内全局递增、同日不得复用——合并上游后注意上游同日已用的序号，取未用过的更大值（`git log --all -S 'YYYYMMDD.'` 复核）；键日期取构建当日，可与上游发布日不同；哈希取自真实重建产物，禁止手写或沿用旧值**（曾有「漏 bump 假通过」：记录哈希与实际产物漂移）。构建顺序铁律：**先把版本号改到位 → 再 build（bundle 内嵌版本常量）→ 最后回填缓存键**。
 4. **合并流程**：备份分支 `git branch backup/main-before-upstream-vX.Y.Z main` → `git merge --no-ff upstream/main`（先以 `git merge-tree --write-tree main upstream/main` 预判，实际冲突应与预判一致）→ 裁决（§2）→ 四门禁（§4）→ AGENTS.md 记录 → push origin；验证完整前不向远程 force push。**备份分支仅在本地存在，验证通过并推送后即可 `git branch -d` 清理**（其尖端是合并提交的第一父状态，删除零损失）。
 
 ---
@@ -25,13 +27,13 @@
 | :--- | :--- | :--- |
 | `manifest.json` | 版本号行与缓存键行冲突 | 版本采上游发布号；构建完成后回填最新缓存键（§1.3） |
 | `dist/qqj-app.js` | 编译产物冲突（数千 hunk） | 不手工解，直接 `npm run build` 覆盖重建即消除 |
-| `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：v0.7.13 实测断言仍写 `'0.7.12'`（`tests/production-entry-load.test.mjs:240`）而 manifest 已 `0.7.13`，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（与 `tests/v3-extractor-memory.test.mjs` 同类「上游自带红测试」） |
+| `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：断言（`tests/production-entry-load.test.mjs:240`）常停在上一发布号而 manifest 已递增，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（实例见 §5.1） |
 | `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突 |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数 vs 本地 `sanitizerOptions` 参数 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
-| `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**：v0.7.2 为 `271`，v0.7.4 改名 `1000` | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-<上游当前 n>-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；**夹具名随上游改名同步**，断言与夹具内容一字未动；v0.7.5 认领前坐标校验另致 2 挂起/红测试（纯上游复现），本地补 name/avatar 适配（7c87ea9） |
-| `src/memory-content-sanitizer.js` | 上游 v0.5.8 起「默认 keep='content'」简化实现 vs 本地四模式合同 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（仅将上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避撞名；上游缩进原样保留，该区未来零冲突） |
-| `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能 | **整文件保持与上游逐字相同**（v0.6.0 定案：世界书原文直通系上游设计意图；源码/工厂签名/import/测试含直通断言均随上游）——**勿再回植 extraOnly**（§3.2 已回归清单）；唯 `saveProfile → invalidate('peopleProfileSaved', …, { clearPersisted: true })` 联动除外（§3.4 ③） |
-| `src/v3/foundation-domain.js` | 本地 `SANITIZER_VERSION = memory-content-sanitizer-v2` 且默认 keepTags `''`（M0），上游停留 v1+`'content'`——同一宿主聊天两侧派生**不同确定性图 ID**（floor/run/checkpoint/index 全链） | **保留本地合同**；上游 fixture 测试 `tests/fixtures/tt2-native-init-failure.json`（编码上游预计算 ID）须在本地语义下重生成——按 `fstore.recordKey(record)` 捕获 run/checkpoint/floor/index（索引键含 `floorOrder-0-` 段，勿手拼 `v3-index-<id>`），run 回卷 `retryableError`+`V3_GRAPH_INDEX_ROUTE_INVALID`、无 root |
+| `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**（当前 `1000`，早期 `271`） | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-<上游当前 n>-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；**夹具名随上游改名同步**，断言与夹具内容一字未动；v0.7.5 另有一条上游自带挂起/红测试，本地补 name/avatar 适配（`7c87ea9`）；其余代修实例见 §5.1 |
+| `src/memory-content-sanitizer.js` | 上游 v0.5.8 起「默认 keep='content'」简化实现 vs 本地四模式合同 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留（规格见 §3.1）；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避撞名；上游缩进原样保留，该区未来零冲突） |
+| `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能 | **整文件保持与上游逐字相同**（v0.6.0 定案：直通系上游设计意图，源码/工厂签名/import/测试含直通断言均随上游）——**勿再回植 extraOnly**（§3.2 已回归清单）；唯 `saveProfile → invalidate('peopleProfileSaved', …, { clearPersisted: true })` 联动除外（§3.4 ②） |
+| `src/v3/foundation-domain.js` | 本地 `SANITIZER_VERSION = memory-content-sanitizer-v2`、keepTags `''`（M0），上游停留 v1+`'content'`——同一宿主聊天两侧派生**不同确定性图 ID**（floor/run/checkpoint/index 全链） | **保留本地合同**；上游 fixture `tests/fixtures/tt2-native-init-failure.json`（编码上游预计算 ID）须按本地语义重生成——以 `fstore.recordKey(record)` 捕获 run/checkpoint/floor/index（索引键含 `floorOrder-0-` 段，勿手拼 `v3-index-<id>`），run 回卷 `retryableError`+`V3_GRAPH_INDEX_ROUTE_INVALID`、无 root |
 
 ### 2.2 本地已修改的上游产权文件（上游重写对应链路时，以本地增强为产权逐项回植并重跑对应测试全绿）
 
@@ -39,22 +41,21 @@
 >   ① **见证向前截断**——`captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null)`，循环以触发用户楼定位 `triggerIndex` 向前采集，上限用上游归一化值 `normalizeAutoHideKeepAiCount`；内部调用点传 `(…, recentBodyFloorLimit(), user?.message)`。
 >   ② **invalidate 三参**——`(reason = 'invalidated', sourceEvent = 'runtimeInvalidate', { clearPersisted = false } = {})`，函数体首行 `requestDiagnostic.clear()`；`clearPersisted: true` 时删除最新用户楼持久化收据并 `saveChat()` 落盘。三处 UI 调用点用事件名方言（`manualMemoryEdit` / `foundationFullRebuild` / `peopleProfileSaved`），**漏改则 `{ clearPersisted }` 落入 `sourceEvent`、清理静默失效**。
 >   ③ **密封点活版本重对齐**（`commitPromptIfCurrent` 内、`captureCoveredBodyGuards` 之后）：条件 `currentSource !== source && currentSource?.status === 'ready'`（与上游 `basePreparedSource(…, { fresh: true, sourceToVerify: source })` 无条件 fresh 重读 + 对象同一性判定等价），以活档案头 Checkpoint/Revision/正文指纹重签 `receiptFingerprint`。
->   正交性备忘：上游千事删除撤回（`qianshiDeletionProvider`/`withoutDeletedQianshi` 冻结回执临时撤回，不重跑模型不重签）与三增强正交；witness 赋值在密封**前**，本地重对齐调 `receiptMaterial` 时 witness 尚未定义；冻结复用路径本就不校验指纹，均自洽。
->   **教训（v0.6.8 合并损坏实录）**：定义与使用分处两个被上游重写的区域时，使用块自动幸存、定义块可能被吞（运行时 `ReferenceError`、v3-recall 大面积 error）——用「合并树 vs 纯上游 diff」定位残余差异快速归因，勿据单侧绿误判。
+>   正交性论证与 v0.6.8 损坏教训（定义/使用分居两处被重写区域、`sameRoot` 被吞）见 `docs/merge-notes.md` §2–§3——归因法：用「合并树 vs 纯上游 diff」定位残余差异，勿据单侧绿误判。
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与绑定种类 `'locatorEquivalent'`——弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖」的语义冲突；私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `readTimeBody` 传入。
-> - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案，通用化替代同日早前删除的 content 专用兜底）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。这样被排除块内的状态栏/时间戳不会泄漏，块外控制信号继续有效。排除名单与 extractor 同步并由逐名行为守卫锁定；`record` 双轨缺口已修复并有嵌套回归。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。
-> - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`：须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回，故 `state.chatId`=目标任务 ≠ 显示聊天；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
+> - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。排除名单与 extractor 同步并由逐名行为守卫锁定。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。
+> - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`，须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
 > - **v0.7.9 上游隐藏「空间记录」UI**：删除 `placeNameCache`/`placeNamesFor` 助手与整块 `qqj-memory-spatial` 渲染（内部空间记忆与「地点」meta 保留），并把 `EXTRACTOR_FIXED_CONTRACT` 第 11 条地点粒度改写为「按房间或有独立意义的区域」。本地未定制该区块，**全采纳，勿回植空间 UI**。
 > - `src/ui/help-guide.js`：本地改两处——设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义）+ 排障手册「大量楼摘要缺正文」段尾的日期读取教义句（2026-10-11：含日期的闪回/回忆类块会被当作本楼当前时间，extraTags 声明可排除）。上游高频重写本文件文案——裁决：**上游新增段落全收 + 两处本地保持**（包裹符段上游侧仍是旧 `[[...]]` 专用描述，勿取上游侧；教义句属上游文案区内的本地追加句尾，合并后须核在位）。
-> - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，四者都是「纯函数按输入记忆化 / 只依赖 `context` 的常量上提」，判定输入一字未动。上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
->   ① `compactOf`（按**字符串**记忆化 `compact()`；`COMPACT_MEMO_LIMIT = 200000`）——`decorate()` 每轮 `{...value}` 克隆候选，但克隆体**共享 `_coreText`/`_rankText` 字符串实例**，故按字符串键可跨轮命中（按对象键则命中率仅 ~4.5%，见 §3.5 教训）；
+> - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，判定输入一字未动；上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
+>   ① `compactOf`（按**字符串**记忆化 `compact()`；`COMPACT_MEMO_LIMIT = 200000`）——`decorate()` 每轮 `{...value}` 克隆候选，但克隆体**共享 `_coreText`/`_rankText` 字符串实例**，故按字符串键可跨轮命中（按对象键则命中率仅 ~4.5%）；
 >   ② `entityDerivedCache`（`WeakMap` on `context`）上提 `entityTokens` 与 `entityNameEntries`（实体名 → 已 `compact` 的标签表），替代 `recordFor()` 内对 92 实体的逐次扫；
 >   ③ `stableKeyMemo` + `historyStableKeyRaw`（按对象记忆化 `historyStableKey()`，仍是导出的 `historyStableKey`）；
 >   ④ `preparedMaterialMemo`（按 material 文本共享 `prepareMaterial()` 结果，使 `materialTokens` 的懒加载 `tokens` Set 得以存活）。
->   **反例警示（勿回植）**：上游若引入「按内容键跨轮缓存 `recordFor`」须先证明键完整——`historyStableKey` **不含** `_rankText`／`towardEntityId`／`*?.sourceFloorId`，而这些正是 `recordFor()` 的输入，用它做键会把仅 `toward` 不同（上游 `cseDuplicateKey` 特意区分）的值串成同一条 record。本次实测该缓存收益在噪声内（n=129/192 为 0.982×/0.989×），已剔除。
->   **正例（v0.7.0 已采纳，勿再删）**：上游 `recordsByValue`——`WeakMap` 按**对象身份**缓存 `recordFor()` 结果，作用域严格限于**单次 `buildStorylinePlan()`**。之所以安全：`recordFor()` 的输入是 history 数组内的**原对象**（不经 `decorate()` 的 `{...value}` 克隆），故对象键既命中又**不会在「同文本、不同 `towardEntityId`」之间串记录**，与上面的反例正交。成立前提：plan 执行期间候选对象不被原地修改（当前计算路径成立）。**红线**：绝不可把它改成按 `historyStableKey`（或「稳定键 + 文本」）跨对象／跨轮缓存，那就是反例本身。裁决依据：门禁4 等价审计对「纯上游 v0.7.0」与「本地 v0.7.0 前基线」各 **144/144 逐字节一致**。
->   **合并陷阱（v0.7.0 实录）**：上游把 6 处 `materiallySame(` 调用点自动改写为 `sameMaterial(`，而其定义在被弃的那一侧——只取本地侧会 `ReferenceError`。解法是保留本地缓存块 + 加薄别名 `const sameMaterial = (left, right) => materiallySame(left, right, prepareMaterial);`，使上游调用点字节不变、行为路由本地缓存。
->   **同时弃用**（上游 v0.7.0 的 plan 级缓存，勿再回植）：`compactForPlan`／`prepareForPlan`／`searchableEntityLabels`／`compactByText`／`preparedByValue`——它们按**对象键**，在 `decorate()` 克隆下几乎不命中，且与上面的字符串键缓存重复。
+>   **反例警示（勿回植）**：「按内容键跨轮缓存 `recordFor`」的键不完整——`historyStableKey` **不含** `_rankText`／`towardEntityId`／`*?.sourceFloorId`，而这些正是 `recordFor()` 的输入，用它做键会把仅 `toward` 不同（上游 `cseDuplicateKey` 特意区分）的值串成同一条 record（实测收益在噪声内：0.982×/0.989×）。
+>   **正例（v0.7.0 已采纳，勿再删）**：上游 `recordsByValue`——`WeakMap` 按**对象身份**缓存 `recordFor()` 结果，作用域严格限于**单次 `buildStorylinePlan()`**。安全前提：`recordFor()` 的输入是 history 数组内的**原对象**（不经 `decorate()` 克隆），故既命中又**不会在「同文本、不同 `towardEntityId`」之间串记录**；成立前提是该 plan 执行期间候选对象不被原地修改。**红线**：绝不可改成按 `historyStableKey`（或「稳定键 + 文本」）跨对象／跨轮缓存。
+>   **合并陷阱（v0.7.0 实录）**：上游把 6 处 `materiallySame(` 调用点自动改写为 `sameMaterial(`，而其定义在被弃的那一侧——只取本地侧会 `ReferenceError`。解法是保留本地缓存块 + 加薄别名 `const sameMaterial = (left, right) => materiallySame(left, right, prepareMaterial);`，使上游调用点字节不变、行为路由本地缓存（同类实例见 `docs/merge-notes.md` §4）。
+>   **同时弃用**（上游 v0.7.0 的 plan 级缓存，勿再回植）：`compactForPlan`／`prepareForPlan`／`searchableEntityLabels`／`compactByText`／`preparedByValue`——按**对象键**，在 `decorate()` 克隆下几乎不命中，且与上面的字符串键缓存重复。
 
 ### 2.3 自动合并正交区（3-way 自动合入，合并后核对资产在位即可）
 
@@ -91,14 +92,14 @@
 ### 3.3 提示词与标签设置 UI 校验 (`src/ui/settings/prompts-settings.js`)
 
 - **默认值配置**：`src/settings.js` 中 `sourceKeepTags: ''`（默认留空直通）。
-- **存量迁移 (`migrateSanitizerKeepTags`)**：上游 v0.5.8+ 默认 `sourceKeepTags: 'content'` 会被 `get()` 的默认回写持久化进老存档，本地严格 M2 下会把无 `<content>` 标签的 AI 正文整楼清空（`foundation-domain` 的 `if (!canonicalContent) continue;` 静默跳楼）。版本化迁移 `sanitizerKeepTagsMigrationVersion` 0→1 四边界：仅持久值为纯 `'content'`（trim+小写完全相等）才重置 `''`；用户手改值原样保留；迁移后再手填 `content` 永不覆盖；全新存档直接置位。`index.js` 在 `settings.migrateLegacyApiSettings()` 之后以**可选链**调用；断言见 `tests/settings-api.test.mjs` 末尾两条。
+- **存量迁移 (`migrateSanitizerKeepTags`)**：上游默认 `sourceKeepTags: 'content'` 会被 `get()` 的默认回写持久化进老存档，本地严格 M2 下会把无 `<content>` 标签的 AI 正文整楼清空（`foundation-domain` 的 `if (!canonicalContent) continue;` 静默跳楼）。版本化迁移 `sanitizerKeepTagsMigrationVersion` 0→1 四边界：仅持久值为纯 `'content'`（trim+小写完全相等）才重置 `''`；用户手改值原样保留；迁移后再手填 `content` 永不覆盖；全新存档直接置位。`index.js` 在 `settings.migrateLegacyApiSettings()` 之后以**可选链**调用；断言见 `tests/settings-api.test.mjs` 末尾两条。
 - **保存拦截器 (`bindTagFieldWithClashCheck`)**：两栏失焦保存时自动做归一化交集计算（标签名与字面量包裹规则一并参与）；同名冲突即**拒绝落存**，输入框回退 `settings.get()[key] ?? ''`（= 该栏最近一次成功保存值；**不得**用视图创建时快照——本面板只在 `src/ui/panel.js` 初始化时创建一次，二次冲突会回退成陈旧值），并显示行内红色警告。守卫见 `tests/settings-modules.test.mjs`「包裹符冲突回退取最近一次成功保存值」。
 
 ### 3.4 召回回执重新生成（Regenerate）秒级复用机制
 
 - **核心文件**：`src/v3/recall-runtime.js`（修复主体）；`src/ui/v3-foundation-view.js`；`src/ui/people-profiles-view.js`；`src/bootstrap.js`。
 - **双重致错源头**（删当前用户楼 → 重新发送 → 重新生成，稳定复现）：① **并发盖错公章**——选材 LLM 耗时窗口内底层地基扫描推进全局 Root，原代码收据仍盖选材开始时的旧公章，存盘即过期；② **见证指纹漂移**——原 `captureCoreBodyWitness` 从数组末尾逆向采集，重新生成时尾部残留刚撤下的 AI 楼层。
-- **本地修复三件套（治本，不可被上游旧代码覆盖）**：见证向前截断、密封点活版本重对齐、三端联动主动失效——规格与锚点见 §2.2 ①②③。
+- **本地修复三件套（治本，不可被上游旧代码覆盖）**：见证向前截断（§2.2 ①）、三端联动主动失效（§2.2 ②）、密封点活版本重对齐（§2.2 ③）。
 - **与上游 `root: 0` 极速通道共存**：上游 `commitFrozenReceiptIfCurrent` 复用阶段有意不比对 Checkpoint/Revision（测试锁定复用零 I/O）。本地修复零性能开销：日常重新生成照走极速通道，仅人工修改记忆时精确清缓存重选材。
 - **本地守卫测试**：`tests/recall-local-guards.test.mjs`（上游无此文件）集中回归本地补丁——见证向前截断对照、`matchFloorCandidates` 探针与 `'locatorEquivalent'`、`extraOnlySanitizerOptions` 合同、`invalidate` 默认不删持久收据而 `clearPersisted: true` 才删并 `saveChat`、时间参考标签探针。上游重写对应链路后**先跑它**。
 
@@ -149,14 +150,10 @@
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 
+> **v0.6.11 及更早（v0.5.0~v0.6.11）共 7 行实录已外置**：见 `docs/merge-notes.md` §1。
+
 | 上游版本 | 日期 | 合并提交 | 冲突与裁决要点 | 当期全量 |
 | :--- | :--- | :--- | :--- | :--- |
-| v0.5.0~v0.5.6 | 2026-09 | ed9fbfb..a3c17e8（docs 记录） | 基线记录期：清洗器资产域、守卫体系与本文档体例成型 | — |
-| v0.6.0 | 2026-09-30 | 见 git log | people-workspace 整文件回归上游直通裁决（勿回植 extraOnly，§3.2） | — |
-| v0.6.2+v0.6.3 | 10-01 | `7354fa3` | 3 冲突；`invalidate` 并集（千事 sessionReceipt + 本地 clearPersisted）；上游 2 红测试代修 | 1400 |
-| v0.6.4~v0.6.6 | 10-03 | `6262acc` | 7 冲突；help-guide 包裹符段保本地、拒上游 `'content'` 默认、time-body `calendar` 并集 | 1427 |
-| v0.6.7+v0.6.8 | 10-05 | `60401dd` | 4 冲突；向量召回全采纳；**合并损坏一例**：本地 `sameRoot` 被吞致 118 红（§2.2） | 1506/1508 |
-| v0.6.9~v0.6.11 | 10-06 | `c916304` | 3 冲突；union hunk（上游 `markVerificationFailure` + 本地密封点重对齐）；键 `20261006.15` | 1545 |
 | v0.6.12 | 10-07 | `b422e28` | 2 冲突（dist 重建 + 键 `20261006.19-f5bc5d2239eb3a09`）；三增强与三处 UI 方言幸存 | 1564 |
 | v0.7.0 | 10-08 | `118e68d` | 3 冲突；保本地四项记忆化，只采上游 `recordsByValue`（§2.2）；键 `20261008.39-e0cadf4e4a535afa` | 1588 |
 | v0.7.1 | 10-09 | `746b48c` | 身份与千事重判并集；本地召回/清洗资产保留；键 `.47-ff373043728cf283` | 1606 |
