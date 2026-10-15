@@ -149,6 +149,7 @@ test('候选生产 bundle 经真实 CHAT_CHANGED 初始化同角色副本，目�
       hostFiles.set(body.file_name, { header: structuredClone(header), chat: structuredClone(chat) });
       return response(200, { ok: true, integrity: 'host-integrity' });
     }
+    if (path === '/api/plugins/st-bainiaodata/v1/health') return response(200, { ok: true, api: { current: 1, supported: [1] }, capabilities: { records: true, optimisticRevision: true } });
     if (path.startsWith('/api/backends/')) {
       candidateAiCalls += 1;
       throw new Error('候选分支不得调用模型');
