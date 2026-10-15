@@ -65,3 +65,4 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 | v0.7.2 / v0.7.4 | `tests/v3-extractor-memory.test.mjs` 调试导出夹具名由 `271` 改名 `1000`，写死 POSIX `/tmp/...`（Windows 解析为 `D:\tmp` → ENOENT） | 路径改 `join(tmpdir(), …)`（当前 `<n>` = `1000`），夹具名随之同步 |
 | v0.7.5 | 认领前坐标校验致 2 条挂起/红 | 补 name/avatar 适配（`7c87ea9`） |
 | v0.7.13 | `tests/production-entry-load.test.mjs:240` 版本断言停留在 `'0.7.12'`，而 manifest 已 `0.7.13` | 代修断言对齐上游发布号 |
+| v0.7.14+v0.7.15 | `tests/production-dist-branch.test.mjs` 的 `fetchImpl` 只认 `/v1/records/qianqianjie/` 单条路由；v0.7.14 起记录读取强制先协商 `/v1/health`，探针 404 → 「聊天身份准备失败」（HTTP 404）→ 副本 binding 10s 超时 | 夹具补 `/v1/health` 桩：`{ ok: true, api: { current: 1, supported: [1] }, capabilities: { records: true, optimisticRevision: true } }`（不声明 `recordBatchRead`/`recordIdList`）→ 客户端走单条 GET 回退；断言与夹具内容一字未动 |

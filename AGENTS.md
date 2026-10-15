@@ -28,6 +28,7 @@
 | `manifest.json` | 版本号行与缓存键行冲突 | 版本采上游发布号；构建完成后回填最新缓存键（§1.3） |
 | `dist/qqj-app.js` | 编译产物冲突（数千 hunk） | 不手工解，直接 `npm run build` 覆盖重建即消除 |
 | `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：断言（`tests/production-entry-load.test.mjs:240`）常停在上一发布号而 manifest 已递增，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（实例见 §5.1） |
+| `tests/production-dist-branch.test.mjs` | 上游 v0.7.14 起记录读取强制先协商 `/v1/health`（能力探测），该文件夹具只认 `/v1/records/…` 单条路由 → 探针 404（**纯上游树同样红**，见 §5.1 v0.7.14+v0.7.15 行） | 本地代修：夹具补 `/v1/health` 桩并有意不声明 `recordBatchRead`/`recordIdList`，使客户端走单条 GET 回退；断言与夹具内容一字未动 |
 | `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突 |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数 vs 本地 `sanitizerOptions` 参数 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
 | `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**（当前 `1000`，早期 `271`） | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-<上游当前 n>-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；**夹具名随上游改名同步**，断言与夹具内容一字未动；v0.7.5 另有一条上游自带挂起/红测试，本地补 name/avatar 适配（`7c87ea9`）；其余代修实例见 §5.1 |
@@ -135,7 +136,7 @@
    ```
 
    *标准*：14/14 全通过（v0.7.13 起含核记录缓存诊断新例；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1727** = 上游 v0.7.13 树 + 本地守卫；沙箱下以单并发方式实测约 110s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1739** = 上游 v0.7.15 树 + 本地守卫；沙箱下以单并发方式实测约 110s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
@@ -143,8 +144,8 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.13`（提交 `2fa6849`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `0.7.13`（含 `author: "atonal519"`），缓存键 `20261014.89-e973510603efafb3`（哈希与真实 bundle 一致）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.15`（提交 `09ee668`）。本次合并提交及父提交见 §5.1 与 git 历史；
+- **产物版本**：`manifest.json` 版本号 `0.7.15`（含 `author: "atonal519"`），缓存键 `20261015.125-cd3219844744ee4f`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
@@ -164,5 +165,6 @@
 | v0.7.9+v0.7.10 | 10-12 | `aa1691e` | 2 冲突（dist 重建、键 `.77-a5489a5c29fb0687`）；空间 UI 移除+prompt-31 全采纳 | 1721 |
 | v0.7.11+v0.7.12 | 10-13 | `1ede0fb` | 2 冲突（dist 重建、键 `.84-c8fb4019a5778016`）；分支迁移+prompt-32 | 1725 |
 | v0.7.13 | 10-14 | `c711ee8` | 2 冲突（dist 重建、键 `.89-e973510603efafb3`）；核记录缓存开关全采纳+上游版本断言代修 | 1727 |
+| v0.7.14+v0.7.15 | 10-15 | `a61cfd5` | 3 冲突（dist 重建、manifest 版本+键 `.125-cd3219844744ee4f`、入口断言采上游）；batch 读协商代修 | 1739 |
 
 > **审计更新（2026-10-11）**：`src/v3/extractor.js` 的 `excludedTags` 已补入 `record` 单数；嵌套 `<status><record>…</record></status>` 不再经父块 `plain` 文本进入时间读取，回归锁定于 `tests/v3-time-body.test.mjs`。§2.2 时间体条目中的该缺口描述仅保留为历史取证。
