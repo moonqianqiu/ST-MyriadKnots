@@ -6,7 +6,7 @@ import { selectRecallMemories } from './recall-source.js';
 
 export const VECTOR_INDEX_ID = 'qqj-vector-index';
 export const VECTOR_SHARD_PREFIX = 'qqj-vector-shard-';
-const SCHEMA = 1, BATCH = 16, INDEX_LOAD_TIMEOUT_MS = 15000, VECTOR_QUERY_TIMEOUT_MS = 15000;
+const SCHEMA = 1, BATCH = 16, COPY_BATCH = 4, INDEX_LOAD_TIMEOUT_MS = 15000, VECTOR_QUERY_TIMEOUT_MS = 15000;
 const hash = async value => `sha256:${await sha256(value)}`;
 const configKey = config => JSON.stringify([config.url, config.model, config.dimensions]);
 const ownerKey = (source, modelKey) => JSON.stringify([source.chatId, source.narrativeGeneration, modelKey]);
@@ -148,6 +148,24 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
     try { return { ...await client.get(collection, recordId), recordId }; }
     catch (error) { if (error?.status === 404) return null; throw error; }
   };
+  const readRecords = async (collection, recordIds) => {
+    if (recordIds.length > 1 && typeof client.getMany === 'function') {
+      const result = await client.getMany(collection, recordIds, { negotiate: false });
+      if (!Array.isArray(result) || result.length !== recordIds.length) throw new Error('后端批量读取结果无效');
+      return result.map((item, index) => {
+        const recordId = recordIds[index];
+        if (!item || item.recordId !== recordId) throw new Error('后端批量读取结果无效');
+        if (item.status === 404) return null;
+        if (item.status === 200 && item.envelope && typeof item.envelope === 'object') return { ...item.envelope, recordId };
+        const error = new Error('后端批量读取失败');
+        if (Number.isSafeInteger(item.status)) error.status = item.status;
+        throw error;
+      });
+    }
+    const records = [];
+    for (const recordId of recordIds) records.push(await readRecord(collection, recordId));
+    return records;
+  };
   async function batchWitnesses(source, modelKey, batch, reusable = null) {
     const witnesses = [];
     for (const chunk of batch) {
@@ -209,15 +227,34 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
         const dimensions = manifest.data.dimensions;
         reportLoad({ ...diagnostic?.load, pending: 'shard', shardCount: manifest.data.shardIds.length });
         if (!Number.isSafeInteger(dimensions) || dimensions < 1 || dimensions > 8192) { reportLoad({ ...diagnostic?.load, pending: null, exitReason: 'invalid' }); return; }
-        for (const id of manifest.data.shardIds) {
-          if (!isEnabled() || captured !== epoch || active && !allowActive) return;
-          const shard = await readRecord(`chat-${source.chatId}`, id);
-          if (!shard) { reportLoad({ ...diagnostic?.load, pending: null, exitReason: 'missing' }); return; }
-          if (!vectorRecordOwned(shard)) { reportLoad({ ...diagnostic?.load, pending: null, exitReason: 'invalid' }); return; }
-          if (ownerKey(shard.data, shard.data.modelKey) !== key) { reportLoad({ ...diagnostic?.load, pending: null, exitReason: 'ownerMismatch' }); return; }
-          for (const row of shard.data.rows) rows.push({ witness: row.witness, vector: decodeVector(row.vector, dimensions), shardId: id });
-          reportLoad({ ...diagnostic?.load, shardsRead: (diagnostic?.load?.shardsRead ?? 0) + 1 });
+        const shardIds = manifest.data.shardIds, shards = new Array(shardIds.length);
+        let nextShard = 0, shardsRead = 0, exitReason = null, readError = null;
+        const readShard = async () => {
+          while (!exitReason && !readError) {
+            if (!isEnabled() || captured !== epoch || active && !allowActive) { exitReason = 'cancelled'; return; }
+            const index = nextShard++;
+            if (index >= shardIds.length) return;
+            const id = shardIds[index];
+            try {
+              const shard = await readRecord(`chat-${source.chatId}`, id);
+              if (!shard) { exitReason = 'missing'; return; }
+              if (!vectorRecordOwned(shard)) { exitReason = 'invalid'; return; }
+              if (ownerKey(shard.data, shard.data.modelKey) !== key) { exitReason = 'ownerMismatch'; return; }
+              shards[index] = shard.data.rows.map(row => ({ witness: row.witness, vector: decodeVector(row.vector, dimensions), shardId: id }));
+              shardsRead += 1;
+              reportLoad({ ...diagnostic?.load, shardsRead });
+            } catch (error) {
+              readError = error;
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, shardIds.length) }, () => readShard()));
+        if (readError) throw readError;
+        if (exitReason) {
+          if (exitReason !== 'cancelled') reportLoad({ ...diagnostic?.load, pending: null, exitReason });
+          return;
         }
+        for (const shardRows of shards) rows.push(...shardRows);
         if (isEnabled() && captured === epoch && (!active || allowActive) && configKey(configProvider()) === configKey(config)) {
           cached = { key, rows, dimensions, manifest: { revision: manifest.revision, shardIds: [...manifest.data.shardIds], chunkCount: manifest.data.chunkCount } };
           if (!active && !updating) notify({ status: 'ready', completed: rows.length, total: rows.length, error: null });
@@ -388,6 +425,21 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
     }
   }
 
+  async function readIndexStatus({ chatId, narrativeGeneration } = {}) {
+    if (!isEnabled()) return { status: 'disabled' };
+    const config = configProvider?.();
+    if (!config) return { status: 'disabled' };
+    if (typeof chatId !== 'string' || !chatId || typeof narrativeGeneration !== 'string' || !narrativeGeneration) return { status: 'unavailable' };
+    const modelKey = await hash(configKey(config));
+    const manifest = await readRecord(`chat-${chatId}`, VECTOR_INDEX_ID);
+    if (!manifest) return { status: 'ready', chunkCount: 0 };
+    if (!vectorRecordOwned(manifest)) throw errorWith('VECTOR_CACHE_INVALID', '当前聊天的向量索引格式无效。');
+    if (manifest.data.chatId !== chatId) throw errorWith('VECTOR_CACHE_OWNER_MISMATCH', '向量索引归属与当前聊天不一致。');
+    if (manifest.data.narrativeGeneration !== narrativeGeneration || manifest.data.modelKey !== modelKey) {
+      return { status: 'ready', chunkCount: 0 };
+    }
+    return { status: 'ready', chunkCount: manifest.data.chunkCount };
+  }
   async function build() {
     if (active || updating) return { status: 'busy' };
     queryOperation?.controller.abort();
@@ -451,36 +503,52 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
       : { ...source, chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration };
     const witnessSource = branchPrefix ? target : source;
     const rows = [], seen = new Set();
-    for (const id of sourceManifest.data.shardIds) {
-      const shard = await readRecord(sourceCollection, id);
-      if (!shard || !vectorRecordOwned(shard) || shard.data.modelKey !== modelKey
-        || ownerKey(shard.data, modelKey) !== ownerKey(source, modelKey)) return Object.freeze([]);
-      for (const row of shard.data.rows) {
-        if (!rawWitnessShape(row.witness) || !await rawWitnessValid(row.witness, witnessSource)
-          || seen.has(rawChunkKey(row.witness))) continue;
-        try { decodeVector(row.vector, sourceManifest.data.dimensions); } catch { continue; }
-        seen.add(rawChunkKey(row.witness));
-        rows.push(row);
+    for (let start = 0; start < sourceManifest.data.shardIds.length; start += COPY_BATCH) {
+      const ids = sourceManifest.data.shardIds.slice(start, start + COPY_BATCH);
+      const shards = await readRecords(sourceCollection, ids);
+      for (const shard of shards) {
+        if (!shard || !vectorRecordOwned(shard) || shard.data.modelKey !== modelKey
+          || ownerKey(shard.data, modelKey) !== ownerKey(source, modelKey)) return Object.freeze([]);
+        for (const row of shard.data.rows) {
+          if (!rawWitnessShape(row.witness) || !await rawWitnessValid(row.witness, witnessSource)
+            || seen.has(rawChunkKey(row.witness))) continue;
+          try { decodeVector(row.vector, sourceManifest.data.dimensions); } catch { continue; }
+          seen.add(rawChunkKey(row.witness));
+          rows.push(row);
+        }
       }
     }
     if (!rows.length) return Object.freeze([]);
     const shardIds = [];
-    for (let start = 0; start < rows.length; start += BATCH) {
-      const batch = rows.slice(start, start + BATCH);
-      const copiedRows = batch.map(row => ({ ...row, witness: orderedRawWitness(row.witness) }));
-      const witnesses = copiedRows.map(row => row.witness);
-      const id = `${VECTOR_SHARD_PREFIX}${(await sha256(JSON.stringify([targetNarrativeGeneration, modelKey, witnesses]))).slice(0, 40)}`;
-      const savedShard = await readRecord(targetCollection, id);
-      if (!await validSavedBatch(savedShard, target, modelKey, copiedRows, witnesses, id, sourceManifest.data.dimensions)) {
-        if (savedShard) return Object.freeze([]);
-        try { await client.put(targetCollection, id, { schemaVersion: SCHEMA, recordType: 'vectorCache',
-          chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration, modelKey, rows: copiedRows }, 0); }
-        catch {
-          const persisted = await readRecord(targetCollection, id);
-          if (!await validSavedBatch(persisted, target, modelKey, copiedRows, witnesses, id, sourceManifest.data.dimensions)) return Object.freeze([]);
-        }
+    for (let start = 0; start < rows.length; start += BATCH * COPY_BATCH) {
+      const work = [];
+      for (let offset = start; offset < Math.min(rows.length, start + BATCH * COPY_BATCH); offset += BATCH) {
+        const copiedRows = rows.slice(offset, offset + BATCH).map(row => ({ ...row, witness: orderedRawWitness(row.witness) }));
+        const witnesses = copiedRows.map(row => row.witness);
+        const id = `${VECTOR_SHARD_PREFIX}${(await sha256(JSON.stringify([targetNarrativeGeneration, modelKey, witnesses]))).slice(0, 40)}`;
+        work.push({ id, copiedRows, witnesses });
       }
-      shardIds.push(id);
+      const saved = await readRecords(targetCollection, work.map(item => item.id));
+      const pending = [];
+      for (let index = 0; index < work.length; index += 1) {
+        const item = work[index], savedShard = saved[index];
+        if (await validSavedBatch(savedShard, target, modelKey, item.copiedRows, item.witnesses, item.id, sourceManifest.data.dimensions)) continue;
+        if (savedShard) return Object.freeze([]);
+        pending.push(item);
+      }
+      const written = await Promise.all(pending.map(async item => {
+        try {
+          await client.put(targetCollection, item.id, { schemaVersion: SCHEMA, recordType: 'vectorCache',
+            chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration, modelKey, rows: item.copiedRows }, 0);
+          return true;
+        } catch {
+          const persisted = await readRecord(targetCollection, item.id);
+          return Boolean(await validSavedBatch(persisted, target, modelKey, item.copiedRows, item.witnesses,
+            item.id, sourceManifest.data.dimensions));
+        }
+      }));
+      if (written.some(value => !value)) return Object.freeze([]);
+      shardIds.push(...work.map(item => item.id));
     }
     const manifest = { schemaVersion: SCHEMA, recordType: 'vectorCache',
       chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration, modelKey,
@@ -795,7 +863,7 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
     }
   }
   return Object.freeze({
-    build, updateIncrementally, query, getState: () => ({ ...state, active: Boolean(active || updating && state.status === 'building'), updating: Boolean(updating), background: Boolean(updating && state.status === 'building'), query: querySnapshot }), subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
+    build, updateIncrementally, query, readIndexStatus, getState: () => ({ ...state, active: Boolean(active || updating && state.status === 'building'), updating: Boolean(updating), background: Boolean(updating && state.status === 'building'), query: querySnapshot }), subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
     cancelIncrementally,
     copyPrefix,
     getResumableShardIds,

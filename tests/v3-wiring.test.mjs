@@ -30,7 +30,9 @@ test('生产入口只装配 V3 记忆与独立人物工作区，面板提供五�
   assert.match(panel, /activeTab === 'profiles'/, '千人必须使用独立人物资料视图');
   assert.match(panel, /activeTab === 'qianshi'/, '千事必须使用独立完整时间线视图');
   assert.match(panel, /setPage\?\.\(activeTab === 'people' \? 'people' : 'memories'\)/, '真实内容入口必须显式选择千结或双丝网页，不能落入视图默认管理页');
-  assert.match(panel, /setPage\?\.\('management'\)/, '设置页必须挂载记忆管理视图');
+  // 本地代修（上游 v0.8.0 自带红）：上游把设置页挂载改为 mount(managementMount, { page: 'management' })，
+  // 断言仍停在旧 setPage?.('management')，纯上游树同样红（AGENTS §2.1 同类惯例缺陷），勿误判为本地回归。
+  assert.match(panel, /v3FoundationView\.mount\(managementMount, \{ page: 'management' \}\)/, '设置页必须挂载记忆管理视图');
   for (const path of [
     '../src/archive-v2.js',
     '../src/archive-v2-memory-composition.js',

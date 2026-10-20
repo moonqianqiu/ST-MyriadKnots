@@ -65,6 +65,19 @@ test('计划按最近 N 个真实 AI 的上一 AI 边界保留整段用户上下
   assert.deepEqual(plan.hideRanges, [{ start: 0, end: 1 }, { start: 3, end: 3 }], '旁白不得被自动隐藏接管');
 });
 
+test('归档冻结前缀不以当前聊天同位置正文证明覆盖，后续活动楼仍可正常连续隐藏', () => {
+  const chat = [user('当前前缀'), assistant('B活动楼一'), user('继续'), assistant('B活动楼二'), user('新输入'), assistant('最新')];
+  const base = stateFor(chat);
+  const floors = base.floors.filter(floor => floor.messageIndex === 1 || floor.messageIndex === 3);
+  const state = { ...base, migrationAliases: [], floors: [
+    { ...base.floors[0], frozen: true, messageIndex: 0 },
+    ...floors.map(floor => ({ ...floor, assistantSeq: floor.assistantSeq + 1 })),
+  ] };
+  const plan = planAutoHide({ chat, memoryState: state, keepAiCount: 1 });
+  assert.equal(plan.hideThrough, 3);
+  assert.deepEqual(plan.hideRanges, [{ start: 0, end: 3 }]);
+});
+
 test('宿主命令只处理可见目标并写稳定聊天标记；调大 N 保持隐藏，关闭只恢复千千结自有范围', async () => {
   const chat = [user('旧输入'), assistant('旧回复'), event('narrator_note'), user('中间输入'), assistant('中间回复'), user('最新输入'), assistant('最新回复')];
   chat[2].extra.keep = true;

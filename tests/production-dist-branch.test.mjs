@@ -154,6 +154,9 @@ test('候选生产 bundle 经真实 CHAT_CHANGED 初始化同角色副本，目�
       candidateAiCalls += 1;
       throw new Error('候选分支不得调用模型');
     }
+    if (path === '/api/plugins/st-bainiaodata/v1/health') {
+      return response(200, { ok: true, api: { current: 1, supported: [1] }, capabilities: { records: true, optimisticRevision: true, recordBatchRead: false, recordIdList: false } });
+    }
     const prefix = '/api/plugins/st-bainiaodata/v1/records/qianqianjie/';
     if (!path.startsWith(prefix)) return response(404, {});
     const parts = path.slice(prefix.length).split('/').map(decodeURIComponent);

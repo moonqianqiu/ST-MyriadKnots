@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeMemoryTagList, readMemoryTagBlocks, sanitizeMemoryContent, stripMemoryTagBlocks } from '../src/memory-content-sanitizer.js';
-import { findEarliestCanonicalDivergence, scanAssistantCandidates, sanitizerFingerprint } from '../src/v3/foundation-domain.js';
+import { scanAssistantCandidates, sanitizerFingerprint } from '../src/v3/foundation-domain.js';
 
 const OT = { think: '<' + 'think>', status: '<' + 'status>', reasoning: '<' + 'reasoning>', content: '<' + 'content>', story: '<' + 'story>', nowplot: '<' + 'now_plot>' };
 const CT = { think: '</' + 'think>', status: '</' + 'status>', reasoning: '</' + 'reasoning>', content: '</' + 'content>', story: '</' + 'story>', nowplot: '</' + 'now_plot>' };
@@ -75,13 +75,17 @@ test('extraTags 字面规则改变 sanitizer 指纹；keep 无匹配时楼层候
   const previousOptions = { keepTags: 'content', extraTags: '' };
   const nextOptions = { keepTags: 'content', extraTags: '[[...]]' };
   assert.notEqual(await sanitizerFingerprint(previousOptions), await sanitizerFingerprint(nextOptions));
-  const chat = [{ is_user: false, is_system: false, mes: '[[思考]]正文' }, { is_user: false, is_system: false, mes: '确认楼' }];
-  const previous = await scanAssistantCandidates(chat, { sanitizerOptions: previousOptions });
-  const next = await scanAssistantCandidates(chat, { sanitizerOptions: nextOptions });
-  // keep=content：楼内没有 <content> 块 → 清洗为空 → 扫描器丢弃该楼
-  assert.equal(previous.length, 0);
-  assert.equal(next.length, 0);
-  assert.equal(findEarliestCanonicalDivergence([], []), null);
+  // 本仓 M2 合同：keep 块之外的一切剔除；楼内没有 <content> 块 → 清洗为空 → 扫描器丢弃该楼
+  const noKeepBlock = [{ is_user: false, is_system: false, mes: '[[思考]]正文' }, { is_user: false, is_system: false, mes: '确认楼' }];
+  assert.equal((await scanAssistantCandidates(noKeepBlock, { sanitizerOptions: previousOptions })).length, 0);
+  assert.equal((await scanAssistantCandidates(noKeepBlock, { sanitizerOptions: nextOptions })).length, 0);
+  // 上游意图（v0.7.15 基线）：extra 规则变化须改变 canonical 内容并使旧楼识别为 canonical 分歧
+  const withKeepBlock = [{ is_user: false, is_system: false, mes: OT.content + '[[思考]]正文' + CT.content }, { is_user: false, is_system: false, mes: '确认楼' }];
+  const previous = await scanAssistantCandidates(withKeepBlock, { sanitizerOptions: previousOptions });
+  const next = await scanAssistantCandidates(withKeepBlock, { sanitizerOptions: nextOptions });
+  assert.equal(previous[0].canonicalContent, '[[思考]]正文');
+  assert.equal(next[0].canonicalContent, '正文');
+  assert.notEqual(previous[0].canonicalFingerprint, next[0].canonicalFingerprint);
 });
 
 test('M0 两栏皆空：不清洗，配对块逐字节保留，仅卫生处理', () => {
