@@ -29,9 +29,9 @@
 | `dist/qqj-app.js` | 编译产物冲突（数千 hunk） | 不手工解，直接 `npm run build` 覆盖重建即消除 |
 | `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：断言（`tests/production-entry-load.test.mjs:240`）常停在上一发布号而 manifest 已递增，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（实例见 §5.1） |
 | `tests/production-dist-branch.test.mjs` | 上游 v0.7.14 起记录读取强制先协商 `/v1/health`（能力探测），该文件夹具只认 `/v1/records/…` 单条路由 → 探针 404（**纯上游树同样红**，见 §5.1 v0.7.14+v0.7.15 行） | 本地代修：夹具补 `/v1/health` 桩并有意不声明 `recordBatchRead`/`recordIdList`，使客户端走单条 GET 回退；断言与夹具内容一字未动 |
-| `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突 |
+| `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突。**v0.8.0 代修**：上游把设置页挂载改为 `v3FoundationView.mount(managementMount, { page: 'management' })`，断言仍停在旧 `setPage?.('management')`（纯上游树同样红）→ 本地按上游实际机制改写断言，勿误判为本地回归 |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数 vs 本地 `sanitizerOptions` 参数 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
-| `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**（当前 `1000`，早期 `271`） | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-<上游当前 n>-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；**夹具名随上游改名同步**，断言与夹具内容一字未动；v0.7.5 另有一条上游自带挂起/红测试，本地补 name/avatar 适配（`7c87ea9`）；其余代修实例见 §5.1 |
+| `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**（当前 `1000`，早期 `271`） | 本地仅改路径可移植：`join(tmpdir(), 'qqj-v048-<上游当前 n>-current-reachable.json')` + `import { tmpdir } from 'node:os'` / `{ join } from 'node:path'`；**夹具名随上游改名同步**，断言与夹具内容一字未动；v0.7.5 另有一条上游自带挂起/红测试，本地补 name/avatar 适配（`7c87ea9`）；其余代修实例见 §5.1。**v0.8.0 起两例**（`地点名参照`、`地点绑定和父级`）新增/改写的原始消息带 `<location>` 标签并期望 canonical 不含它（依赖上游清洗器缺省剥除）→ 本地显式 `sanitizerOptions: () => ({ extraTags: 'location' })`，测试意图不变 |
 | `src/memory-content-sanitizer.js` | 上游 v0.5.8 起「默认 keep='content'」简化实现 vs 本地四模式合同 | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留（规格见 §3.1）；上游 `stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`HTML_VOID_TAGS`/元数据解析器整段移植（上游同名 `parseSanitizerTree` 更名 `parseTagTokenTree` 避撞名；上游缩进原样保留，该区未来零冲突） |
 | `src/v3/people-workspace.js` + `src/ui/people-profiles-view.js` | 上游增删人物工作区功能 | **整文件保持与上游逐字相同**（v0.6.0 定案：直通系上游设计意图，源码/工厂签名/import/测试含直通断言均随上游）——**勿再回植 extraOnly**（§3.2 已回归清单）；唯 `saveProfile → invalidate('peopleProfileSaved', …, { clearPersisted: true })` 联动除外（§3.4 ②） |
 | `src/v3/foundation-domain.js` | 本地 `SANITIZER_VERSION = memory-content-sanitizer-v2`、keepTags `''`（M0），上游停留 v1+`'content'`——同一宿主聊天两侧派生**不同确定性图 ID**（floor/run/checkpoint/index 全链） | **保留本地合同**；上游 fixture `tests/fixtures/tt2-native-init-failure.json`（编码上游预计算 ID）须按本地语义重生成——以 `fstore.recordKey(record)` 捕获 run/checkpoint/floor/index（索引键含 `floorOrder-0-` 段，勿手拼 `v3-index-<id>`），run 回卷 `retryableError`+`V3_GRAPH_INDEX_ROUTE_INVALID`、无 root |
@@ -46,6 +46,7 @@
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与绑定种类 `'locatorEquivalent'`——弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖」的语义冲突；私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `readTimeBody` 传入。
 > - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。排除名单与 extractor 同步并由逐名行为守卫锁定。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。
 > - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`，须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
+> - **v0.8.0 覆盖型迁移实录（`v3-foundation-view.js`）**：上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。
 > - **v0.7.9 上游隐藏「空间记录」UI**：删除 `placeNameCache`/`placeNamesFor` 助手与整块 `qqj-memory-spatial` 渲染（内部空间记忆与「地点」meta 保留），并把 `EXTRACTOR_FIXED_CONTRACT` 第 11 条地点粒度改写为「按房间或有独立意义的区域」。本地未定制该区块，**全采纳，勿回植空间 UI**。
 > - `src/ui/help-guide.js`：本地改两处——设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义）+ 排障手册「大量楼摘要缺正文」段尾的日期读取教义句（2026-10-11：含日期的闪回/回忆类块会被当作本楼当前时间，extraTags 声明可排除）。上游高频重写本文件文案——裁决：**上游新增段落全收 + 两处本地保持**（包裹符段上游侧仍是旧 `[[...]]` 专用描述，勿取上游侧；教义句属上游文案区内的本地追加句尾，合并后须核在位）。
 > - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，判定输入一字未动；上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
@@ -81,6 +82,7 @@
 - **通用字面量包裹规则（P5，2026-09-30 按方案 B 恢复）**：两栏都接受任意「起始...结束」（`LITERAL_WRAPPER_SEPARATOR = '...'`，如 `{{...}}`、`<<...>>`），`...` 前=开定界符、后=闭定界符；keep 栏=剥壳取内层，extra 栏=连定界符整块删除，`[[...]]` 只是其特例。解析由 `collectWrapperRules(keep, extra)` 收集两栏并集（去重、按开定界符长度降序防短前缀抢占）后生成 `kind:'wrapper'` 节点（节点自带 `openRaw`/`closeRaw` 重建）——**无硬编码 `\[\[…\]\]`，也取消了上游式前置删除与 keep 栏 `TAG_NAME_PATTERN` 过滤**。`normalizeTagRules` 对包裹规则原样保留（大小写敏感）、标签名照旧小写；非法形态（开/闭定界符为空、`...` 出现两次）按 `literalWrapperRule` 三条件丢弃。
 - **与上游包装符语义的唯一分歧**：嵌套包装符（如 `{{a{{b}}c}}`）本 fork 按树机整块处理，上游 `dropLiteralWrappedContent` 为扁平 indexOf 扫描；40 例金样不含嵌套包装符，故不冲突。
 - **测试侧不得回退**：`tests/memory-content-sanitizer.test.mjs` 中上游两条依赖「默认 keepTags='content'」语义的断言，已按本地 M0 合同改写为直通正断言，未来合并不得采用上游语义覆盖。
+- **v0.8.0 起「`<location>` 缺省剥除」类**：上游清洗器对 `<location>…</location>` **无条件剥除**，本仓 M0 合同**保留**它（属普通配对标签，未配置即不清洗）。上游 v0.8.0 新增/改写的测试（`tests/v3-recall.test.mjs` 的「人工地点清除」例、`tests/v3-extractor-memory.test.mjs` 的「地点名参照」与「地点绑定和父级」两例）依赖该缺省行为 → 一律本地适配（显式 `extraTags:'location'`，或把 canonical 期望值改为 M0 直通原文），**严禁为迁就测试而给清洗器加 `<location>` 缺省剥除**（会破坏 40 例金样与 SDC 跨仓对拍）。该适配反而更强：原消息地点标签真实存活时，「人工清除」的抑制效果才可被单独验证。
 - **v0.5.8+ 双层文件结构**：前半部本地四模式合同，后半部上游移植段（`stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`parseTagTokenTree`，服务 v3 时间链路，`<br>` 按 void-tag 处理、节点携带偏移元数据；移植段归一化引用走本地 `normalizeTagRules`）。上游后续若改这些导出，直接对齐上游该段即可。
 
 ### 3.2 非 AI 正文来源 extra-only 隔离清洗（防止世界书/用户输入被洗空）
@@ -135,19 +137,21 @@
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
 
-   *标准*：14/14 全通过（v0.7.13 起含核记录缓存诊断新例；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 全量全绿（当前基线 **1739** = 上游 v0.7.15 树 + 本地守卫；沙箱下以单并发方式实测约 110s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+   *标准*：19/19 全通过（v0.7.13 起含核记录缓存诊断新例；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
+3. **全量测试套件**：`npm test` —— 当前基线 **1922 例 / 1882 通过 / 40 上游原生红**（= 上游 v0.8.0 树 + 本地守卫；40 红全部可在纯上游树复现，逐文件计数与上游一致，`settings-api` 少 1 例；沙箱下以单并发方式实测约 110s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
+   > **上游原生红判定法**：某测试文件与上游**逐字节相同**而失败时，先在纯上游树跑同一文件；计数相同即上游原生，禁止为「让全量变绿」而改本地 `src/` 合同。**慢文件勿整跑**（`v3-extractor-memory.test.mjs` 含 1000 楼生产夹具，整文件数分钟），用 `--test-name-pattern` 按例对照。
+   > **v0.8.0 起新增一类上游原生红**：上游新增/改写的测试依赖其清洗器**缺省剥除 `<location>`** 标签，本仓 M0 合同保留该标签（§3.1）→ 按 §2.1 代修（显式 `extraTags:'location'` 或改 canonical 期望值），**不得改清洗器缺省行为**（会破坏 40 例金样与跨仓对拍）。
 4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
 ---
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.7.15`（提交 `09ee668`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `0.7.15`（含 `author: "atonal519"`），缓存键 `20261015.125-cd3219844744ee4f`（哈希与真实 bundle 一致）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.8.0`（提交 `e6ad32c`）。本次合并提交及父提交见 §5.1 与 git 历史；
+- **产物版本**：`manifest.json` 版本号 `0.8.0`（含 `author: "atonal519"`），缓存键 `20261020.126-58d4b7dcebff9b7f`（哈希与真实 bundle 一致）；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
-- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.8.3moon（2026-10-07，`1739c19`；线 schema 重写/外部聊天存储/记忆上下文窗口化；上游自带 2 红测试本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
+- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.9.0moon（2026-10-15，`dc05fe9`；统一模块工作流；上游自带红本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。**待办**：SDC 侧上游 v3.9.1~v3.9.4 尚未合并。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 
@@ -166,5 +170,6 @@
 | v0.7.11+v0.7.12 | 10-13 | `1ede0fb` | 2 冲突（dist 重建、键 `.84-c8fb4019a5778016`）；分支迁移+prompt-32 | 1725 |
 | v0.7.13 | 10-14 | `c711ee8` | 2 冲突（dist 重建、键 `.89-e973510603efafb3`）；核记录缓存开关全采纳+上游版本断言代修 | 1727 |
 | v0.7.14+v0.7.15 | 10-15 | `a61cfd5` | 3 冲突（dist 重建、manifest 版本+键 `.125-cd3219844744ee4f`、入口断言采上游）；batch 读协商代修 | 1739 |
+| v0.8.0 | 10-20 | `bd44158` | 14 冲突；编辑器迁移+三处 invalidate 保位；删 legacyIndexPuts；键 `.126-58d4b7dcebff9b7f` | 1882/1922 |
 
 > **审计更新（2026-10-11）**：`src/v3/extractor.js` 的 `excludedTags` 已补入 `record` 单数；嵌套 `<status><record>…</record></status>` 不再经父块 `plain` 文本进入时间读取，回归锁定于 `tests/v3-time-body.test.mjs`。§2.2 时间体条目中的该缺口描述仅保留为历史取证。
