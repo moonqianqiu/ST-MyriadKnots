@@ -13,12 +13,16 @@ import { sanitizeMemoryContent as stripTags } from '../src/memory-content-saniti
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-test('golden baseline: 40 cases byte-identical (29 pre-refactor + 11 SDC-alignment)', () => {
+test('golden baseline: 39 cases byte-identical plus explicit nested-noise correction', () => {
     const golden = JSON.parse(readFileSync(join(here, '..', 'src', 'tag-sanitizer.golden.json'), 'utf8'));
     assert.ok(golden.cases.length >= 40);
     for (const c of golden.cases) {
         const got = stripTags(c.input, { ...c.opts });
-        assert.equal(got, c.oldOutput, `case ${c.id}: input=${JSON.stringify(c.input)} opts=${JSON.stringify(c.opts)}`);
+        if (c.id === 'brk-extra-paired') {
+            assert.equal(c.input, '前[[噪音]]中[[a [[b]] c]]尾');
+            assert.equal(c.oldOutput, '前中 c]]尾', '保留历史金样，不将泄漏尾段当作安全合同');
+            assert.equal(got, '前中尾', '嵌套 extra 必须整块删除');
+        } else assert.equal(got, c.oldOutput, `case ${c.id}: input=${JSON.stringify(c.input)} opts=${JSON.stringify(c.opts)}`);
     }
 });
 

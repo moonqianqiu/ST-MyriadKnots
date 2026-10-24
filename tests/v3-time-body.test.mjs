@@ -1650,7 +1650,7 @@ test('真实时间runtime DTO把归并主项状态传到编辑指引', async () 
   const foundationState = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', memorySnapshotStatus: 'ready', memorySyncStatus: 'idle', memoryWorkBusy: false, memoryEntities: [], floors: [] };
   const foundationRuntime = { getState: () => foundationState, refreshStatus: async () => foundationState, confirmLatest: async () => foundationState };
   const container = new UiNode('main'), documentRef = uiDocument();
-  const view = createV3FoundationView({ runtime: foundationRuntime, timeRuntime: h.runtime, documentRef });
+  const view = createV3FoundationView({ runtime: foundationRuntime, timeRuntime: h.runtime, documentRef, customImpl: async ({ content }) => { container.append(content); return true; } });
   view.setPage('memories'); view.mount(container);
   await uiFlatten(container).find(node => node.textContent === `近期事项（${state.trackedItems.length}）`).click();
   const menu = uiFlatten(container).find(node => node.className === 'qqj-profile-menu'); menu.open = true;

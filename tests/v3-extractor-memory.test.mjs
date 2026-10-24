@@ -237,10 +237,10 @@ function viewHarness(runtime, { navigatorRef, pluginVersion = 'test', page = 'me
     constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.textContent = ''; this.className = ''; this.disabled = false; this.value = ''; this.open = false; this.selectionStart = 0; this.selectionEnd = 0; this.attributes = {}; }
     append(...nodes) { for (const node of nodes) { this.children.push(node); if (node instanceof ViewNode) node.parentNode = this; } }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
-    addEventListener(name, handler) { this.listeners[name] = handler; }
+    addEventListener(name, handler) { (this.listeners[name] ??= []).push(handler); }
     setAttribute(name, value) { this.attributes[name] = String(value); }
-    click() { return this.listeners.click?.(); }
-    fire(name) { return this.listeners[name]?.(); }
+    click() { return this.fire('click'); }
+    fire(name) { let result; for (const handler of this.listeners[name] ?? []) result = handler({ target: this, currentTarget: this, preventDefault() {}, stopPropagation() {} }); return result; }
     focus() { documentRef.activeElement = this; }
     closest(selector) { for (let node = this; node; node = node.parentNode) if (selector.startsWith('.') && node.className.split(' ').includes(selector.slice(1))) return node; return null; }
     getBoundingClientRect() { return { top: 0, bottom: 100, height: 100 }; }
@@ -254,8 +254,36 @@ function viewHarness(runtime, { navigatorRef, pluginVersion = 'test', page = 'me
   }
   const flatten = node => [node, ...(node.children ?? []).flatMap(flatten)];
   const container = new ViewNode('main');
-  const view = createV3FoundationView({ runtime, documentRef, navigatorRef, pluginVersion }); view.setPage(page); view.mount(container);
-  return { view, container, flatten };
+  let dialog = null, dialogError = null;
+  const customImpl = options => {
+    dialog?.cancel();
+    dialogError = null;
+    let resolve, finished = false;
+    const promise = new Promise(done => { resolve = done; });
+    const finish = value => {
+      if (finished) return;
+      finished = true;
+      if (dialog?.options === options) dialog = null;
+      options.onClose?.(); resolve(value);
+    };
+    dialog = { options, content: options.content, submitting: false, cancel: () => finish(null), async submit() {
+      if (finished || this.submitting) return false;
+      this.submitting = true; dialogError = null;
+      try { const value = await options.submit(); finish(value ?? true); return value ?? true; }
+      catch (error) { this.submitting = false; dialogError = error; return false; }
+    } };
+    return promise;
+  };
+  const openMemoryCards = () => {
+    for (const card of flatten(container).filter(node => node.className.split(' ').includes('qqj-memory-card'))) {
+      card.open = true; card.fire('toggle');
+    }
+  };
+  const view = createV3FoundationView({ runtime, documentRef, navigatorRef, pluginVersion, customImpl }); view.setPage(page); view.mount(container);
+  return { view, container, flatten, openMemoryCards, documentRef,
+    editorContent: () => dialog?.content ?? null, editorState: () => dialog,
+    editorError: () => dialogError, submitEditor: () => dialog?.submit() ?? Promise.resolve(null),
+    cancelEditor: () => dialog?.cancel() };
 }
 
 test('人物选择投影只保留有效 person，主角色与用户仍可选择', () => {
@@ -2195,6 +2223,7 @@ test('空间事实与召回来源保留内部地点身份和来源楼，用户�
   assert.deepEqual(floor.memory.locations.map(item => item.name), ['钟楼'], '既有地点 meta 字段保留');
   const ui = viewHarness(h.runtime);
   await ui.view.activate();
+  ui.openMemoryCards();
   assert.equal(ui.flatten(ui.container).some(node => node.className === 'qqj-memory-spatial'), false, '整块空间记录不向用户呈现');
   const metas = ui.flatten(ui.container).filter(node => node.className === 'qqj-memory-meta');
   assert.ok(metas.some(meta => ui.flatten(meta).some(node => node.textContent === '地点')
@@ -3583,12 +3612,26 @@ test('extractor 在坏 schema 回显后只接受唯一合法业务 JSON，歧义
 
   await assert.rejects(
     normalizeExtractorResponse({ response: '{"summary":"候选甲。"}\n{"summary":"候选乙。"}', finishReason: 'stop', envelope, floor, expectedScope: envelope.scope, now: NOW }),
-    error => error.code === 'V3_EXTRACTOR_SUMMARY_INVALID',
+    error => error.code === 'V3_EXTRACTOR_MULTIPLE_RESULTS',
   );
   await assert.rejects(
     normalizeExtractorResponse({ response: malformedSchema, finishReason: 'stop', envelope, floor, expectedScope: envelope.scope, now: NOW }),
     error => error.code === 'V3_EXTRACTOR_SUMMARY_INVALID',
   );
+  const validSchema = JSON.stringify({ type: 'object', description: 'JSON schema，不是剧情摘要。',
+    properties: { summary: { type: 'string' }, events: { type: 'array' } } });
+  for (const response of [validSchema, JSON.parse(validSchema)]) {
+    await assert.rejects(normalizeExtractorResponse({ response, finishReason: 'stop', envelope, floor,
+      expectedScope: envelope.scope, now: NOW }), error => error.code === 'V3_EXTRACTOR_SUMMARY_INVALID');
+  }
+  const fenced = await normalizeExtractorResponse({ response: `\`\`\`json\n${malformedSchema}\n\`\`\`\n\`\`\`json\n${business}\n\`\`\``,
+    finishReason: 'stop', envelope, floor, expectedScope: envelope.scope, now: NOW });
+  assert.equal(fenced.memory.summary.aiText, '裴晚生提醒用户继续前进。');
+  for (const damagedBusiness of ['{"summary":broken}', '{"type":"object","properties":{},"summary":broken}']) {
+    await assert.rejects(normalizeExtractorResponse({ response: `${damagedBusiness}\n${business}`, finishReason: 'stop',
+      envelope, floor, expectedScope: envelope.scope, now: NOW }), error => error.code === 'V3_EXTRACTOR_SUMMARY_INVALID',
+    '不得借 schema 过滤静默忽略损坏业务 JSON');
+  }
 });
 
 test('摘要同义字段、常见嵌套与已返回语义可确定性降级，且不混入技术元数据', async () => {
@@ -5593,7 +5636,8 @@ test('历史楼顺序提取只把最近已保存前楼的末段时间与摘要�
   assert.equal(extractorRequests.length, 2, '两楼顺序提取仍只各发一次原有模型请求');
   assert.equal(extractorRequests[0].payload.previousFloorContext, null, '第一楼没有已保存前楼上下文');
   assert.deepEqual(extractorRequests[1].payload.previousFloorContext, {
-    time: '十月四日晚九点',
+    // v0.8.0 的主线时间投影对 exact 时间优先使用已保存的 normalized，原句仍留在 chronology。
+    time: '10月4日 21:00',
     summaryTail: firstSummary.trim().slice(-300),
   });
   assert.equal(extractorRequests[1].payload.previousFloorContext.summaryTail.length, 300);
@@ -5834,40 +5878,48 @@ test('真实 runtime 保存中关闭并重开，提交完成后立即退出编�
   const h = harness();
   await h.runtime.start(); await h.runtime.extractNext();
   const ui = viewHarness(h.runtime);
-  const registeredCard = () => ui.flatten(ui.container).find(node => String(node.className).includes('qqj-memory-card')
-    && ui.flatten(node).some(child => child.textContent === '编辑' || child.placeholder === '输入用户修订摘要'));
-  let card = registeredCard(); card.open = true; card.fire('toggle');
+  const savedFloorId = h.runtime.getState().floors.find(floor => floor.memoryId).floorId;
+  const registeredCard = () => ui.flatten(ui.container).find(node => node.className.split(' ').includes('qqj-memory-card')
+    && node.attributes['data-qqj-floor-id'] === savedFloorId);
+  ui.openMemoryCards();
+  let card = registeredCard();
   ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
-  const summary = ui.flatten(ui.container).find(node => node.placeholder === '输入用户修订摘要'); summary.value = '真实保存后的摘要'; summary.fire('input');
+  const summary = ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要'); summary.value = '真实保存后的摘要'; summary.fire('input');
   const gate = h.backend.holdNextRootPut();
-  ui.flatten(ui.container).find(node => node.textContent === '保存').click();
+  const pending = ui.submitEditor();
   await gate.started;
-  const saving = ui.flatten(ui.container).find(node => node.textContent === '保存中…'); assert.ok(saving); assert.equal(saving.disabled, true);
+  assert.equal(ui.editorState().submitting, true, '真实弹窗在途状态阻止重复提交');
+  assert.equal(await ui.submitEditor(), false);
+  assert.equal(summary.disabled, true, '保存中正文编辑控制不可改写在途输入');
   ui.view.deactivate();
   await ui.view.activate();
-  assert.ok(ui.flatten(ui.container).some(node => node.placeholder === '输入用户修订摘要'), '提交未完成时重开应继续显示本次草稿');
+  assert.equal(ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要'), summary,
+    '提交未完成时重开保留独立弹窗草稿节点');
   gate.release();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy && !ui.flatten(ui.container).some(node => node.placeholder === '输入用户修订摘要'), '真实保存完成后界面未退出编辑');
+  assert.equal(await pending, true);
+  assert.equal(ui.editorContent(), null, '成功提交后弹窗立即关闭');
+  assert.equal(h.runtime.getState().memoryWorkBusy, false);
   card = registeredCard();
   assert.equal(card.open, true); assert.match(ui.flatten(card).map(node => node.textContent).join('|'), /真实保存后的摘要/);
-  assert.equal(ui.flatten(ui.container).some(node => node.textContent === '保存中…'), false);
   ui.view.deactivate(); await ui.view.activate();
   assert.equal(registeredCard().open, true, '保存完成后再关闭重开仍应保持展开');
-  assert.equal(ui.flatten(ui.container).some(node => node.placeholder === '输入用户修订摘要'), false);
+  assert.equal(ui.editorContent(), null);
 
-  card = registeredCard(); card.open = true; card.fire('toggle');
+  ui.openMemoryCards();
   ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
-  const secondSummary = ui.flatten(ui.container).find(node => node.placeholder === '输入用户修订摘要'); secondSummary.value = '面板关闭期间完成的摘要'; secondSummary.fire('input');
+  const secondSummary = ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要'); secondSummary.value = '面板关闭期间完成的摘要'; secondSummary.fire('input');
   const inactiveGate = h.backend.holdNextRootPut();
-  ui.flatten(ui.container).find(node => node.textContent === '保存').click();
+  const inactiveSave = ui.submitEditor();
   await inactiveGate.started;
   ui.view.deactivate(); inactiveGate.release();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy, '面板关闭期间后台保存未完成');
+  assert.equal(await inactiveSave, true);
+  assert.equal(h.runtime.getState().memoryWorkBusy, false);
   await ui.view.activate();
   card = registeredCard();
   assert.equal(card.open, true, '面板关闭期间保存完成后首次重开就应保持展开');
-  assert.equal(ui.flatten(ui.container).some(node => node.placeholder === '输入用户修订摘要'), false);
+  assert.equal(ui.editorContent(), null);
   assert.match(ui.flatten(card).map(node => node.textContent).join('|'), /面板关闭期间完成的摘要/);
+  ui.view.deactivate();
 });
 
 test('聊天切换到仅含B楼的状态后仍完成A楼保存回调', async () => {
@@ -5881,19 +5933,22 @@ test('聊天切换到仅含B楼的状态后仍完成A楼保存回调', async () 
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     editMemory: (floorId, payload) => { assert.equal(floorId, floorA.floorId); return new Promise(resolve => { completeSave = resolve; }); },
   };
-  const ui = viewHarness(runtime); await ui.view.activate();
+  const ui = viewHarness(runtime); await ui.view.activate(); ui.openMemoryCards();
   ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
-  const summary = ui.flatten(ui.container).find(node => node.placeholder === '输入用户修订摘要');
+  const summary = ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要');
   summary.value = 'A楼保存完成'; summary.fire('input');
-  ui.flatten(ui.container).find(node => node.textContent === '保存').click();
+  const pending = ui.submitEditor();
   assert.ok(completeSave, 'A 楼保存请求已发出');
   const floorB = { ...floorA, floorId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', messageIndex: floorA.messageIndex + 1 };
   state = { ...stateA, chatId: 'chat-b', floors: [floorB] };
   for (const listener of listeners) listener(state);
   assert.deepEqual(ui.flatten(ui.container).map(node => node.attributes['data-qqj-floor-id']).filter(Boolean), [floorB.floorId]);
   completeSave(state);
-  await waitFor(() => !ui.flatten(ui.container).some(node => node.placeholder === '输入用户修订摘要'), '切到只含B楼后A保存完成回调没有结束草稿');
-  assert.equal(ui.flatten(ui.container).some(node => node.textContent === '保存中…'), false);
+  assert.equal(await pending, true);
+  assert.equal(ui.editorContent(), null, '切到只含B楼后A保存完成仍结束独立弹窗');
+  assert.doesNotMatch(ui.flatten(ui.container).map(node => node.textContent).join('|'), /保存本楼记忆完成/u,
+    '不得把 A 完成反馈显示在 B');
+  ui.view.deactivate();
 });
 
 test('真实 runtime 保存 CAS 失败时保留草稿、显示错误并恢复按钮', async () => {
@@ -5901,48 +5956,55 @@ test('真实 runtime 保存 CAS 失败时保留草稿、显示错误并恢复按
   await h.runtime.start(); await h.runtime.extractNext();
   const before = await h.store.readReachable({ mode: 'runtime' });
   const ui = viewHarness(h.runtime);
-  const card = ui.flatten(ui.container).find(node => String(node.className).includes('qqj-memory-card')); card.open = true; card.fire('toggle');
+  ui.openMemoryCards();
   ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
-  const summary = ui.flatten(ui.container).find(node => node.placeholder === '输入用户修订摘要'); summary.value = '失败时保留的草稿'; summary.fire('input');
+  const summary = ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要'); summary.value = '失败时保留的草稿'; summary.fire('input');
   h.backend.setConflictRoot(true);
-  ui.flatten(ui.container).find(node => node.textContent === '保存').click();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy && ui.flatten(ui.container).some(node => String(node.textContent).includes('保存失败')), '保存失败后界面未恢复');
+  assert.equal(await ui.submitEditor(), false);
+  assert.equal(h.runtime.getState().memoryWorkBusy, false);
+  assert.equal(ui.editorError()?.code, 'V3_MEMORY_CAS_CONFLICT', '弹窗保留真实 CAS 冲突原因');
   const after = await h.store.readReachable({ mode: 'runtime' });
-  const restoredInput = ui.flatten(ui.container).find(node => node.placeholder === '输入用户修订摘要');
+  const restoredInput = ui.flatten(ui.editorContent()).find(node => node.placeholder === '输入用户修订摘要');
   assert.equal(restoredInput.value, '失败时保留的草稿');
-  const save = ui.flatten(ui.container).find(node => node.textContent === '保存'); assert.ok(save); assert.equal(save.disabled, false);
+  assert.equal(restoredInput.disabled, false);
+  assert.equal(ui.editorState().submitting, false, '失败后恢复弹窗提交入口');
   assert.equal(ui.flatten(ui.container).find(node => String(node.className).includes('qqj-memory-card')).open, true);
   assert.equal(after.rootRevision, before.rootRevision); assert.equal(after.root.headCheckpointId, before.root.headCheckpointId);
+  h.backend.setConflictRoot(false);
+  assert.equal(await ui.submitEditor(), true, '同一草稿可在冲突解除后重试');
+  const retried = await h.store.readReachable({ mode: 'runtime' });
+  assert.equal(retried.floorMemories[0].summary.userText, '失败时保留的草稿');
+  ui.view.deactivate();
 });
 
 test('人工摘要与修订说明超长时界面说明限制并保留草稿，边界长度可保存', async () => {
   const h = harness(); await h.runtime.start(); await h.runtime.extractNext();
   const floor = h.runtime.getState().floors[0], writesBefore = h.backend.calls.filter(call => call[0] === 'put').length;
-  const ui = viewHarness(h.runtime), card = ui.flatten(ui.container).find(node => String(node.className).includes('qqj-memory-card'));
-  card.open = true; card.fire('toggle'); ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
-  const find = placeholder => ui.flatten(ui.container).find(node => node.placeholder === placeholder);
-  const save = () => ui.flatten(ui.container).find(node => node.textContent === '保存').click();
-  let summary = find('输入用户修订摘要'); summary.value = '甲'.repeat(4001); summary.fire('input'); save();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy && ui.flatten(ui.container).some(node => node.textContent.includes('摘要超过 4000 字')),
-    '超长摘要未显示对应限制');
+  const ui = viewHarness(h.runtime); ui.openMemoryCards(); ui.flatten(ui.container).find(node => node.textContent === '编辑').click();
+  const find = placeholder => ui.flatten(ui.editorContent()).find(node => node.placeholder === placeholder);
+  let summary = find('输入用户修订摘要'); summary.value = '甲'.repeat(4001); summary.fire('input');
+  assert.equal(await ui.submitEditor(), false);
+  assert.match(ui.editorError()?.message ?? '', /摘要超过 4000 字/u, '超长摘要显示对应限制');
   assert.equal(find('输入用户修订摘要').value.length, 4001, '摘要超限草稿保留完整');
   assert.equal(h.backend.calls.filter(call => call[0] === 'put').length, writesBefore, '拒绝超长摘要时未写入');
 
   summary = find('输入用户修订摘要'); summary.value = '可保存的修订摘要'; summary.fire('input');
-  const note = find('修订说明（可选）'); note.value = '乙'.repeat(1001); note.fire('input'); save();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy && ui.flatten(ui.container).some(node => node.textContent.includes('修订说明超过 1000 字')),
-    '超长修订说明未显示对应限制');
+  const note = find('修订说明（可选）'); note.value = '乙'.repeat(1001); note.fire('input');
+  assert.equal(await ui.submitEditor(), false);
+  assert.match(ui.editorError()?.message ?? '', /修订说明超过 1000 字/u, '超长修订说明显示对应限制');
   assert.equal(find('输入用户修订摘要').value, '可保存的修订摘要');
   assert.equal(find('修订说明（可选）').value.length, 1001, '修订说明超限草稿保留完整');
   assert.equal(h.backend.calls.filter(call => call[0] === 'put').length, writesBefore, '拒绝超长修订说明时未写入');
 
   summary = find('输入用户修订摘要'); summary.value = '丙'.repeat(4000); summary.fire('input');
-  const validNote = find('修订说明（可选）'); validNote.value = '丁'.repeat(1000); validNote.fire('input'); save();
-  await waitFor(() => !h.runtime.getState().memoryWorkBusy && !find('输入用户修订摘要'), '合法边界长度未保存并退出编辑');
+  const validNote = find('修订说明（可选）'); validNote.value = '丁'.repeat(1000); validNote.fire('input');
+  assert.equal(await ui.submitEditor(), true);
+  assert.equal(ui.editorContent(), null, '合法边界长度保存后退出独立弹窗');
   const saved = await h.store.readReachable({ mode: 'runtime' });
   const memory = saved.floorMemories.find(item => item.floorId === floor.floorId);
   assert.equal(memory.summary.userText.length, 4000);
   assert.equal(memory.summary.revisionNote.length, 1000);
+  ui.view.deactivate();
 });
 
 test('人物手填复用已有 alias，且同名歧义优先本楼原 participant', async () => {
@@ -9400,7 +9462,7 @@ test('已存千事重判按record-N保文字和ID、读取前楼暂存候选并�
   assert.equal(h.runtime.getQianshiSnapshot().history.status, 'running', 'root CAS期间停止请求不会谎称整组零写');
   rootGate.release();
   const result = await pending;
-  assert.equal(graphProjectionCalls, 5, '两楼重判复用原图和每楼候选图，仅提交前核当前/最终两图');
+  assert.equal(graphProjectionCalls, 4, '两楼重判投影原图、每楼候选图和最终图；提交前当前版本未变时复用原图');
   assert.equal(result.status, 'completed', JSON.stringify(result)); assert.equal(result.calls, 2);
   assert.ok(memoryReads() - memoryReadsBefore <= before.floorMemories.length,
     '请求前后只核对root版本，旧楼档案最多完整读取一次，不能按楼反复拉取整档');

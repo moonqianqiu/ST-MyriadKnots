@@ -222,7 +222,7 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     if (visible) { previousVisible = time; previousVisibleSource = sourceTime; }
     const timeSourceFingerprint = await timeFingerprint(manual ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : sourceTime.raw]
       : sourceClock?.status === 'ambiguous' ? ['ambiguous-body-time', sourceClock.signature]
-        : raw ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : raw] : ['no-body-time']);
+        : sourceRaw || summaryRaw ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : sourceRaw || summaryRaw] : ['no-body-time']);
     const clockFingerprint = await clockContentFingerprint(candidate.rawContent, storyClockReferenceTags, sanitizerOptions);
     const body = { stable: Boolean(candidate.stabilityProof), timeSourceKind: manual ? 'manual' : summaryRaw ? 'summary' : raw || ambiguous ? 'body' : 'unknown', timeSourceFingerprint, floorId: match?.floor.id ?? null, assistantSeq: candidate.assistantSeq, canonicalFingerprint: candidate.canonicalFingerprint,
       rawFingerprint: candidate.rawFingerprint, clockContentFingerprint: clockFingerprint, rawContent: candidate.rawContent, hostLocator: candidate.hostLocator, content: candidate.canonicalContent, observationTime: time };

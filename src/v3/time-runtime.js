@@ -323,6 +323,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
     return trackedItems.length;
   }
   const getState = () => {
+    if (!enabled()) return { ...getActivityState(null, null), trackedItems: null, stoppedItems: null, annualItems: null };
     const memory = getMemoryActivityState(), source = getReachable(), activity = getActivityState(memory, source);
     const canDisplay = enabled() && !memoryNeedsSync(memory) && itemsKey !== null && itemsKey === sourceKey(source);
     return { ...activity, trackedItems: canDisplay ? structuredClone(trackedItems) : null, stoppedItems: canDisplay ? structuredClone(stoppedItems) : null, annualItems: canDisplay ? structuredClone(annualItems) : null };

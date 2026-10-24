@@ -36,6 +36,13 @@ function eventDocument() {
 }
 const flatten = node => [node, ...(node.children ?? []).flatMap(flatten)];
 const openDetails = node => { if (!node) throw new TypeError('expected details row'); node.open = true; node.fire('toggle'); return node; };
+const openMemoryCards = container => {
+  for (const card of flatten(container).filter(node => node.className.split(' ').includes('qqj-memory-card'))) openDetails(card);
+};
+const openFloorDiagnostics = container => {
+  openDetails(flatten(container).find(node => node.tag === 'details' && flatten(node.children[0]).some(child => child.textContent === '详细诊断')));
+  return openDetails(flatten(container).find(node => node.className.split(' ').includes('qqj-floor-diagnostics')));
+};
 let activeEditorDialog = null;
 let lastEditorDialogError = null;
 function captureEditorDialog(options) {
@@ -63,6 +70,53 @@ function createV3FoundationView(options = {}) {
 const editorContent = () => activeEditorDialog?.content ?? null;
 const submitEditor = () => activeEditorDialog?.submit() ?? Promise.resolve(null);
 const cancelEditor = () => activeEditorDialog?.cancel() ?? false;
+
+test('弹窗摘要保存只清理目标聊天回执：切聊、切回、关闭及失败均不误删', async () => {
+  for (const mode of ['same', 'closed', 'switch', 'switch-back', 'failure']) {
+    const receiptKey = 'qqj_v3_recall_receipt';
+    const userA = { is_user: true, mes: 'A', extra: { [receiptKey]: { sentinel: 'A' }, other: 1 } };
+    const userB = { is_user: true, mes: 'B', extra: { [receiptKey]: { sentinel: 'B' }, other: 2 } };
+    const savedChats = [], applied = [], listeners = new Set();
+    const contexts = Object.fromEntries(['A', 'B'].map(name => [name, {
+      chatMetadata: {}, constants: {}, setExtensionPrompt() {}, saveChat: () => savedChats.push(name),
+    }]));
+    let current = 'A', release;
+    const recallRuntime = createV3RecallRuntime({ store: { readReachable: async () => ({}) },
+      hostAdapter: { snapshot: () => ({ context: contexts[current], chat: [current === 'A' ? userA : userB] }) },
+      fingerprint: async value => `h:${value}`, logger: { warn() {} } });
+    const floor = { floorId: 'floor-A', assistantSeq: 1, messageIndex: 0, memoryId: 'memory-A', status: 'ready', summary: 'A 原摘要',
+      memory: { chronology: [], participants: [], locations: [] } };
+    let state = { chatId: 'chat-A', status: 'ready', pluginEnabled: true, foundationStatus: 'ready', floors: [floor] };
+    const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state,
+      subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async editMemory(floorId, payload) {
+        await new Promise(resolve => { release = resolve; });
+        if (mode === 'failure') throw new Error('真实保存失败');
+        applied.push([floorId, payload.summary]); return state;
+      } };
+    const container = new Node('main'), view = createV3FoundationView({ runtime, recallRuntime, documentRef });
+    view.setPage('memories'); view.mount(container);
+    openDetails(flatten(container).find(node => node.className.split(' ').includes('qqj-memory-card')));
+    flatten(container).find(node => node.textContent === '编辑').click();
+    const input = flatten(editorContent()).find(node => node.tag === 'textarea'); input.value = 'A 新摘要'; input.fire('input');
+    const pending = submitEditor();
+    if (mode === 'closed') view.deactivate();
+    if (mode.startsWith('switch')) {
+      current = 'B'; state = { ...state, chatId: 'chat-B', floors: [] }; for (const listener of listeners) listener(state);
+      if (mode === 'switch-back') { current = 'A'; state = { ...state, chatId: 'chat-A', floors: [floor] }; for (const listener of listeners) listener(state); }
+    }
+    release(); await pending;
+    assert.deepEqual(userB.extra, { [receiptKey]: { sentinel: 'B' }, other: 2 }, mode);
+    assert.deepEqual(savedChats, ['same', 'closed', 'switch-back'].includes(mode) ? ['A'] : [], mode);
+    assert.equal(Object.hasOwn(userA.extra, receiptKey), ['switch', 'failure'].includes(mode), mode);
+    assert.deepEqual(applied, mode === 'failure' ? [] : [['floor-A', 'A 新摘要']], '切聊不丢弃合法 A 保存');
+    if (mode === 'failure') {
+      assert.ok(editorContent(), '失败保留独立弹窗草稿');
+      assert.equal(flatten(editorContent()).find(node => node.tag === 'textarea').value, 'A 新摘要');
+    }
+    cancelEditor(); view.deactivate();
+  }
+});
 
 test('已保存摘要等待 CSE 时显示人物分析阶段', () => {
   const state = { status: 'running', pluginEnabled: true, chatId: 'chat', foundationStatus: 'ready',
@@ -193,6 +247,7 @@ test('本楼编辑以摘要为主，时间地点人物与修订说明按需展�
   const container = new Node('main');
   const view = createV3FoundationView({ runtime, documentRef, customImpl: options => { dialogOptions = options; return new Promise(resolve => { closeDialog = resolve; }); } });
   view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const edit = flatten(container).find(node => node.textContent === '编辑'); assert.ok(edit);
   edit.click(); assert.ok(dialogOptions?.content);
   const groups = flatten(dialogOptions.content).filter(node => node.className.split(' ').includes('qqj-editor-group'));
@@ -257,6 +312,7 @@ test('摘要近期事项默认折叠并局部更新，草稿同步恢复可点�
     async organize() { organizes += 1; timeState = { ...timeState, status: 'completed', last: { status: 'completed', items: 1 }, trackedItems: [{ ...item, projection: '可能有所减轻' }] }; publish(); return timeState; } };
   const container = new Node('main'); container.scrollTop = 45;
   const view = createV3FoundationView({ runtime, timeRuntime, documentRef, confirmImpl: () => true }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   let toggle = flatten(container).find(node => node.textContent === '近期事项');
   const memoryToolbar = flatten(container).find(node => String(node.className).split(' ').includes('qqj-memory-toolbar'));
   assert.equal(memoryToolbar.children[0].className, 'qqj-history-search'); assert.equal(memoryToolbar.children[1], toggle, '摘要搜索位于近期事项左侧');
@@ -311,7 +367,7 @@ test('摘要近期事项默认折叠并局部更新，草稿同步恢复可点�
   assert.equal(toggle.disabled, false); assert.equal(flatten(container).find(node => node.textContent === '补查历史').disabled, true);
   timeState = { ...timeState, status: 'completed', canOrganize: true, trackedItems: [item] };
   emit({ ...state, memorySnapshotStatus: 'ready', memorySyncStatus: 'idle', memoryWorkBusy: false });
-  assert.equal(container.replaceCount, replaceCount); assert.equal(input.value, '未保存草稿'); assert.equal(toggle.disabled, false);
+  assert.ok(container.replaceCount >= replaceCount, '阅读页可随同步状态重建'); assert.equal(flatten(editorContent()).find(node => node.tag === 'textarea'), input, '独立弹窗草稿节点不得替换'); assert.equal(input.value, '未保存草稿'); assert.equal(toggle.disabled, false);
   await toggle.click(); await toggle.click(); assert.equal(reads, 1); assert.equal(toggle.attributes['aria-expanded'], 'true');
   timeState = { ...timeState, trackedItems: [{ ...item, oldProjection: { text: '旧推测', applicableTime: { date: '2026-05-11' } }, assessmentReason: '没有新观察，无法判断。' }] }; publish();
   recentText = flatten(container).map(node => node.textContent).join('|');
@@ -525,6 +581,7 @@ test('近期事项菜单确认取消零写，失败重试，同内容通知及�
     } };
     const container = new Node('main'), view = createV3FoundationView({ runtime, timeRuntime, documentRef: doc, confirmImpl: options => { confirms += 1; assert.equal(options.cancelText, '取消'); assert.match(options.body, /保存不调用模型/u); return new Promise(resolve => { resolveConfirm = resolve; }); } });
     view.setPage('memories'); view.mount(container); await flatten(container).find(node => node.textContent === '近期事项（1）').click();
+    openMemoryCards(container);
     return { container, view, doc, writes: () => writes, confirms: () => confirms, failNext: () => { fail = true; }, confirm: value => resolveConfirm(value), emitTime,
       changeTime: patch => { timeState = { ...timeState, ...patch }; emitTime(); }, changeKey: () => { timeState = { ...timeState, trackedItems: [{ ...item, observationKey: 'new-key' }] }; emitTime(); },
       changeChat: () => { state = { ...state, chatId: 'another-chat' }; for (const listener of memoryListeners) listener(state); } };
@@ -742,10 +799,11 @@ test('needsReview 终态显示准确中文和安全原因，不向页面泄露�
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state };
   const container = new Node('main');
   const view = createV3FoundationView({ runtime, peopleRuntime: peopleRuntime([{ entityId: 'p1', displayName: '裴晚生' }]), documentRef }); view.mount(container); await view.activate();
+  openMemoryCards(container);
   const copy = flatten(container).map(node => node.textContent).join('|');
   assert.match(copy, /需要核对当前聊天记忆/); assert.match(copy, /待核对原因.*楼正文指纹不一致.*实际第 23 楼.*记录 12 \/ 当前 12.*消息标识：无.*不一致：原始正文、清洗后正文/); assert.doesNotMatch(copy, /不一致：[^|]*清洗规则/); assert.match(copy, /最近记忆错误.*无/); assert.doesNotMatch(copy, /needsReview|fingerprintMismatch|AI序号/);
   assert.match(copy, /请先点击“刷新状态”.*现有记忆会保留、正文可继续.*复制诊断反馈/);
-  view.setPage('memories'); assert.match(flatten(container).map(node => node.textContent).join('|'), /needsReview 下仍可见的摘要/);
+  view.setPage('memories'); openMemoryCards(container); assert.match(flatten(container).map(node => node.textContent).join('|'), /needsReview 下仍可见的摘要/);
   view.setPage('people'); assert.match(flatten(container).map(node => node.textContent).join('|'), /needsReview 下仍可见的人物状态/);
 });
 
@@ -811,6 +869,8 @@ test('完整诊断必须显式确认，clipboard 不可用时显示可选择文�
   const floorDrawer = flatten(container).find(node => node.className.includes('qqj-floor-diagnostics'));
   assert.ok(floorDrawer); assert.equal(floorDrawer.open, false, '楼层诊断默认折叠');
   assert.ok(flatten(floorDrawer).some(node => node.textContent === '楼层诊断'));
+  assert.equal(flatten(floorDrawer).filter(node => node.className === 'qqj-diagnostic-row').length, 0, '诊断行也惰性加载');
+  openFloorDiagnostics(container);
   assert.equal(flatten(floorDrawer).filter(node => node.className === 'qqj-diagnostic-row').length, 1);
   floorDrawer.open = true; floorDrawer.fire('toggle'); view.render(state);
   assert.equal(flatten(container).find(node => node.className.includes('qqj-floor-diagnostics')).open, true, '刷新状态保留展开选择');
@@ -969,9 +1029,11 @@ test('四项破坏性记忆操作等待异步确认，取消时零业务动作',
     copyFullDiagnostic: () => { calls.push('full'); return '{}'; }, copySafeDiagnostic: () => '{}',
   };
   const container = new Node('main'); const view = createV3FoundationView({ runtime, memoryManagement: { getState: () => ({}), deleteCurrent: async () => ({}), fullRebuild: async () => { calls.push('rebuild'); return state; } }, documentRef, confirmImpl: async () => false }); view.mount(container);
-  view.setPage('memories'); flatten(container).find(node => node.textContent === '重新提取').click(); await new Promise(resolve => setImmediate(resolve));
+  openMemoryCards(container);
+  view.setPage('memories'); openMemoryCards(container); flatten(container).find(node => node.textContent === '重新提取').click(); await new Promise(resolve => setImmediate(resolve));
   view.setPage('people'); flatten(container).find(node => node.textContent === '分析记录').click(); openDetails(flatten(container).find(node => node.className === 'qqj-cse-history-row')); flatten(container).find(node => node.textContent === '重新分析').click(); await new Promise(resolve => setImmediate(resolve));
   view.setPage('management'); flatten(container).find(node => node.textContent === '完全重构').click(); await new Promise(resolve => setImmediate(resolve));
+  openFloorDiagnostics(container);
   flatten(container).find(node => node.textContent === '复制完整诊断').click(); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, []);
 });
@@ -986,7 +1048,8 @@ test('已有旧摘要或旧 CSE 时，本次重新提取/分析失败不会被�
     retryStateAnalysis: async () => { state = { ...state, lastCseError: { floorId: 'floor', message: '模拟分析失败' } }; return state; },
   };
   const container = new Node('main'); const view = createV3FoundationView({ runtime, documentRef, confirmImpl: async () => true }); view.mount(container);
-  view.setPage('memories'); flatten(container).find(node => node.textContent === '重新提取').click(); await new Promise(resolve => setImmediate(resolve));
+  openMemoryCards(container);
+  view.setPage('memories'); openMemoryCards(container); flatten(container).find(node => node.textContent === '重新提取').click(); await new Promise(resolve => setImmediate(resolve));
   assert.match(flatten(container).map(node => node.textContent).join('|'), /重新提取未完成：第 6 楼 · 模拟重提失败/);
   view.setPage('people'); flatten(container).find(node => node.textContent === '分析记录').click(); openDetails(flatten(container).find(node => node.className === 'qqj-cse-history-row')); flatten(container).find(node => node.textContent === '重新分析').click(); await new Promise(resolve => setImmediate(resolve));
   assert.match(flatten(container).map(node => node.textContent).join('|'), /重新分析未完成：第 6 楼 · 模拟分析失败/);
@@ -1145,10 +1208,13 @@ test('Extractor 失败且尚无 FloorMemory 时仍可复制诊断并直接提取
   const state = { status: 'ready', pluginEnabled: true, compatibilityMode: 'standard', chatId: CHAT, foundationStatus: 'ready', stableCount: 1, rememberedCount: 0, unprocessedCount: 1, failedCount: 1, reviewCount: 0, pending: null, headCheckpointId: 'checkpoint', activeRun: null, lastRun: null, lastError: null, lastExtractorError: { message: '失败' }, unreachableCount: 0, metrics: {}, floors: [{ floorId: 'floor', assistantSeq: 1, messageIndex: 2, status: 'failed', memoryId: null, summary: '', counts: {}, error: '失败', memory: null }] };
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractFloor: async floorId => { extractedFloorId = floorId; return state; }, copySafeDiagnostic: () => '{"safe":true}', copyFullDiagnostic: () => '{"sessionCandidate":{}}' };
   const container = new Node('main'); const view = createV3FoundationView({ runtime, documentRef, navigatorRef: {}, confirmImpl: () => { confirmations += 1; return true; } }); view.mount(container);
+  openMemoryCards(container);
+  openFloorDiagnostics(container);
   const copy = flatten(container).map(node => node.textContent); assert.ok(copy.includes('复制安全诊断')); assert.ok(copy.includes('复制完整诊断'));
   view.setPage('memories');
   const card = flatten(container).find(node => String(node.className).includes('qqj-memory-card'));
   assert.equal(card.open, false);
+  openDetails(card);
   assert.match(flatten(card).map(node => node.textContent).join('|'), /第 2 楼.*时间未明确.*失败可重试.*暂无摘要.*⋮.*提取摘要.*失败/);
   const extract = flatten(container).find(node => node.textContent === '提取摘要');
   assert.ok(extract); assert.equal(extract.disabled, false);
@@ -1177,6 +1243,7 @@ test('摘要页列出全部尚未摘要候选并显示真实等待原因，无 f
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state,
     confirmConsecutiveAssistants: async scope => { consecutiveCalls += 1; receivedScope = scope; return state; }, extractFloor: async () => { extractCalls += 1; return state; } };
   const container = new Node('main'); const view = createV3FoundationView({ runtime, documentRef, confirmImpl: options => { confirmation = options; return true; } }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   let copy = flatten(container).map(node => node.textContent).join('|');
   assert.match(copy, /已记忆 42\/42 楼.*另有 3 楼尚未摘要，正在等待确认/);
   assert.match(copy, /本次确认 2 个连续 AI 回复.*第 84 楼.*连续 AI，尚待确认/);
@@ -1373,8 +1440,10 @@ test('自动批次活跃时面板提取、CSE 与修订入口统一禁用，结�
   let state = base;
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractNext: async () => state, extractFloor: async () => state, editSummary: async () => state, restoreAi: async () => state, markError: async () => state, analyzeNextState: async () => state, retryStateAnalysis: async () => state };
   const container = new Node('main'); const view = createV3FoundationView({ runtime, memoryManagement: { getState: () => ({}), deleteCurrent: async () => ({}), fullRebuild: async () => state }, documentRef }); view.mount(container);
+  openMemoryCards(container);
   assert.equal(flatten(container).find(node => node.textContent === '完全重构')?.disabled, true);
   view.setPage('memories');
+  openMemoryCards(container);
   for (const label of ['编辑', '重新提取']) assert.equal(flatten(container).find(node => node.textContent === label)?.disabled, true, label);
   view.setPage('people');
   flatten(container).find(node => node.textContent === '分析记录').click();
@@ -1384,6 +1453,7 @@ test('自动批次活跃时面板提取、CSE 与修订入口统一禁用，结�
   view.render(state);
   assert.equal(flatten(container).find(node => node.textContent === '分析本楼')?.disabled, false);
   view.setPage('memories');
+  openMemoryCards(container);
   for (const label of ['编辑', '重新提取']) assert.equal(flatten(container).find(node => node.textContent === label)?.disabled, false, label);
   view.setPage('management');
   assert.equal(flatten(container).find(node => node.textContent === '完全重构')?.disabled, false);
@@ -2004,6 +2074,7 @@ test('三页职责分离，千结只保留摘要编辑/重提，双丝网归位�
   const selectedPeople = peopleRuntime([{ entityId: 'character', displayName: '裴晚生', entityDisplayName: '裴晚生' }]);
   const view = createV3FoundationView({ runtime, peopleRuntime: selectedPeople, documentRef });
   view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   let copy = flatten(container).map(node => node.textContent).join('|');
   assert.match(copy, /已记忆 1\/1 楼.*第 4 楼.*剧情摘要.*编辑.*重新提取/);
   assert.doesNotMatch(copy, /逐楼校对故事摘要/);
@@ -2243,6 +2314,7 @@ test('摘要地点只按来源楼的明确关系显示父级，搜索与编辑�
     extractFloor: async () => state, editMemory: async (...args) => { saved = args; return state; } };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef });
   view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const cardFor = floorId => flatten(container).find(node => node.attributes['data-qqj-floor-id'] === floorId);
   const locationFor = floorId => {
     const card = cardFor(floorId);
@@ -2450,6 +2522,7 @@ test('摘要楼按现有人物名只读展示关键原文，空、单条、多�
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractFloor: async () => state,
     subscribe(listener) { stateListener = listener; return () => { stateListener = null; }; } };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const cardFor = floorId => flatten(container).find(node => node.attributes['data-qqj-floor-id'] === floorId);
   const emptyCard = cardFor('empty');
   assert.equal(flatten(emptyCard).some(node => node.className === 'qqj-memory-key-quotes'), false, '没有原句时不显示标题或占位');
@@ -2501,6 +2574,7 @@ test('未处理空楼保留恢复入口，长时间仅由样式省略且长摘�
   const state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 2, rememberedCount: 1, unprocessedCount: 1, cseReady: false, csePendingCount: 0, cseFailedCount: 0, floors };
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractFloor: async () => state };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const cards = flatten(container).filter(node => String(node.className).split(' ').includes('qqj-memory-card'));
   const readyCard = cards.find(node => flatten(node).some(child => child.textContent === '第 8 楼'));
   const emptyCard = cards.find(node => flatten(node).some(child => child.textContent === '第 6 楼'));
@@ -2522,6 +2596,7 @@ test('旧内部时间字段只在有正文时间 fallback 时改用多段显示�
   const state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 3, rememberedCount: 3, unprocessedCount: 0, cseReady: false, csePendingCount: 0, cseFailedCount: 0, floors };
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, editMemory: async () => state };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const cards = flatten(container).filter(node => String(node.className).split(' ').includes('qqj-memory-card'));
   const cardFor = floorId => cards.find(node => node.attributes['data-qqj-floor-id'] === floorId);
   assert.equal(flatten(cardFor('floor-252')).find(node => node.className === 'qqj-floor-time').textContent, time252);
@@ -2654,6 +2729,7 @@ test('摘要搜索遍历全部已存楼，清空恢复列表且切聊天不保�
   let state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 3, rememberedCount: 3, csePendingCount: 3, cseFailedCount: 0, floors: [floor('old', 2, `${'很早的内容'.repeat(25)}远古线索在末尾`), floor('middle', 40, '中间摘要'), floor('new', 88, '最新摘要')] };
   const runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); } };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   const search = flatten(container).find(node => node.attributes['aria-label'] === '搜索当前聊天的全部摘要');
   assert.ok(search, '没有时间 runtime 也必须显示摘要搜索');
   search.value = '远古线索'; search.fire('input');
@@ -2671,7 +2747,7 @@ test('摘要搜索遍历全部已存楼，清空恢复列表且切聊天不保�
   const currentSearch = flatten(container).find(node => node.attributes['aria-label'] === '搜索当前聊天的全部摘要'); currentSearch.value = '最新'; currentSearch.fire('input');
   state = { ...state, chatId: 'new-chat', stableCount: 1, rememberedCount: 1, floors: [floor('other', 4, '新聊天摘要')] }; for (const listener of listeners) listener(state);
   const switchedSearch = flatten(container).find(node => node.attributes['aria-label'] === '搜索当前聊天的全部摘要');
-  assert.equal(switchedSearch.value, ''); assert.match(flatten(container).map(node => node.textContent).join('|'), /新聊天摘要/u); view.deactivate();
+  assert.equal(switchedSearch.value, ''); openMemoryCards(container); assert.match(flatten(container).map(node => node.textContent).join('|'), /新聊天摘要/u); view.deactivate();
 });
 
 test('CSE 搜索覆盖不同人物的变更前旧值与历史快照', () => {
@@ -2904,12 +2980,14 @@ test('摘要编辑时后台通知不替换独立弹窗草稿；取消后阅读�
   const emit = next => { state = next; for (const listener of listeners) listener(next); };
   const container = new Node('main');
   const view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   flatten(container).find(node => node.textContent === '编辑').click();
   const input = flatten(editorContent()).find(node => node.placeholder === '输入用户修订摘要');
   input.value = '未保存草稿'; input.fire('input'); input.focus();
   const replaceCount = container.replaceCount;
   emit({ ...state, status: 'running', stableCount: 2, memoryWorkBusy: true, activeMemoryWork: { phase: 'extracting' }, rebuildCompletedCount: 1, rebuildTotalCount: 2, floors: [{ ...floor, summary: '后台新摘要' }] });
-  assert.equal(container.replaceCount, replaceCount, '同楼后台通知不能替换编辑中的摘要 DOM');
+  assert.ok(container.replaceCount >= replaceCount, '后台摘要变化可更新阅读区');
+  assert.equal(flatten(editorContent()).find(node => node.placeholder === '输入用户修订摘要'), input, '独立弹窗草稿节点不得替换');
   assert.equal(documentRef.activeElement, input); assert.equal(input.value, '未保存草稿');
   assert.equal(flatten(editorContent()).find(node => node.placeholder === '输入用户修订摘要').value, '未保存草稿');
   assert.match(flatten(container).map(node => node.textContent).join('|'), /正在处理摘要 · 1\/2 楼/);
@@ -2933,6 +3011,7 @@ test('视图停用期间同聊天正文改变后，重新激活仍按永久楼�
   };
   const container = new Node('main');
   const view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   flatten(container).find(node => node.textContent === '编辑').click();
   const staleInput = flatten(editorContent()).find(node => node.tag === 'textarea');
   staleInput.value = '不可错存的旧草稿'; staleInput.fire('input');
@@ -2949,6 +3028,7 @@ test('隐藏时间戳改变但永久楼身份相同时保留编辑草稿', async
   let state = { status: 'ready', pluginEnabled: true, chatId: CHAT, foundationStatus: 'ready', stableCount: 1, rememberedCount: 1, cseReady: true, csePendingCount: 0, cseFailedCount: 0, floors: [floor] };
   const listeners = new Set(), runtime = { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state, extractFloor: async () => state, editMemory: async () => state, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); } };
   const container = new Node('main'), view = createV3FoundationView({ runtime, documentRef }); view.setPage('memories'); view.mount(container);
+  openMemoryCards(container);
   flatten(container).find(node => node.textContent === '编辑').click(); assert.ok(flatten(editorContent()).some(node => node.tag === 'textarea'));
   state = { ...state, floors: [{ ...floor, rawFingerprint: 'sha256:new' }] };
   for (const listener of listeners) listener(state);

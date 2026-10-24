@@ -38,15 +38,17 @@
 
 ### 2.2 本地已修改的上游产权文件（上游重写对应链路时，以本地增强为产权逐项回植并重跑对应测试全绿）
 
-> - `src/v3/recall-runtime.js`（本地三增强，详见 §3.4）：`tests/v3-recall.test.mjs` 与上游逐字相同、**不得追加本地断言**，本地断言一律加在 `tests/recall-local-guards.test.mjs`。当前契约：
+> - `src/v3/recall-runtime.js`（本地增强，详见 §3.4）：`tests/v3-recall.test.mjs` 与上游逐字相同、**不得追加本地断言**，本地断言一律加在 `tests/recall-local-guards.test.mjs`（前情相关在 `tests/v3-recall-prequel.test.mjs`）。当前契约：
 >   ① **见证向前截断**——`captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null)`，循环以触发用户楼定位 `triggerIndex` 向前采集，上限用上游归一化值 `normalizeAutoHideKeepAiCount`；内部调用点传 `(…, recentBodyFloorLimit(), user?.message)`。
 >   ② **invalidate 三参**——`(reason = 'invalidated', sourceEvent = 'runtimeInvalidate', { clearPersisted = false } = {})`，函数体首行 `requestDiagnostic.clear()`；`clearPersisted: true` 时删除最新用户楼持久化收据并 `saveChat()` 落盘。三处 UI 调用点用事件名方言（`manualMemoryEdit` / `foundationFullRebuild` / `peopleProfileSaved`），**漏改则 `{ clearPersisted }` 落入 `sourceEvent`、清理静默失效**。
 >   ③ **密封点活版本重对齐**（`commitPromptIfCurrent` 内、`captureCoveredBodyGuards` 之后）：条件 `currentSource !== source && currentSource?.status === 'ready'`（与上游 `basePreparedSource(…, { fresh: true, sourceToVerify: source })` 无条件 fresh 重读 + 对象同一性判定等价），以活档案头 Checkpoint/Revision/正文指纹重签 `receiptFingerprint`。
+>   ④ **前情依赖与旧回执有界迁移**（2026-10-24）——新回执带可选 `prequelDependencyFingerprint`（前情源文本指纹，空前情 `null`）并纳入签名材料（`receiptMaterial` 追加，旧回执按原材料验签、只读展示不受影响）；`savePrequel` 仅文本真实变化才动手（未变/失败不动回执），变更时在前情**同一次**元数据保存写入 `qianqianjiePrequelReceiptInvalidation` = 当时最后 USER 内容指纹（失败随前情一并回滚），同聊路径 `invalidate('prequelSaved','prequelSaved',{clearPersisted:true})`、**跨聊路径只内存清 A 当前 USER、不落盘不清 B 不借 B 保存接口写 A**；复用校验（`intercept` 候选循环）：旧格式（无该字段）回执命中标记即失复用资格、新回执按指纹比较——迁移有界（每「前情变更×旧格式回执」至多重选一次）。地点侧：`captureLatestLocationReference` 第四参 `beforeIndex` 截止触发 USER 前（残留 AI 回复不算最新地点），空 `values` 返回 `null` 不建宿主楼依赖；`normalizeLocationReferenceDependency` 把旧 `values:[]` 依赖归一为 `null` 等价。
 >   正交性论证与 v0.6.8 损坏教训（定义/使用分居两处被重写区域、`sameRoot` 被吞）见 `docs/merge-notes.md` §2–§3——归因法：用「合并树 vs 纯上游 diff」定位残余差异，勿据单侧绿误判。
 > - `src/v3/floor-binding.js`：`matchFloorCandidates` 可选第三参 `{ equivalentContent }` 与绑定种类 `'locatorEquivalent'`——弥合「本地 M0 保留已配置故事时钟引用标签于 canonical 正文」与「上游保证编辑时间标签不得撤销已落盘覆盖」的语义冲突；私有助手 `withoutStoryClockReferenceTags` 剥离仅已配置的引用标签后比较，仅供 `readTimeBody` 传入。
-> - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。排除名单与 extractor 同步并由逐名行为守卫锁定。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。
+> - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。排除名单与 extractor 同步并由逐名行为守卫锁定。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。另（2026-10-24）：`readTimeBody` 时间指纹用 `sourceRaw || summaryRaw`（弱时间参考不再以空原文覆盖主线时间）。
+> - `src/v3/extractor.js`：**start-only 故事钟不合成起点时间行**（上游合同，`normalizeExtractorResponse` 双早退：无模型实质编排且无可靠结束/参考/正文时间时原样返回）——与上游自带 `v3-extractor-memory`「残缺同楼时间戳」红例（myknots、同 start-only 却期望合成）**互相矛盾**：该例测试体与上游逐字一致且纯上游树同败，属上游原生红，**勿迁就它改 src**（曾于 2026-10-22 误改成合成 `partialStart`，把原本绿的 `v3-time-body:547` 打红，净红数不变，已回退）。本地增强：`isSchemaOnlyPacket`+`JSON_SCHEMA_KEYS` 拒绝 schema-only 回显；兜底顺序 canonicalTime/模型结果先于弱 `referenceText`（对现有用例惰性）。
 > - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`，须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
-> - **v0.8.0 覆盖型迁移实录（`v3-foundation-view.js`）**：上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。
+> - **v0.8.0 覆盖型迁移实录（`v3-foundation-view.js`）**：上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。**该 after 回调须先比 `nextState?.chatId === state.chatId`（保存发起时的聊天）才执行清理联动**（2026-10-24）：否则 A 保存期间切到 B，A 的完成回调会误删并保存 B 的回执。
 > - **v0.7.9 上游隐藏「空间记录」UI**：删除 `placeNameCache`/`placeNamesFor` 助手与整块 `qqj-memory-spatial` 渲染（内部空间记忆与「地点」meta 保留），并把 `EXTRACTOR_FIXED_CONTRACT` 第 11 条地点粒度改写为「按房间或有独立意义的区域」。本地未定制该区块，**全采纳，勿回植空间 UI**。
 > - `src/ui/help-guide.js`：本地改两处——设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义）+ 排障手册「大量楼摘要缺正文」段尾的日期读取教义句（2026-10-11：含日期的闪回/回忆类块会被当作本楼当前时间，extraTags 声明可排除）。上游高频重写本文件文案——裁决：**上游新增段落全收 + 两处本地保持**（包裹符段上游侧仍是旧 `[[...]]` 专用描述，勿取上游侧；教义句属上游文案区内的本地追加句尾，合并后须核在位）。
 > - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，判定输入一字未动；上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
@@ -71,7 +73,7 @@
 
 ### 3.1 四模式标签清洗器（与 ST-SevenDaysCal 逐字节一致）
 
-- **核心文件**：`src/memory-content-sanitizer.js`（树形单遍解析，`sanitizeMemoryContent` 接口）；`src/tag-sanitizer.golden.json`（40 组锁定金样，LF 行尾）；`tests/tag-sanitizer-golden.test.mjs` 与 `tests/memory-content-sanitizer.test.mjs`。
+- **核心文件**：`src/memory-content-sanitizer.js`（树形单遍解析，`sanitizeMemoryContent` 接口）；`src/tag-sanitizer.golden.json`（40 例金样，LF 行尾；口径自 2026-10-24 起为 **39 例逐字 + `brk-extra-paired` 1 例显式安全修正**——该例旧期望 `前中 c]]尾` 本身是嵌套噪音泄漏，新输出 `前中尾` 才符合 M3，测试同时断言历史值与修正值留痕）；`tests/tag-sanitizer-golden.test.mjs` 与 `tests/memory-content-sanitizer.test.mjs`。
 - **核心合同**：
   - **M0（两栏皆空）**：直通不清洗，保留正文，仅做注释/孤立标记清理；
   - **M1（仅 extra）**：成对删除 extra 标签及内容，未闭合 extra 吞至同名闭合或文末（噪音不泄漏）；
@@ -80,7 +82,7 @@
   - **三分支 token 正则**：`TAG_ATTR_SOURCE`（引号感知，属性内 `>` 不截断）+ `TAG_ATTR_FALLBACK_SOURCE`（未闭合引号宽松兜底回退旧行为，防止思维链泄漏）+ 每条配置的字面量包裹规则各一分支（`freshTokenRx(wrapperRules)` 动态生成）；
   - **自闭合标记**：keep 子树内自闭合 extra 标记连标记删除，非 extra 原样保留 openRaw。
 - **通用字面量包裹规则（P5，2026-09-30 按方案 B 恢复）**：两栏都接受任意「起始...结束」（`LITERAL_WRAPPER_SEPARATOR = '...'`，如 `{{...}}`、`<<...>>`），`...` 前=开定界符、后=闭定界符；keep 栏=剥壳取内层，extra 栏=连定界符整块删除，`[[...]]` 只是其特例。解析由 `collectWrapperRules(keep, extra)` 收集两栏并集（去重、按开定界符长度降序防短前缀抢占）后生成 `kind:'wrapper'` 节点（节点自带 `openRaw`/`closeRaw` 重建）——**无硬编码 `\[\[…\]\]`，也取消了上游式前置删除与 keep 栏 `TAG_NAME_PATTERN` 过滤**。`normalizeTagRules` 对包裹规则原样保留（大小写敏感）、标签名照旧小写；非法形态（开/闭定界符为空、`...` 出现两次）按 `literalWrapperRule` 三条件丢弃。
-- **与上游包装符语义的唯一分歧**：嵌套包装符（如 `{{a{{b}}c}}`）本 fork 按树机整块处理，上游 `dropLiteralWrappedContent` 为扁平 indexOf 扫描；40 例金样不含嵌套包装符，故不冲突。
+- **同名嵌套包裹符平衡配对**（2026-10-24，两仓同步）：字面量定界符 token 开闭入栈配对（`pairWrapperTokens`，相同开/闭优先关闭当前包裹、最长定界符优先识别）；未闭合的开/闭**包裹定界符保持文本、不吞至文末**（XML 标签的 M1 吞至文末合同不变）；包裹边界隔离内部 XML 闭合标记；字面量规则大小写敏感、**不加小写别名**（`[DRAFT]`≠`[draft]`）。两仓 18 条平衡嵌套用例逐字一致；上游 `dropLiteralWrappedContent` 仍是扁平 indexOf 扫描——分歧自此从「无嵌套用例」变为「有 1 例金样修正 + 18 条守卫」。
 - **测试侧不得回退**：`tests/memory-content-sanitizer.test.mjs` 中上游两条依赖「默认 keepTags='content'」语义的断言，已按本地 M0 合同改写为直通正断言，未来合并不得采用上游语义覆盖。
 - **v0.8.0 起「`<location>` 缺省剥除」类**：上游清洗器对 `<location>…</location>` **无条件剥除**，本仓 M0 合同**保留**它（属普通配对标签，未配置即不清洗）。上游 v0.8.0 新增/改写的测试（`tests/v3-recall.test.mjs` 的「人工地点清除」例、`tests/v3-extractor-memory.test.mjs` 的「地点名参照」与「地点绑定和父级」两例）依赖该缺省行为 → 一律本地适配（显式 `extraTags:'location'`，或把 canonical 期望值改为 M0 直通原文），**严禁为迁就测试而给清洗器加 `<location>` 缺省剥除**（会破坏 40 例金样与 SDC 跨仓对拍）。该适配反而更强：原消息地点标签真实存活时，「人工清除」的抑制效果才可被单独验证。
 - **v0.5.8+ 双层文件结构**：前半部本地四模式合同，后半部上游移植段（`stripMemoryTagBlocks`/`readMemoryTagBlocks`/`tagTokens`/`parseTagTokenTree`，服务 v3 时间链路，`<br>` 按 void-tag 处理、节点携带偏移元数据；移植段归一化引用走本地 `normalizeTagRules`）。上游后续若改这些导出，直接对齐上游该段即可。
@@ -130,7 +132,7 @@
    node --experimental-vm-modules --test tests/tag-sanitizer-golden.test.mjs tests/memory-content-sanitizer.test.mjs
    ```
 
-   *标准*：25/25 全绿（40 例金样逐字节一致 + 清洗器合同断言）。
+   *标准*：43/43 全绿（40 例金样 = 39 例逐字 + `brk-extra-paired` 显式安全修正（§3.1）；另含 18 条同名嵌套平衡用例与清洗器合同断言）。
 2. **生产构建与入口装配测试**：
 
    ```bash
@@ -138,20 +140,21 @@
    ```
 
    *标准*：19/19 全通过（v0.7.13 起含核记录缓存诊断新例；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 当前基线 **1922 例 / 1882 通过 / 40 上游原生红**（= 上游 v0.8.0 树 + 本地守卫；40 红全部可在纯上游树复现，逐文件计数与上游一致，`settings-api` 少 1 例；沙箱下以单并发方式实测约 110s）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 当前基线 **1948 例 / 1947 通过 / 1 上游原生红**（2026-10-24，v0.8.0 审计修复后，取证 `docs/audit-v0.8.0-test-failures-remediation.md`；合并时旧基线为 1922/1882/40，其余 39 红已由 §2.1 认可的测试代修与 `<location>` 适配消解）。唯一红 = `v3-extractor-memory`「残缺同楼时间戳」例：与 `v3-time-body:547` start-only 合同**互相矛盾**，测试体与上游逐字一致且纯上游树同败——**勿迁就它改 src（§2.2 extractor 条）**。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
    > **上游原生红判定法**：某测试文件与上游**逐字节相同**而失败时，先在纯上游树跑同一文件；计数相同即上游原生，禁止为「让全量变绿」而改本地 `src/` 合同。**慢文件勿整跑**（`v3-extractor-memory.test.mjs` 含 1000 楼生产夹具，整文件数分钟），用 `--test-name-pattern` 按例对照。
    > **v0.8.0 起新增一类上游原生红**：上游新增/改写的测试依赖其清洗器**缺省剥除 `<location>`** 标签，本仓 M0 合同保留该标签（§3.1）→ 按 §2.1 代修（显式 `extraTags:'location'` 或改 canonical 期望值），**不得改清洗器缺省行为**（会破坏 40 例金样与跨仓对拍）。
-4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）双实现输出 **0 差异、100% 逐字节一致**；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
+4. **与 ST-SevenDaysCal 跨仓终验对拍**：40 例金样（`src/tag-sanitizer.golden.json` 与 SDC `runtime/tag-sanitizer.golden.json`）按「39 例逐字 + 1 例 `brk-extra-paired` 显式安全修正」口径双实现**跨仓一致**，18 条平衡嵌套用例两仓逐字相同（§3.1）；另复跑 `tests/settings-api.test.mjs`（跨仓 settings 断言）。
 
 ---
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.8.0`（提交 `e6ad32c`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `0.8.0`（含 `author: "atonal519"`），缓存键 `20261020.126-58d4b7dcebff9b7f`（哈希与真实 bundle 一致）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.8.0`（提交 `e6ad32c`）。本次合并提交及父提交见 §5.1 与 git 历史。**待办**：上游已发布 v0.9.x（`upstream/main` `7d27fdc` = v0.9.1）尚未合并；
+- **产物版本**：`manifest.json` 版本号 `0.8.0`（含 `author: "atonal519"`），缓存键 `20261024.128-331f41b4ec3cde3b`（哈希与真实 bundle 一致）；
+- **v0.8.0 审计修复（2026-10-22~24，未提交前的工作区状态）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
-- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.9.0moon（2026-10-15，`dc05fe9`；统一模块工作流；上游自带红本地适配），两仓清洗器保持输出 100% 逐字节一致（40 例金样 0 差异）；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。**待办**：SDC 侧上游 v3.9.1~v3.9.4 尚未合并。
+- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.9.4moon（2026-10-20 合入上游 v3.9.4，合并提交 `b3da109`；2026-10-15 `dc05fe9` 曾统一模块工作流）；2026-10-24 起两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 372/373+1skip；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 

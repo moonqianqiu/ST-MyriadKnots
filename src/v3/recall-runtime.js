@@ -16,6 +16,10 @@ import { readLocationReference } from './location-reference.js';
 
 export const RECALL_PROMPT_SLOT = 'qqj_v3_recalled_context';
 export const RECALL_RECEIPT_KEY = 'qqj_v3_recall_receipt';
+// 前情显式变更时的旧回执失效标记：值是当时最后一个 USER 楼的内容指纹。跨聊天保存路径无法
+// 落盘删除 A 的当前 USER 回执，冷重载后凭该标记让旧格式（无 prequelDependencyFingerprint）
+// 回执失去复用资格；新格式回执按指纹比较，不受此标记影响。
+const PREQUEL_RECEIPT_INVALIDATION_KEY = 'qianqianjiePrequelReceiptInvalidation';
 export const RECALL_RECEIPT_SCHEMA_VERSION = 18;
 export const RECALL_STRATEGY_VERSION = 'continuity-v18';
 const RECALL_PROMPT_DEPTH = 2;
@@ -61,20 +65,33 @@ function latestUser(snapshot) {
 }
 
 const liveRecallFrameKey = snapshot => JSON.stringify(buildRecallQueryFrame({ coreChat: snapshot?.chat, assistantTurns: 1 }).messages.map(message => [message.role, message.text]));
-function captureLatestLocationReference(snapshot, sanitizerOptions, maximumFloors) {
+function captureLatestLocationReference(snapshot, sanitizerOptions, maximumFloors, beforeIndex = null) {
   const chat = Array.isArray(snapshot?.chat) ? snapshot.chat : [];
   let visible = 0;
-  for (let index = chat.length - 1; index >= 0 && visible < normalizeAutoHideKeepAiCount(maximumFloors); index -= 1) {
+  const end = Number.isSafeInteger(beforeIndex) ? Math.min(beforeIndex, chat.length) : chat.length;
+  for (let index = end - 1; index >= 0 && visible < normalizeAutoHideKeepAiCount(maximumFloors); index -= 1) {
     const message = chat[index];
     if (!message || message.is_system === true || message.is_hidden === true || message.hidden === true) continue;
     const selected = selectAssistantMessage(message);
     if (!selected?.rawContent?.trim() || !sanitizeMemoryContent(selected.rawContent, sanitizerOptions)) continue;
     visible += 1;
     const values = readLocationReference(selected.rawContent) ?? [];
+    // 只有真实地点标签才建立宿主楼定位依赖；空集合时后台楼层/可见性变化
+    // 与本轮回执无关，不应导致冻结回执被重新选择。
+    if (!values.length) return null;
     return Object.freeze({ values, hostLocator: Object.freeze({ messageIndex: index,
       swipeId: selected.swipeId ?? null, selectedSwipeIndex: selected.selectedSwipeIndex ?? null }) });
   }
   return null;
+}
+
+function normalizeLocationReferenceDependency(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && Array.isArray(parsed.values) && parsed.values.length === 0) return 'null';
+  } catch { /* 保留损坏依赖，让正常校验拒绝复用。 */ }
+  return value;
 }
 
 async function sourceRefsValid(receipt, source, onInvalid = () => {}, selectedFloorsForValidation = null) {
@@ -268,8 +285,12 @@ const baseReceiptMaterial = receipt => receipt.schemaVersion >= 18
   ? [...legacyBaseReceiptMaterial(receipt), receipt.selectedLocationReferences, receipt.locationReferenceDependency]
   : legacyBaseReceiptMaterial(receipt);
 // 删除见证是可选的签名扩展，旧回执维持原签名；只记录选中事项的删除指纹，不复制全档删除清单。
-const receiptMaterial = receipt => receipt.qianshiDeletionWitness === undefined ? baseReceiptMaterial(receipt)
-  : [...baseReceiptMaterial(receipt), receipt.qianshiDeletionWitness];
+const receiptMaterial = receipt => {
+  const material = receipt.qianshiDeletionWitness === undefined ? baseReceiptMaterial(receipt)
+    : [...baseReceiptMaterial(receipt), receipt.qianshiDeletionWitness];
+  // 可选签名扩展：新回执带前情依赖，旧回执仍按原材料验签和只读展示。
+  return receipt.prequelDependencyFingerprint === undefined ? material : [...material, receipt.prequelDependencyFingerprint];
+};
 async function qianshiDeletionWitness(receipt, deletedEvents, fingerprint) {
   const matterIds = [...new Set([...(receipt.qianshiProgress?.matterIds ?? []),
     ...(receipt.timeDependencies?.reminders ?? []).map(item => item.qianshiRef?.matterId).filter(Boolean)])];
@@ -503,6 +524,8 @@ function receiptShapeValid(receipt, { historical = false } = {}) {
   const receiptStateLimit = expandedSelection ? MAX_RECEIPT_STATES : LEGACY_MAX_RECEIPT_STATES;
   const receiptChangeLimit = expandedSelection ? MAX_RECEIPT_CSE_CHANGES : LEGACY_MAX_RECEIPT_CSE_CHANGES;
   const receiptStorylineLimit = expandedSelection ? MAX_RECEIPT_STORYLINES : LEGACY_MAX_RECEIPT_STORYLINES;
+  if (receipt?.prequelDependencyFingerprint !== undefined && receipt.prequelDependencyFingerprint !== null
+    && !boundedString(receipt.prequelDependencyFingerprint, 200)) return false;
   if (receipt?.qianshiDeletionWitness !== undefined && (!Array.isArray(receipt.qianshiDeletionWitness)
     || receipt.qianshiDeletionWitness.length > 160 + receiptStateLimit
     || !receipt.qianshiDeletionWitness.every(value => value && boundedString(value.matterId, 500) && boundedString(value.fingerprint, 200)))) return false;
@@ -796,7 +819,6 @@ async function attachCoreBodyMatch(source, witness, snapshot, sanitizerOptions, 
   // Recent-body overlap is trusted only when message position, selected swipe, and raw/canonical fingerprints agree.
   const visibleFloorIds = [...new Set(source.readiness?.visibleSummaryFloorIds ?? [])].sort();
   const recentVisibleMessageIndexes = new Set();
-  let latestVisibleMessage = null;
   let recentVisibleCount = 0;
   for (let index = (snapshot?.chat?.length ?? 0) - 1; index >= 0 && recentVisibleCount < normalizeAutoHideKeepAiCount(maximumFloors); index -= 1) {
     const message = snapshot.chat[index];
@@ -804,7 +826,6 @@ async function attachCoreBodyMatch(source, witness, snapshot, sanitizerOptions, 
     const selected = selectAssistantMessage(message);
     if (!selected?.rawContent?.trim() || !sanitizeMemoryContent(selected.rawContent, sanitizerOptions)) continue;
     recentVisibleMessageIndexes.add(index);
-    latestVisibleMessage ??= { index, message, selected };
     recentVisibleCount += 1;
   }
   const partition = migrationPartition(source);
@@ -876,9 +897,13 @@ async function attachCoreBodyMatch(source, witness, snapshot, sanitizerOptions, 
   }
   const recentVisibleFloorIds = [...new Set(verified.filter(ref => recentVisibleMessageIndexes.has(ref.liveIndex)).map(ref => ref.floorId))].sort();
   let locationReferences = [];
-  if (latestVisibleMessage && capturedLocationReference?.hostLocator?.messageIndex === latestVisibleMessage.index) {
-    const sourceMatches = verified.filter(ref => ref.liveIndex === latestVisibleMessage.index
-      && ref.liveMessage === latestVisibleMessage.message && ref.rawContent === latestVisibleMessage.selected.rawContent);
+  const locationIndex = capturedLocationReference?.hostLocator?.messageIndex;
+  const locationMessage = snapshot?.chat?.[locationIndex];
+  const locationSelected = selectAssistantMessage(locationMessage);
+  if (locationSelected && locationMessage.is_system !== true && locationMessage.is_hidden !== true && locationMessage.hidden !== true
+    && locationIndex < (latestUser(snapshot)?.index ?? snapshot?.chat?.length ?? 0)) {
+    const sourceMatches = verified.filter(ref => ref.liveIndex === locationIndex
+      && ref.liveMessage === locationMessage && ref.rawContent === locationSelected.rawContent);
     const sourceRef = sourceMatches.length === 1 ? sourceMatches[0] : null;
     const sourceMemory = sourceRef ? (source.floorMemories ?? []).find(memory => memory.floorMemoryId === sourceRef.floorMemoryId) : null;
     const frozenReference = sourceMemory?.locationReferenceSources?.find(value => value.sourceFloorId === sourceRef.floorId);
@@ -1301,12 +1326,22 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     const text = String(value ?? '');
     const snapshot = hostAdapter.snapshot();
     const hostChatId = currentHostChatId(snapshot);
+    const chatId = currentChatId(snapshot);
     const context = snapshot.context;
     if (!hostChatId) throw Object.assign(new Error('请先打开一个可保存的聊天。'), { code: 'V3_PREQUEL_CHAT_UNAVAILABLE' });
     if (typeof context?.saveChatMetadata !== 'function' && typeof context?.saveMetadata !== 'function') throw Object.assign(new Error('宿主不支持聊天元数据保存。'), { code: 'V3_PREQUEL_SAVE_UNAVAILABLE' });
     const metadata = context.chatMetadata;
     const hadPrevious = Object.hasOwn(metadata, PREQUEL_METADATA_KEY);
     const previous = metadata[PREQUEL_METADATA_KEY];
+    const nextText = text.trim() ? text : '';
+    if (nextText === currentPrequelText(snapshot)) return Object.freeze({ hostChatId, text: nextText });
+    // 失效标记与前情文本同批落盘：即使随后切聊导致回执清理只在内存生效，冷重载后
+    // 旧格式回执也无法凭缺失指纹冒充仍然有效。
+    const invalidatedUser = latestUser(snapshot);
+    const invalidationFingerprint = invalidatedUser?.message ? await fingerprint(invalidatedUser.message.mes) : null;
+    const hadInvalidation = invalidationFingerprint !== null && Object.hasOwn(metadata, PREQUEL_RECEIPT_INVALIDATION_KEY);
+    const previousInvalidation = metadata[PREQUEL_RECEIPT_INVALIDATION_KEY];
+    if (invalidationFingerprint !== null) metadata[PREQUEL_RECEIPT_INVALIDATION_KEY] = invalidationFingerprint;
     if (text.trim()) metadata[PREQUEL_METADATA_KEY] = text;
     else delete metadata[PREQUEL_METADATA_KEY];
     try {
@@ -1318,11 +1353,24 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       if (context.chatMetadata === metadata) {
         if (hadPrevious) metadata[PREQUEL_METADATA_KEY] = previous;
         else delete metadata[PREQUEL_METADATA_KEY];
+        if (invalidationFingerprint !== null) {
+          if (hadInvalidation) metadata[PREQUEL_RECEIPT_INVALIDATION_KEY] = previousInvalidation;
+          else delete metadata[PREQUEL_RECEIPT_INVALIDATION_KEY];
+        }
       }
       throw error;
     }
-    invalidate('prequelSaved');
-    return Object.freeze({ hostChatId, text: text.trim() ? text : '' });
+    const current = hostAdapter.snapshot();
+    if (currentHostChatId(current) === hostChatId && currentChatId(current) === chatId
+      && currentPrequelText(current) === nextText) {
+      // 明确修改/清空前情后，下一轮重新选材并为前情保留预算。
+      invalidate('prequelSaved', 'prequelSaved', { clearPersisted: true });
+    } else {
+      // A 保存期间已切到 B：只清理 A 的当前 USER，不落盘或清空 B 的提示槽。
+      clearPersistedReceipt(snapshot, false);
+      if (sessionReceipt?.owner?.hostChatId === hostChatId) sessionReceipt = null;
+    }
+    return Object.freeze({ hostChatId, text: nextText });
   }
 
   const prequelState = (operation, { error = null } = {}) => {
@@ -1712,7 +1760,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       operation.userText = user.message.mes;
       operation.liveFrameKey = liveRecallFrameKey(before);
       operation.sanitizerOptions = currentSanitizerOptions();
-      operation.locationReferenceSnapshot = captureLatestLocationReference(before, operation.sanitizerOptions, recentBodyFloorLimit());
+      operation.locationReferenceSnapshot = captureLatestLocationReference(before, operation.sanitizerOptions, recentBodyFloorLimit(), user.index);
       notify();
       advanceOperation(operation, 'queryContext');
       const queryContext = queryBuilder({ coreChat: coreInput, assistantTurns: 1 });
@@ -1720,6 +1768,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       operation.prequelSourceText = currentPrequelText(before);
       advanceOperation(operation, 'prequelSelection');
       operation.prequelSelection = selectPrequel({ text: operation.prequelSourceText, queryContext, contextSize });
+      operation.prequelDependencyFingerprint = operation.prequelSourceText.trim() ? await fingerprint(operation.prequelSourceText) : null;
       const hostGuard = { userMessage: user.message, userText: user.message.mes };
       if (!queryContext.latestUserText) return finishSkipped(operation, 'emptyUserInput', timings);
       const inputStarted = Date.now();
@@ -1732,9 +1781,16 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         const snapshot = await persistedReceiptValid(value, { chatId: operation.chatId, userIndex: user.index, userFingerprint, pluginVersion }, fingerprint);
         const dependency = JSON.stringify(operation.locationReferenceSnapshot);
         const locationDependencyMatches = snapshot?.schemaVersion >= 18
-          ? snapshot.locationReferenceDependency === dependency
+          ? normalizeLocationReferenceDependency(snapshot.locationReferenceDependency) === dependency
           : !operation.locationReferenceSnapshot?.values?.length;
-        if (snapshot && locationDependencyMatches) { candidate = snapshot; candidateOwner = owner; break; }
+        const prequelInvalidationFingerprint = typeof before?.context?.chatMetadata?.[PREQUEL_RECEIPT_INVALIDATION_KEY] === 'string'
+          ? before.context.chatMetadata[PREQUEL_RECEIPT_INVALIDATION_KEY] : null;
+        // 旧格式回执没有前情依赖指纹可比较；前情显式变更时落盘的失效标记命中当前
+        // USER 时只能重选一次。新回执写回后带指纹，标记自然失效（有界迁移）。
+        const prequelDependencyMatches = snapshot?.prequelDependencyFingerprint === undefined
+          ? prequelInvalidationFingerprint !== userFingerprint
+          : snapshot.prequelDependencyFingerprint === operation.prequelDependencyFingerprint;
+        if (snapshot && locationDependencyMatches && prequelDependencyMatches) { candidate = snapshot; candidateOwner = owner; break; }
       }
       if (candidate?.selectedFloors.some(value => value.rawWitnesses?.length || value.summaryWitnesses?.length)) {
         // 冻结复用不查询向量；原文见证及旧摘要回执仍按各自来源重新核验。
@@ -1901,6 +1957,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         userContentFingerprint: userFingerprint,
         queryFingerprint,
         locationReferenceDependency: JSON.stringify(operation.locationReferenceSnapshot),
+        prequelDependencyFingerprint: operation.prequelDependencyFingerprint,
         bodyMatchFingerprint: source.bodyMatch.fingerprint,
         strategyVersion: RECALL_STRATEGY_VERSION,
         generationType: type,
@@ -2060,6 +2117,17 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     return getState();
   }
 
+  function clearPersistedReceipt(snapshot, save = true) {
+    const user = latestUser(snapshot);
+    if (!user?.message?.extra || !Object.hasOwn(user.message.extra, RECALL_RECEIPT_KEY)) return;
+    const nextExtra = { ...user.message.extra };
+    delete nextExtra[RECALL_RECEIPT_KEY];
+    user.message.extra = nextExtra;
+    if (save) {
+      try { Promise.resolve(snapshot.context?.saveChat?.()).catch(() => {}); } catch { /* non-fatal */ }
+    }
+  }
+
   function invalidate(reason = 'invalidated', sourceEvent = 'runtimeInvalidate', { clearPersisted = false } = {}) {
     if (active) retainTerminated(active, reason, sourceEvent);
     requestDiagnostic.clear();
@@ -2070,14 +2138,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     if (clearPersisted && typeof hostAdapter?.snapshot === 'function') {
       try {
         const snapshot = hostAdapter.snapshot();
-        const user = latestUser(snapshot);
-        if (user?.message?.extra && Object.hasOwn(user.message.extra, RECALL_RECEIPT_KEY)) {
-          const nextExtra = { ...user.message.extra };
-          delete nextExtra[RECALL_RECEIPT_KEY];
-          user.message.extra = nextExtra;
-          const context = snapshot.context ?? hostAdapter.snapshot?.()?.context;
-          context?.saveChat?.();
-        }
+        clearPersistedReceipt(snapshot);
       } catch { /* non-fatal */ }
     }
     lastRecall = null; lastPrequel = null; lastRecallBinding = null; lastRecallReceiptOwner = null; lastError = null; notify();

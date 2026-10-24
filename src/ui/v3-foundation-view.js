@@ -815,7 +815,14 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
       if (unchangedDraft(draft, payload)) { saved = true; drafts.delete(key); return true; }
       const task = typeof runtime.editMemory === 'function' ? () => runtime.editMemory(floor.floorId, payload) : () => runtime.editSummary(floor.floorId, payload.summary, payload.revisionNote);
       let failure = null;
-      await run('保存本楼记忆', task, { after: () => { drafts.delete(key); saved = true; try { recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true }); } catch { /* non-fatal */ } return true; }, failed: error => { draft.saveError = `保存失败：${publicErrorMessage(error, { fallback: '本楼记忆没有保存，请重试。' })}`; failure = error; return true; } });
+      await run('保存本楼记忆', task, { after: nextState => {
+        if (drafts.get(key) === draft) drafts.delete(key);
+        saved = true;
+        // 保存仍属于开始时的聊天；完成联动只能清理该聊天当前显示的回执。
+        const targetActive = Boolean(state.chatId && nextState?.chatId === state.chatId);
+        if (targetActive) try { recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true }); } catch { /* non-fatal */ }
+        return targetActive;
+      }, failed: error => { draft.saveError = `保存失败：${publicErrorMessage(error, { fallback: '本楼记忆没有保存，请重试。' })}`; failure = error; return true; } });
       if (failure) { draw(); throw failure; }
       return true;
     }, onClose: () => { if (!saved && drafts.get(key) === draft) { drafts.delete(key); if (active) render(foundationState); } } })).catch(() => {});

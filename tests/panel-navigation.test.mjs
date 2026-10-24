@@ -24,6 +24,11 @@ class Node {
   scrollIntoView(options) { this.scrollOptions = options; }
 }
 const flatten = node => [node, ...(node.children ?? []).flatMap(flatten)];
+async function waitFor(predicate, message) {
+  const deadline = Date.now() + 3000;
+  while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.ok(predicate(), message);
+}
 
 test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，并恢复各页滚动位置', async () => {
   const [source, panelHtml, panelCss] = await Promise.all([
@@ -159,7 +164,12 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   assert.ok(calls.some(([kind]) => kind === 'profiles-activate'));
   body.scrollTop = 31;
   settingsTab.fire('click');
-  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => {
+    const mount = view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
+    if (!mount) return false;
+    const link = flatten(mount).find(node => node?.className?.includes('qqj-vector-index-link'));
+    return link?.hidden === false;
+  }, '设置记忆管理未完成当前聊天索引状态读取');
   const initialManagementMount = view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
   const indexLink = flatten(initialManagementMount).find(node => node.className.includes('qqj-vector-index-link'));
   assert.ok(indexLink); assert.equal(indexLink.hidden, false, '直接打开设置记忆管理后按当前manifest显示零索引文字链接');

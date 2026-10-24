@@ -1023,6 +1023,7 @@ function semanticPacketSingle(value, { finishReason } = {}) {
   let packet = parseSemanticCandidate(value, { finishReason });
   const packets = [];
   for (let depth = 0; depth < 6; depth += 1) {
+    if (isSchemaOnlyPacket(packet)) throw extractorError('V3_EXTRACTOR_SUMMARY_INVALID', 'summary');
     if (packet?.task === 'extractFloorMemory' && Array.isArray(packet.floors)) return { legacy: packet };
     packets.push(packet);
     const wrapped = field(packet, SUMMARY_WRAPPER_KEYS);
@@ -1069,6 +1070,18 @@ function looksLikeSemanticJson(value) {
   return /["']?(?:summary|synopsis|overview|recap|memorySummary|brief|摘要|总结|概述|剧情概述|故事概述|内容概述|people|actions|qianshi|entityMentions)["']?\s*[:：]/iu.test(value);
 }
 
+const JSON_SCHEMA_KEYS = new Set(['$schema', '$id', '$ref', '$defs', 'definitions', 'type', 'properties', 'required',
+  'additionalProperties', 'patternProperties', 'unevaluatedProperties', 'dependentRequired', 'dependentSchemas',
+  'minProperties', 'maxProperties', 'propertyNames', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else',
+  'title', 'description', 'default', 'examples', 'enum', 'const', 'readOnly', 'writeOnly', 'deprecated']);
+function isSchemaOnlyPacket(value) {
+  // A schema's nested "summary" declaration is not a damaged business summary.
+  // Only ignore a positively identified schema; mixed or broken business packets still fail.
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && value.properties && typeof value.properties === 'object' && !Array.isArray(value.properties)
+    && Object.keys(value).every(key => JSON_SCHEMA_KEYS.has(key)));
+}
+
 function collectSemanticCandidates(values, { finishReason } = {}) {
   const candidates = [];
   for (const value of values) {
@@ -1077,6 +1090,7 @@ function collectSemanticCandidates(values, { finishReason } = {}) {
     const structured = /^[\[{]/u.test(text);
     const labeledSummary = /^(?:summary|摘要|总结)\s*[:：]/iu.test(text);
     if (!structured && !labeledSummary) continue;
+    if (structured && isSchemaOnlyPacket(parseCompleteStructuredJson(text, { finishReason }))) continue;
     try {
       candidates.push(semanticPacketSingle(text, { finishReason }));
     } catch (error) {
@@ -1523,9 +1537,11 @@ export async function normalizeExtractorResponse(options) {
   const singleEnd = clock?.singleEnd === true && clock.end?.date && clock.end?.time;
   const canonicalTime = inferCanonicalCurrentTime(options.floor?.content?.canonicalContent);
   const referenceText = typeof clock?.referenceText === 'string' ? clock.referenceText.trim().slice(0, 500) : '';
-  if (!pairs.length && !singleEnd && !referenceText && !canonicalTime && withQianshi.memory.chronology.length) {
+  if (!pairs.length && !singleEnd && !canonicalTime && withQianshi.memory.chronology.some(item =>
+    !['unknown', 'sequenceOnly'].includes(item.time.kind) && String(item.time.sourceText ?? item.time.normalized ?? '').trim())) {
     return withQianshi;
   }
+  // start-only 故事钟不是篇末时间：没有模型主线、可靠结束、参考或正文时间时不合成起点时间行（上游合同）。
   if (!pairs.length && !singleEnd && !referenceText && !canonicalTime && clock?.start && !clock?.end) {
     return withQianshi;
   }
@@ -1533,7 +1549,8 @@ export async function normalizeExtractorResponse(options) {
   const end = clockPart(clock?.end);
   const sourceText = pairs.length ? `${clockPart(pairs[0].start)} → ${clockPart(pairs[0].end)}`.slice(0, 500)
     : singleEnd ? end.slice(0, 500) : '';
-  const fallbackText = sourceText || referenceText || canonicalTime?.text || '时间未明确';
+  // 正文规范时间与模型结果先于弱参考文本：referenceText 只作末位兜底，不再覆盖主线时间。
+  const fallbackText = sourceText || canonicalTime?.text || referenceText || '时间未明确';
   const chronology = pairs.length ? await Promise.all(pairs.map(async (pair, index) => {
     const pairText = `${clockPart(pair.start)} → ${clockPart(pair.end)}`.slice(0, 500);
     const itemIdInput = ['v3-floor-memory-story-clock', options.expectedScope.batchId, options.floor.id, clock?.namespace ?? 'unknown', pair.start?.raw ?? null, pair.end?.raw ?? null];
@@ -1546,7 +1563,7 @@ export async function normalizeExtractorResponse(options) {
     };
   })) : [{
     itemId: await deterministicUuid(['v3-floor-memory-story-clock', options.expectedScope.batchId, options.floor.id, clock?.namespace ?? 'unknown', clock?.start?.raw ?? null, clock?.end?.raw ?? null, ...(referenceText ? [referenceText] : [])]),
-    time: { kind: sourceText ? 'explicit' : referenceText ? 'unknown' : canonicalTime?.kind ?? 'unknown', sourceText: fallbackText, normalized: null, precision: complete || singleEnd ? 'exact' : referenceText ? 'unresolved' : canonicalTime ? 'approximate' : 'unresolved', relativeToFloorId: null },
+    time: { kind: sourceText ? 'explicit' : canonicalTime?.kind ?? 'unknown', sourceText: fallbackText, normalized: null, precision: complete || singleEnd ? 'exact' : canonicalTime ? 'approximate' : 'unresolved', relativeToFloorId: null },
     description: fallbackText,
     evidenceRefs: [],
   }];

@@ -87,7 +87,7 @@ test('记忆提取周期固定为 1，旧配置与更新请求都不能继续生
   settings.update({ autoMemoryEnabled: true, autoMemoryBatchSize: 20 });
   assert.equal('autoMemoryEnabled' in extensionSettings.qianqianjie, false);
   assert.equal(extensionSettings.qianqianjie.autoMemoryBatchSize, 1);
-  assert.equal(saves(), 2);
+  assert.equal(saves(), 1, '归一化后的设置只保存一次，不重复落盘');
 
   settings.update({ autoMemoryBatchSize: 2 });
   assert.equal(settings.get().autoMemoryBatchSize, 1);

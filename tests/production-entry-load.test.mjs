@@ -183,7 +183,7 @@ async function generatedLegacyReceipt10(userMessage) {
     subjectEntityId: personId, subject: '林岚', layer: 'situational', action: 'add', before: null,
     after: { text: '仍维持同一约定', visibility: 'private', reason: '持续状态', origin: 'floor', toward: '周宁',
       towardEntityId: '11111111-1111-4111-8111-111111111112', sourceAssistantSeq: null } }];
-  for (const key of ['qianshiDeletionWitness', 'selectedLocationReferences', 'locationReferenceDependency', 'qianshiProgress', 'storylines', 'timeDependencies', 'stateProgressions']) delete receipt[key];
+  for (const key of ['qianshiDeletionWitness', 'prequelDependencyFingerprint', 'selectedLocationReferences', 'locationReferenceDependency', 'qianshiProgress', 'storylines', 'timeDependencies', 'stateProgressions']) delete receipt[key];
   receipt.userMessageIndex = 1;
   const digest = value => `sha256:${createHash('sha256').update(String(value ?? '')).digest('hex')}`;
   receipt.userContentFingerprint = digest(userMessage.mes);
@@ -241,6 +241,17 @@ async function generatedCurrentReceipt18({ hostGlobalName, chat, userMessage, ro
   const receipt = userMessage.extra?.qqj_v3_recall_receipt;
   assert.equal(receipt?.schemaVersion, 18, `${hostGlobalName} 预算输入应来自当前receipt producer`);
   assert.equal(receipt?.pluginVersion, JSON.parse(await readFile(resolve(root, 'manifest.json'), 'utf8')).version);
+  // 真正旧 schema18 不带新增的前情签名扩展；这里只回退该扩展，业务选材仍来自正式 producer。
+  delete receipt.prequelDependencyFingerprint;
+  const material = [receipt.schemaVersion, receipt.pluginVersion, receipt.chatId, receipt.narrativeGeneration,
+    receipt.headCheckpointId, receipt.rootRevision, receipt.userMessageIndex, receipt.userContentFingerprint,
+    receipt.queryFingerprint, receipt.generationType, receipt.selectedFloors, receipt.selectedStates, receipt.coverage,
+    receipt.injectionText, receipt.stages, receipt.skipReasons, receipt.completionStatus, receipt.createdAt,
+    receipt.bodyMatchFingerprint, receipt.strategyVersion, receipt.selectedCseChanges, receipt.selectorDiagnostic,
+    receipt.timings, receipt.storylines, receipt.timeDependencies, ...(receipt.qianshiProgress ? [receipt.qianshiProgress] : []),
+    receipt.selectedLocationReferences, receipt.locationReferenceDependency,
+    ...(receipt.qianshiDeletionWitness === undefined ? [] : [receipt.qianshiDeletionWitness])];
+  receipt.receiptFingerprint = `sha256:${createHash('sha256').update(JSON.stringify(material)).digest('hex')}`;
   return { receipt, result };
 }
 
