@@ -173,3 +173,16 @@ npm test
 - **文案勘误**：`src/ui/help-guide.js`（设置章节与排障手册两处）与 `docs/troubleshooting.md` 原写「保留包裹符默认是 content」，与本 fork 实际默认 `sourceKeepTags: ''`（两栏留空＝M0 直通）矛盾，已按实际默认改写；设置面板占位符「留空＝不清洗」不变。
 - **补充守卫**：`src/v3/extractor.js` 的 `fallbackText` 顺序调整（`canonicalTime` 先于弱 `referenceText`）此前无测试覆盖，已加 `tests/recall-local-guards.test.mjs`「提取器时间兜底顺序」用例，并做变异验证（回退顺序即红）。
 - **复核结果**：bundle 重建后缓存键 `20261024.129-6a9ba9d3155dd5e0`；四门禁 43/43、19/19、1949 项 / 1948 通过 / 1 上游原生红、跨仓 40+18 例 0 差异。
+
+---
+
+## 附：v0.9.2 合并实录（2026-10-24，合并提交 `c6ace7c`）
+
+跨度 v0.8.1+v0.9.0+v0.9.1+v0.9.2、20 处冲突，按三原则裁决（fork 资产保本地 / 上游同向修复取上游 / 本地语义嫁接上游管线）。要点与全部持久性契约见 `AGENTS.md` §2.1/§2.2/§2.3/§3.1/§4.3/§5.1，此处只记取证数据：
+
+- **清洗器三向分歧**：上游 `sanitizeStoryBody`（shared-body-wrappers.js，两仓上游逐字一致）对拍 40 例金样仅 13 例一致 → 保本地实现；文件照收勿改（跨仓对拍依赖）；上游注释对包裹符能力不采纳（本仓注释属 M0 卫生清理）。
+- **共享容器 M0 存活**：上游在 store 创建期初始化共享容器（全新安装落到回退值 'content'）→ 本仓 `get()` 默认回填后初始化 + `wrappers()/updateWrappers()` 先经 `get()` + 写入用本仓归一化 + 迁移同步重置容器；`tests/shared-body-wrappers.test.mjs` 期望按本仓合同适配（全新安装断言 keepTags=''）。
+- **上游同向趋同（取上游形状）**：地点 `beforeIndex`（type 限定）+空值返 null+旧空占位宽容、时间 disabled 快路径、schema 回显拒绝（isSchemaMetadataCandidate）、弱参考降级（namespace-scoped）、夹具模式（openDetails/await save/editorError）。v0.8.0 的 start-only 矛盾红随上游测试重写消解。
+- **记忆化等价**：`verify-equivalence.mjs upstream/main` 直接对比因本地条件边界文案分歧 36/144——临时中和边界（改回上游长文案）后 **144/144 逐字节一致**，证明四项记忆化+recordsByValue+sameMaterial 对上游 v0.9.2 新语义完全透明。工具 `absolutizeImports` 补 `memory-exclusion.js`（存在才重写）。
+- **基线**：纯上游 v0.9.2 = 2018/2012/6（其中 2 例为跨仓读 moon-SDC 的环境性红，合并树已绿）；合并树终态 **2076/2072/4**，4 红全部实证上游原生（依赖清单缺 4 新模块叠加人物→时间门控断言脱钩 ×1；foundation 反馈文案 ×3）。`normalizeTagRules` 去重两仓同步（`f7a426f`）。
+- 产物：版本 0.9.2，缓存键 `20261024.129-658429a52fe9524a`；门禁 1 清洗器 43 例、门禁 2 22/23（1=上述上游原生）、门禁 4 跨仓金样 40/40。

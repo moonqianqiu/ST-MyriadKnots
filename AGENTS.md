@@ -178,6 +178,6 @@
 | v0.7.13 | 10-14 | `c711ee8` | 2 冲突（dist 重建、键 `.89-e973510603efafb3`）；核记录缓存开关全采纳+上游版本断言代修 | 1727 |
 | v0.7.14+v0.7.15 | 10-15 | `a61cfd5` | 3 冲突（dist 重建、manifest 版本+键 `.125-cd3219844744ee4f`、入口断言采上游）；batch 读协商代修 | 1739 |
 | v0.8.0 | 10-20 | `bd44158` | 14 冲突；编辑器迁移+三处 invalidate 保位；删 legacyIndexPuts；键 `.126-58d4b7dcebff9b7f` | 1882/1922 |
-| v0.8.1+v0.9.0+v0.9.1+v0.9.2 | 10-24 | 本次合并 | 20 冲突：清洗器三向分歧保本地（§3.1）、SANITIZER_VERSION 保 v2、共享容器 M0 三件套（§2.3）、extractor schema 拒绝/弱参考降级取上游、地点 beforeIndex/disabled 快路径上游同向取上游、prompts-settings 管线嫁接、wrappers 去重两仓同步、记忆化等价 144/144；键 `.129-658429a52fe9524a` | 2072/2076（4 上游原生红） |
+| v0.8.1+v0.9.0+v0.9.1+v0.9.2 | 10-24 | `c6ace7c` | 20 冲突：清洗器三向分歧保本地（§3.1）、SANITIZER_VERSION 保 v2、共享容器 M0 三件套（§2.3）、extractor schema 拒绝/弱参考降级取上游、地点 beforeIndex/disabled 快路径上游同向取上游、prompts-settings 管线嫁接、wrappers 去重两仓同步、记忆化等价 144/144；键 `.129-658429a52fe9524a` | 2072/2076（4 上游原生红） |
 
 > **审计更新（2026-10-11）**：`src/v3/extractor.js` 的 `excludedTags` 已补入 `record` 单数；嵌套 `<status><record>…</record></status>` 不再经父块 `plain` 文本进入时间读取，回归锁定于 `tests/v3-time-body.test.mjs`。§2.2 时间体条目中的该缺口描述仅保留为历史取证。
