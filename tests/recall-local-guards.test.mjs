@@ -8,6 +8,7 @@ import { RECALL_RECEIPT_KEY, captureCoreBodyWitness, createV3RecallRuntime } fro
 import { matchFloorCandidates } from '../src/v3/floor-binding.js';
 import { extraOnlySanitizerOptions, sanitizeMemoryContent } from '../src/memory-content-sanitizer.js';
 import { clockContentFingerprint } from '../src/v3/time-body.js';
+import { createExtractorEnvelope, normalizeExtractorResponse } from '../src/v3/extractor.js';
 import { CSE_RECALL_KNOWLEDGE_BOUNDARY, formatRecallInjection, selectRecall } from '../src/v3/recall-selector.js';
 import { projectRecallSource } from '../src/v3/recall-source.js';
 import { sha256 } from '../src/identity.js';
@@ -197,4 +198,30 @@ test('时间参考标签探针：未配置引用标签时不读取标签内容�
   assert.equal(await clockContentFingerprint(before, 'SLATE'), await clockContentFingerprint(before, 'slate'), '标签名大小写不敏感');
   assert.equal(await clockContentFingerprint(before, 'Slate,其它'), await clockContentFingerprint(before, 'Slate'), '多标签配置不改变已含标签的结果');
   assert.equal(await clockContentFingerprint(before, ''), await clockContentFingerprint('正文其余', ''), '未配置时标签整段不计入指纹');
+});
+
+
+test('提取器时间兜底顺序：正文规范时间优先于弱参考文本（本地偏离守卫）', async () => {
+  const floor = Object.freeze({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    chatId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    assistantSeq: 1,
+    narrativeGeneration: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    hostLocator: Object.freeze({ messageIndex: 1 }),
+    content: Object.freeze({ canonicalContent: '<StatusBar>当前时间：2026年5月6日 21:15</StatusBar>正文。', rawFingerprint: 'raw-1' }),
+  });
+  // 只有弱参考文本与正文当前时间；start-only 不算篇末。
+  const storyClock = { complete: false, singleEnd: false, namespace: 'qqj',
+    start: { raw: '2026-05-06 20:00', date: '2026-05-06', time: '20:00' }, end: null,
+    referenceText: '参照旧稿：2026年1月1日 00:00' };
+  const envelope = await createExtractorEnvelope({ batchId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    chatId: floor.chatId, narrativeGeneration: floor.narrativeGeneration, checkpointId: null,
+    floor, entities: [], userIdentity: { displayName: '阿岚' }, storyClock });
+  const compiled = await normalizeExtractorResponse({ response: { summary: '本楼摘要。' }, envelope, floor,
+    existingEntities: [], now: '2026-05-06T00:00:00.000Z', expectedScope: envelope.scope });
+  const entry = compiled.memory.chronology[0];
+  assert.ok(entry, '正文有可确认时间时必须合成时间行');
+  assert.match(entry.time.sourceText, /2026年5月6日/u, '正文规范时间不得被弱参考文本顶替');
+  assert.doesNotMatch(entry.time.sourceText, /2026年1月1日/u);
+  assert.equal(entry.time.precision, 'approximate', '正文规范时间按近似精度兜底，而不是 unresolved');
 });

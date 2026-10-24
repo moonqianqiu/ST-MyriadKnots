@@ -140,7 +140,7 @@
    ```
 
    *标准*：19/19 全通过（v0.7.13 起含核记录缓存诊断新例；前者验证 manifest 缓存键与 bundle SHA-256 绝对吻合）。
-3. **全量测试套件**：`npm test` —— 当前基线 **1948 例 / 1947 通过 / 1 上游原生红**（2026-10-24，v0.8.0 审计修复后，取证 `docs/audit-v0.8.0-test-failures-remediation.md`；合并时旧基线为 1922/1882/40，其余 39 红已由 §2.1 认可的测试代修与 `<location>` 适配消解）。唯一红 = `v3-extractor-memory`「残缺同楼时间戳」例：与 `v3-time-body:547` start-only 合同**互相矛盾**，测试体与上游逐字一致且纯上游树同败——**勿迁就它改 src（§2.2 extractor 条）**。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 当前基线 **1949 例 / 1948 通过 / 1 上游原生红**（2026-10-24，v0.8.0 审计修复后，取证 `docs/audit-v0.8.0-test-failures-remediation.md`；合并时旧基线为 1922/1882/40，其余 39 红已由 §2.1 认可的测试代修与 `<location>` 适配消解）。唯一红 = `v3-extractor-memory`「残缺同楼时间戳」例：与 `v3-time-body:547` start-only 合同**互相矛盾**，测试体与上游逐字一致且纯上游树同败——**勿迁就它改 src（§2.2 extractor 条）**。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
    > **上游原生红判定法**：某测试文件与上游**逐字节相同**而失败时，先在纯上游树跑同一文件；计数相同即上游原生，禁止为「让全量变绿」而改本地 `src/` 合同。**慢文件勿整跑**（`v3-extractor-memory.test.mjs` 含 1000 楼生产夹具，整文件数分钟），用 `--test-name-pattern` 按例对照。
    > **v0.8.0 起新增一类上游原生红**：上游新增/改写的测试依赖其清洗器**缺省剥除 `<location>`** 标签，本仓 M0 合同保留该标签（§3.1）→ 按 §2.1 代修（显式 `extraTags:'location'` 或改 canonical 期望值），**不得改清洗器缺省行为**（会破坏 40 例金样与跨仓对拍）。
@@ -151,8 +151,8 @@
 ## 5. 当前仓库状态底数（基线备忘）
 
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main` Tag `v0.8.0`（提交 `e6ad32c`）。本次合并提交及父提交见 §5.1 与 git 历史。**待办**：上游已发布 v0.9.x（`upstream/main` `7d27fdc` = v0.9.1）尚未合并；
-- **产物版本**：`manifest.json` 版本号 `0.8.0`（含 `author: "atonal519"`），缓存键 `20261024.128-331f41b4ec3cde3b`（哈希与真实 bundle 一致）；
-- **v0.8.0 审计修复（2026-10-22~24，未提交前的工作区状态）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
+- **产物版本**：`manifest.json` 版本号 `0.8.0`（含 `author: "atonal519"`），缓存键 `20261024.129-6a9ba9d3155dd5e0`（哈希与真实 bundle 一致）；
+- **v0.8.0 审计修复（2026-10-22~24，已随 `7729c3a` 提交）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.9.4moon（2026-10-20 合入上游 v3.9.4，合并提交 `b3da109`；2026-10-15 `dc05fe9` 曾统一模块工作流）；2026-10-24 起两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 372/373+1skip；MK 跨仓 settings 断言（SDC `loadCfg()` 含 `spAdditionalParams`）由 SDC v3.8.0 起满足。
 
