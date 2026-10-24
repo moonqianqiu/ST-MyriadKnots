@@ -1,4 +1,5 @@
-import { normalizeMemoryTagList } from './memory-content-sanitizer.js';
+import { getSharedBodyWrappers } from './shared-body-wrappers.js';
+import { normalizeTagRules } from './utils/tag-names.js';
 import { normalizeStoryClockReferenceTags } from './story-clock.js';
 import { normalizeStoryCalendar } from './v3/calendar-rules.js';
 
@@ -201,11 +202,24 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     settings.storageTrashGcLastCompletedAt = Number.isFinite(Date.parse(settings.storageTrashGcLastCompletedAt))
       ? new Date(settings.storageTrashGcLastCompletedAt).toISOString() : '';
     settings.storyClockReferenceTags = normalizeStoryClockReferenceTags(settings.storyClockReferenceTags).join(',');
+    // 共享容器初始化必须在本地默认值（sourceKeepTags:''）回填之后：shared-body-wrappers 的
+    // merge 只认已存在的键，先初始化会落到上游回退值 'content' 而丢失 M0 直通默认（§3.3）。
+    getSharedBodyWrappers(extensionSettings);
     return settings;
   };
   const notify = (observeSaveFailure = false) => {
     try { return save(); }
     catch (error) { if (observeSaveFailure) throw error; }
+  };
+  // 写入用本仓 normalizeTagRules（包裹规则原样保留、大小写敏感，M0-M3 合同）：上游
+  // updateSharedBodyWrappers 会按共享模块规则 lower 归一命名对，经它写回会破坏本仓合同。
+  // 共享容器本身照用——其他白鳥插件读取时各自再归一化，双向兼容。
+  const writeWrappers = patch => {
+    const wrappers = getSharedBodyWrappers(extensionSettings);
+    for (const key of ['keepTags', 'extraTags']) if (own(patch ?? {}, key)) {
+      wrappers[key] = normalizeTagRules(patch[key]).join(',');
+    }
+    return wrappers;
   };
   const update = (patch, { observeSaveFailure = false } = {}) => {
     if (own(patch, 'apiAdditionalParams')) parseAdditionalParams(patch.apiAdditionalParams);
@@ -240,8 +254,8 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     if (own(patch, 'apiStream')) settings.apiStream = patch.apiStream === true;
     if (own(patch, 'apiPresetActiveId')) settings.apiPresetActiveId = text(patch.apiPresetActiveId).trim();
     if (own(patch, 'sourceWorldInfoExcludedBooks')) settings.sourceWorldInfoExcludedBooks = Array.isArray(patch.sourceWorldInfoExcludedBooks) ? patch.sourceWorldInfoExcludedBooks : [];
-    if (own(patch, 'sourceKeepTags')) settings.sourceKeepTags = normalizeMemoryTagList(patch.sourceKeepTags).join(',');
-    if (own(patch, 'sourceExtraTags')) settings.sourceExtraTags = normalizeMemoryTagList(patch.sourceExtraTags).join(',');
+    if (own(patch, 'sourceKeepTags')) writeWrappers({ keepTags: patch.sourceKeepTags });
+    if (own(patch, 'sourceExtraTags')) writeWrappers({ extraTags: patch.sourceExtraTags });
     if (own(patch, 'processingPrompt')) settings.processingPrompt = text(patch.processingPrompt);
     if (own(patch, 'summaryPrompt')) settings.summaryPrompt = text(patch.summaryPrompt);
     if (own(patch, 'csePrompt')) settings.csePrompt = text(patch.csePrompt);
@@ -489,7 +503,13 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
   const migrateSanitizerKeepTags = () => {
     const current = get();
     if ((Number(current.sanitizerKeepTagsMigrationVersion) || 0) >= 1) return false;
-    if (String(current.sourceKeepTags ?? '').trim().toLowerCase() === 'content') current.sourceKeepTags = '';
+    if (String(current.sourceKeepTags ?? '').trim().toLowerCase() === 'content') {
+      current.sourceKeepTags = '';
+      // 共享容器可能已从旧默认 'content' 完成首次初始化（get() 先于迁移执行）：须同步重置，
+      // 否则迁移只改旧键、容器残留 'content'，M0 直通恰好在被保护的存量用户上丢失。
+      const wrappers = extensionSettings['schedule-planner']?.bodyWrappers;
+      if (wrappers && String(wrappers.keepTags ?? '').trim().toLowerCase() === 'content') wrappers.keepTags = '';
+    }
     current.sanitizerKeepTagsMigrationVersion = 1;
     notify();
     return true;
@@ -497,6 +517,10 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
   return {
     get,
     update,
+    // 经 get() 先行物化本地默认（幂等）：任何读取/写入路径都不得在默认回填前初始化共享容器，
+    // 否则全新安装会落到上游回退值 'content' 而丢失 M0（AGENTS §3.3）。
+    wrappers: () => { get(); return getSharedBodyWrappers(extensionSettings); },
+    updateWrappers: patch => { get(); writeWrappers(patch); notify(); },
     localConfig,
     mainConfig,
     presets,

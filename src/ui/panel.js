@@ -11,6 +11,7 @@ import { createScrollDiagnostics } from './scroll-diagnostics.js';
 import { openHelpGuide } from './help-guide.js';
 import { applyPluginEnabledImmediately } from '../settings.js';
 import { scaleCssFontSizes } from './font-scale.js';
+import { createPluginUpdatesView } from './plugin-updates-view.js';
 import { isTauriTavern } from '../tauri-backend.js';
 
 const PUBLIC_API_EXAMPLE = `const bridge = globalThis.qqj_v3_public_bridge_v1;
@@ -37,6 +38,8 @@ export function createPanel({
   apiTools,
   vectorApi,
   vectorIndex,
+  pluginUpdates,
+  renderUpdateMarkdown,
   v3FoundationView,
   peopleProfilesView,
   qianshiTimelineView,
@@ -45,6 +48,7 @@ export function createPanel({
   onPluginEnabledChange,
   onPluginEnableFailure,
   onStoryClockChange,
+  subscribeSettingsChange,
   onAutoHideChange,
   onTimeEvolutionChange,
   calendarContextProvider = () => ({ chatId: null, calendar: null }),
@@ -77,6 +81,14 @@ export function createPanel({
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>${shellCss}\n${scaleCssFontSizes(css, '--qqj-ui-fixed-scale', true)}</style>${html}`;
   const panel = root.querySelector('.panel');
+  const activityIndicator = root.querySelector('.qqj-work-indicator');
+  const setActivity = value => {
+    panel?.setAttribute?.('aria-busy', String(value.busy === true));
+    if (!activityIndicator) return;
+    activityIndicator.hidden = value.busy !== true;
+    activityIndicator.setAttribute('aria-label', value.copy || '千千结空闲');
+    activityIndicator.setAttribute('title', value.copy || '千千结空闲');
+  };
   const body = root.querySelector('.body');
   const view = root.querySelector('.view');
   const tabs = [...root.querySelectorAll('.tab')];
@@ -95,6 +107,8 @@ export function createPanel({
   const settingsDrawerState = createSettingsDrawerState();
   let apiEditingRole = 'analysis';
   let apiSettingsView = null;
+  let promptsSettingsView = null;
+  let updatesSettingsView = null;
   const scrollPositions = new Map();
   const themeButton = root.querySelector('.theme-btn');
   const fabToggleButton = root.querySelector('.fab-toggle-btn');
@@ -172,6 +186,8 @@ export function createPanel({
   };
   const unmountContent = () => {
     apiSettingsView?.dispose(); apiSettingsView = null;
+    promptsSettingsView?.dispose(); promptsSettingsView = null;
+    updatesSettingsView?.dispose(); updatesSettingsView = null;
     v3FoundationView.deactivate();
     peopleProfilesView.deactivate();
     qianshiTimelineView.deactivate();
@@ -278,7 +294,14 @@ export function createPanel({
         enabledInput.disabled = false;
       }
     });
-    master.append(toggle, enabledResult);
+    const masterRow = element('div', 'master-switch-row');
+    masterRow.append(toggle);
+    if (pluginUpdates) {
+      updatesSettingsView = createPluginUpdatesView({ updates: pluginUpdates, dialog, documentRef, renderMarkdown: renderUpdateMarkdown });
+      masterRow.append(updatesSettingsView.controls);
+    }
+    master.append(masterRow, enabledResult);
+    if (updatesSettingsView) master.append(updatesSettingsView.feedback);
     page.append(master);
 
     const managementMount = element('div', 'qqj-settings-management');
@@ -310,7 +333,8 @@ export function createPanel({
     const worldbook = sourcePermissionView?.renderSettings?.({
       open: subOpen('worldbook'), onDrawerToggle: subToggle('worldbook'),
     });
-    const prompts = createPromptsSettings({ settings, documentRef, open: subOpen('prompts'), onToggle: subToggle('prompts'), onStoryClockChange, customImpl: options => dialog?.custom?.(options) });
+    const prompts = createPromptsSettings({ settings, documentRef, open: subOpen('prompts'), onToggle: subToggle('prompts'), onStoryClockChange, subscribeSettingsChange, customImpl: options => dialog?.custom?.(options) });
+    promptsSettingsView = prompts;
     const appearanceSettings = createAppearanceSettings({
       settings, documentRef, open: subOpen('appearance'), onToggle: subToggle('appearance'),
       applyAppearance: () => appearance.apply(),
@@ -358,7 +382,7 @@ export function createPanel({
     const autoHideInput = element('input'); autoHideInput.type = 'checkbox'; autoHideInput.checked = settings.get().autoHideEnabled === true;
     autoHideToggle.append(element('span', '', '自动隐藏'), autoHideInput);
     const keepRow = element('label', 'qqj-auto-hide-row');
-    keepRow.append(element('span', '', '保留最近 AI 楼数'));
+    keepRow.append(element('span', '', '保留历史 AI 楼数'));
     const keepInput = element('input', 'settings-input settings-num'); keepInput.type = 'number'; keepInput.min = '1'; keepInput.max = '50'; keepInput.step = '1'; keepInput.value = String(settings.get().autoHideKeepAiCount ?? 3);
     keepRow.append(keepInput);
     const autoHideResult = element('p', 'settings-result');
@@ -374,7 +398,7 @@ export function createPanel({
           autoHideResult.className = 'settings-result success';
           return;
         }
-        autoHideResult.textContent = current.autoHideEnabled ? `已开启；后续按最近 ${current.autoHideKeepAiCount} 个 AI 楼保留，已隐藏楼保持隐藏。` : '已关闭；由千千结隐藏的消息已恢复。';
+        autoHideResult.textContent = current.autoHideEnabled ? `已开启；后续保留最近 ${current.autoHideKeepAiCount} 个 AI 楼，并另留当前回复供重生成；已隐藏楼保持隐藏。` : '已关闭；由千千结隐藏的消息已恢复。';
         autoHideResult.className = 'settings-result success';
       } catch (error) {
         autoHideResult.textContent = `设置已保存，自动隐藏未完成：${publicErrorMessage(error, { fallback: '操作失败。' })}`;
@@ -478,7 +502,9 @@ export function createPanel({
     copyExample.addEventListener('click', async () => { await copyPublicApiExample(); updateCopyResult(); });
     apiActions.append(element('span', '', 'API 接口'), copyExample);
     copyFeedback.setAttribute('role', 'status');
-    documentationBody.append(tutorialActions, apiActions, copyFeedback, fallbackHost);
+    documentationBody.append(tutorialActions, apiActions);
+    if (updatesSettingsView) documentationBody.append(updatesSettingsView.noticeRow);
+    documentationBody.append(copyFeedback, fallbackHost);
     updateCopyResult();
     page.append(documentationGroup);
 
@@ -492,6 +518,7 @@ export function createPanel({
   }
 
   function show(nextTrigger) {
+    void pluginUpdates?.ensureChecked();
     trigger = nextTrigger ?? trigger;
     host.hidden = false;
     host.setAttribute('aria-hidden', 'false');
@@ -508,6 +535,8 @@ export function createPanel({
     rememberScroll();
     activationEpoch += 1;
     apiSettingsView?.dispose(); apiSettingsView = null;
+    promptsSettingsView?.dispose(); promptsSettingsView = null;
+    updatesSettingsView?.dispose(); updatesSettingsView = null;
     v3FoundationView.deactivate();
     peopleProfilesView.deactivate();
     qianshiTimelineView.deactivate();
@@ -589,7 +618,7 @@ export function createPanel({
   tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
   documentRef.addEventListener?.('keydown', event => { if (event.key !== 'Escape' || host.hidden) return; if (dialog?.hasActive?.()) { dialog.cancelTop(); event.preventDefault?.(); return; } close(); });
 
-  return Object.freeze({
+  return Object.freeze({ setActivity,
     host,
     root,
     show,

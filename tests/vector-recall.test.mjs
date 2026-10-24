@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createVectorApiClient, normalizeVectorConfig, resolveVectorConfig, VECTOR_DEFAULT_URL, VECTOR_DEFAULT_MODEL } from '../src/vector-api.js';
 import { createVectorIndex, rawSourceChunks, VECTOR_INDEX_ID, VECTOR_SHARD_PREFIX } from '../src/v3/vector-index.js';
 import { createVectorAutoUpdater } from '../src/v3/vector-auto-update.js';
-import { projectVectorSources, rawWitnessValid, summaryCandidateText, summaryWitnessValid } from '../src/v3/vector-source.js';
+import { createRawSourceLookup, projectVectorSources, rawWitnessValid, summaryCandidateText, summaryWitnessValid } from '../src/v3/vector-source.js';
 import { readVectorSource } from '../src/v3/vector-source-reader.js';
 import { projectRecallSource, selectRecallMemories } from '../src/v3/recall-source.js';
 import { selectRecallWithLlm } from '../src/v3/recall-llm-selector.js';
@@ -1644,11 +1644,14 @@ test('首轮召回等待读完现成索引后查询；不重建，不重复查�
   let calls = 0, reads = 0;
   const index = createVectorIndex({ client: { ...h.client, get: async (...args) => { reads++; await flush(); return h.client.get(...args); } },
     api: { embed: async (_config, texts) => { calls++; return vectors(texts); } }, configProvider: () => config, identityProvider: () => ({ chatId: 'chat' }) });
+  const activities = []; index.subscribe(() => activities.push(index.getActivityState()));
   const first = await index.query({ source, queryContext: { text: '苹果' } });
   assert.equal(first.diagnostic.status, 'ready'); assert.equal(first.candidates.length, 1);
   assert.equal(index.getState().status, 'ready'); assert.equal(reads, 2); assert.equal(calls, 1);
   assert.equal((await index.query({ source, queryContext: { text: '苹果' } })).candidates.length, 1);
   assert.equal(reads, 2); assert.equal(calls, 1); assert.equal(h.calls.length, 2, '只读取已经落盘的 manifest 和 shard');
+  assert.equal(activities.some(value => value.busy), true);
+  assert.equal(activities.at(-1).busy, false, '冷读与查询都settled后发出闲置通知');
 });
 
 test('新增楼和 checkpoint 推进不要求重建；冷读旧索引仍可召回有效旧楼', async () => {
@@ -1743,6 +1746,7 @@ test('索引读取失败保留安全阶段与后端码，并继续既有 unavail
   const index = createVectorIndex({ client: { get: async () => { throw Object.assign(new Error('private body'), { code: 'BACKEND_UNAVAILABLE', status: 503 }); } },
     api: { embed: async () => { throw new Error('must not call'); } }, configProvider: () => config,
     identityProvider: () => ({ chatId: source.chatId }) });
+  const activities = []; index.subscribe(() => activities.push(index.getActivityState()));
   const result = await index.query({ source, queryContext: { text: '苹果' } });
   assert.equal(result.diagnostic.status, 'unavailable');
   assert.equal(index.getState().query.pendingStep, 'indexLoad');
@@ -1750,6 +1754,8 @@ test('索引读取失败保留安全阶段与后端码，并继续既有 unavail
   assert.equal(index.getState().query.load.backendCode, 'BACKEND_UNAVAILABLE');
   assert.equal(index.getState().query.load.httpStatus, 503);
   assert.equal(JSON.stringify(index.getState()).includes('private body'), false);
+  assert.equal(activities.some(value => value.busy), true);
+  assert.equal(activities.at(-1).busy, false, '读取失败也以settled通知熄灯');
 });
 
 test('不同聊天或纪元的来源不复用其他来源缓存；人工摘要撤来源后无旧命中', async () => {
@@ -2264,4 +2270,64 @@ test('冷读遇到非法分片不发布部分索引，修复后下一次读取�
   const ready = await index.query({ source, queryContext: { text: '当前描述' } });
   assert.equal(ready.diagnostic.status, 'ready');
   assert.equal(ready.candidates.length, 8);
+});
+
+test('原文见证使用本次来源lookup，仍逐片核正文指纹与来源字段', async () => {
+  const raw = await rawFloor({}, 1, '本轮已保存的连续原文。');
+  const chunk = rawSourceChunks({ rawSources: [raw] })[0];
+  const witness = { ...chunk.witness, textFingerprint: await hash(chunk.text) };
+  const key = value => JSON.stringify([value.floorId, value.assistantSeq, value.memoryFloorId, value.memoryAssistantSeq, value.fingerprint]);
+  let scans = 0;
+  const source = { rawSources: { find(predicate) { scans += 1; return [raw].find(predicate); } } };
+  const lookup = new Map([[key(raw), raw]]);
+  assert.equal(await rawWitnessValid(witness, source, lookup), true);
+  assert.equal(scans, 0, '显式lookup不再为每个片段线性查找全体来源');
+  assert.equal(await rawWitnessValid({ ...witness, memoryAssistantSeq: 2 }, source, lookup), false);
+  assert.equal(await rawWitnessValid({ ...witness, offset: raw.canonicalContent.length }, source, lookup), false);
+  assert.equal(await rawWitnessValid({ ...witness, textFingerprint: await hash('另一段正文') }, source, lookup), false);
+  assert.equal(await rawWitnessValid({ ...witness, floorMemoryId: 'revision-after-summary-edit' }, source, lookup), true, '摘要修订仍不改变原文五字段身份');
+  raw.canonicalContent = '同一来源对象中的正文已经改变。';
+  assert.equal(await rawWitnessValid(witness, source, lookup), false, 'lookup不替代逐片正文hash');
+});
+
+test('原文来源lookup重复键保首，摘要记录ID不参与原文资格', async () => {
+  const first = await rawFloor({}, 1, '首个来源的原文。');
+  const duplicate = { ...first, floorMemoryId: 'later-memory', canonicalContent: '后一个同键来源。' };
+  const source = { rawSources: [first, duplicate] };
+  const lookup = createRawSourceLookup(source);
+  assert.equal(lookup.size, 1);
+  assert.equal([...lookup.values()][0], first);
+  const chunk = rawSourceChunks({ rawSources: [first] })[0];
+  const witness = { ...chunk.witness, floorMemoryId: 'revised-memory', textFingerprint: await hash(chunk.text) };
+  assert.equal(await rawWitnessValid(witness, source, lookup), await rawWitnessValid(witness, source));
+  assert.equal(await rawWitnessValid(witness, source, lookup), true);
+});
+
+test('连续普通分支复制各用本次目标原文，保持有效行次序', async () => {
+  const sourceGraph = await branchVectorFixture('lookup-source', 'lookup-source-generation');
+  const selected = selectRecallMemories(sourceGraph);
+  const projection = await projectVectorSources(selected.activeMemories, selected.floors, { includeSummaries: false });
+  const source = { status: 'ready', chatId: sourceGraph.root.chatId,
+    narrativeGeneration: sourceGraph.root.narrativeGeneration, rawSources: projection.rawSources };
+  const backend = vectorBackend(); let embeds = 0;
+  const index = createVectorIndex({ client: backend.client,
+    api: { embed: async (_config, texts) => { embeds++; return vectors(texts); } }, configProvider: () => config,
+    identityProvider: () => ({ chatId: source.chatId }), sourceProvider: async () => source });
+  await index.build();
+  const allRows = [];
+  for (const changed of [false, true]) {
+    const targetId = `lookup-target-${changed}`, generation = `lookup-generation-${changed}`;
+    const target = await branchVectorFixture(targetId, generation);
+    if (changed) {
+      target.floors[0].content.canonicalContent = '这次目标第一楼是另一份原文。';
+      target.floorMemories[0].sourceFloorSnapshots[0].canonicalContent = target.floors[0].content.canonicalContent;
+    }
+    const ids = await index.copyPrefix({ chatId: source.chatId }, { chatId: targetId }, generation, sourceGraph,
+      { retainedFloorIds: target.floors.map(floor => floor.id), targetReachable: target });
+    allRows.push(ids.flatMap(id => backend.records.get(`chat-${targetId}/${id}`).data.rows));
+  }
+  assert.deepEqual(allRows.map(rows => rows.map(row => row.witness.floorId)),
+    [['branch-floor-1', 'branch-floor-2'], ['branch-floor-2']]);
+  assert.deepEqual(allRows[1][0], allRows[0][1], '有效片段的见证、向量与原次序保持');
+  assert.equal(embeds, 1, '只有准备源索引的模拟embedding，复制不生成向量');
 });

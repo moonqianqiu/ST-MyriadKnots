@@ -11,6 +11,10 @@
 //   在 keep 栏 = 剥壳取内层，在 extra 栏 = 连同定界符整块删除（`[[...]]` 只是其特例）。
 // 实现：吸收上游 v3.7.6 的单遍 token 树（parseSanitizerTree 思路），
 //   节点额外记录 openRaw/closeRaw 以支持 M0/M1 的逐字节复现；渲染层完全按上表合同重写。
+// 上游 v0.9.0 起 sanitizeMemoryContent 改为 shared-body-wrappers.js 的 sanitizeStoryBody 重导出
+// （缺省 keep='content'、命名对大小写不敏感、M0 直通/M1 未闭合语义不同——对拍 40 例金样仅 13 例
+// 一致），本仓不采该重导出、保留本文件四模式实现；shared-body-wrappers.js 文件照收（settings/
+// foundation 消费，且与 SDC 上游逐字一致，勿改动其内容）。
 import { LITERAL_DOUBLE_BRACKET_RULE, literalWrapperRule, normalizeTagRules, normalizeTagNames, TAG_NAME_RE, TAG_NAME_SOURCE } from './utils/tag-names.js';
 
 const OPEN_NAME_RX = new RegExp(`^<\\/?(?:(${TAG_NAME_SOURCE}))`, 'u');
@@ -37,6 +41,16 @@ function freshTokenRx(wrapperRules = []) {
         `<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_SOURCE}\\s*\\/?>`
         + `|<\\/?${TAG_NAME_SOURCE}${TAG_ATTR_FALLBACK_SOURCE}\\/?>`
         + wrapperPart, 'gu');
+}
+
+// —— 上游移植段对齐（v0.9.2）：normalizeTagBlockNames 随上游签名与常量，供 stripMemoryTagBlocks 消费。 ——
+const TAG_NAME_PATTERN = /^[\p{L}][\p{L}\p{N}_-]*~?$/u;
+function normalizeTagBlockNames(value) {
+  return String(value || '').split(/[,，\n]/).map(item => String(item).trim()).map(item => {
+    if (literalWrapperRule(item)) return item;
+    const tagName = item.toLowerCase();
+    return TAG_NAME_PATTERN.test(tagName) && !/~~|~.+/.test(tagName) ? tagName : '';
+  }).filter(Boolean);
 }
 
 // 先配平字面量包裹，再建树：未闭合的开/闭定界符保持文本，不能吞至 EOF。
@@ -307,7 +321,7 @@ function parseTagTokenTree(content, tokens) {
 
 export function stripMemoryTagBlocks(raw, tagNames) {
   const source = String(raw ?? '');
-  const names = new Set(normalizeTagRules(tagNames).map(name => name.toLocaleLowerCase('en-US')));
+  const names = new Set(normalizeTagBlockNames(tagNames).map(name => name.toLocaleLowerCase('en-US')));
   if (!names.size || !source) return source;
   const content = source.replace(/<!--[\s\S]*?-->/gu, ' ');
   const ranges = [];

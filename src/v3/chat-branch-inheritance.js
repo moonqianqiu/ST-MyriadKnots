@@ -4,7 +4,6 @@ import { createFoundationStore } from './foundation-store.js';
 import {
   buildFoundationIndexes,
   projectFoundationPrefix,
-  validatePreparedFoundation,
 } from './foundation-runtime.js';
 import {
   createCheckpointInputFingerprints,
@@ -124,7 +123,7 @@ function projectSavedBranchMetadata(raw, hostAdapter, hostChatId, capturedChat, 
     const current = live.chat[index], captured = capturedChat[index], saved = savedFile.chat[index];
     if (!current || !captured || !saved || !sameBranchMessageCore(current, captured)) continue;
     const extra = current.extra && typeof current.extra === 'object' && !Array.isArray(current.extra) ? { ...current.extra } : {};
-    for (const key of ['qianqianjie_floor', 'qqj_v3_recall_receipt', 'qianqianjieAutoHide']) {
+    for (const key of ['qianqianjie_floor', 'qianqianjie_memory_excluded', 'qqj_v3_recall_receipt', 'qianqianjieAutoHide']) {
       if (Object.hasOwn(saved.extra ?? {}, key)) extra[key] = structuredClone(saved.extra[key]);
       else delete extra[key];
     }
@@ -133,7 +132,7 @@ function projectSavedBranchMetadata(raw, hostAdapter, hostChatId, capturedChat, 
       const savedSwipe = saved.swipe_info[swipeIndex];
       if (!savedSwipe) return swipe;
       const swipeExtra = swipe?.extra && typeof swipe.extra === 'object' && !Array.isArray(swipe.extra) ? { ...swipe.extra } : {};
-      for (const key of ['qianqianjie_floor', 'qqj_v3_recall_receipt', 'qianqianjieAutoHide']) {
+      for (const key of ['qianqianjie_floor', 'qianqianjie_memory_excluded', 'qqj_v3_recall_receipt', 'qianqianjieAutoHide']) {
         if (Object.hasOwn(savedSwipe.extra ?? {}, key)) swipeExtra[key] = structuredClone(savedSwipe.extra[key]);
         else delete swipeExtra[key];
       }
@@ -344,7 +343,6 @@ export function createChatBranchInitializer({
           }, { expectedChatId: targetChatId });
           const descriptor = descriptorId ? branchMigrationDescriptor({ source, targetChatId, descriptorId,
             retainedFloors: floors, projected, indexKeys, timeBatchIds: copiedTimeBatchIds, peopleCopy, partitioned, createdAt }) : null;
-          await validatePreparedFoundation({ checkpoint, run, floors, floorMemories: projected.floorMemories, entities: projected.entities, indexes, indexKeys });
           await validateCseGraph({ root, checkpoint, run, floors, floorMemories: projected.floorMemories, entities: projected.entities, indexes, indexKeys, baseline: projected.baseline, stateDeltas: projected.stateDeltas, currentStates: projected.currentState ? [projected.currentState] : [] });
           await saveRecords(targetStore, [run, ...floors, ...projected.floorMemories, ...projected.entities, ...(projected.baseline ? [projected.baseline] : []), ...projected.stateDeltas, ...(projected.currentState ? [projected.currentState] : []), ...indexes, ...(descriptor ? [descriptor] : [])], signal);
           const checkpointResult = await targetStore.putRecord(checkpoint, { signal });

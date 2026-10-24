@@ -10,11 +10,15 @@ import { createDialogManager } from './ui/dialog.js';
 
 export function bootstrap({
   settings,
+  activity,
   apiTools,
   vectorApi,
   vectorIndex,
+  pluginUpdates,
+  renderUpdateMarkdown,
   onPluginEnabledChange,
   onStoryClockChange,
+  subscribeSettingsChange,
   onAutoHideChange,
   onTimeEvolutionChange,
   calendarContextProvider,
@@ -85,6 +89,8 @@ export function bootstrap({
     apiTools,
     vectorApi,
     vectorIndex,
+    pluginUpdates,
+    renderUpdateMarkdown,
     v3FoundationView: foundationView,
     peopleProfilesView,
     qianshiTimelineView,
@@ -93,6 +99,7 @@ export function bootstrap({
     onPluginEnabledChange,
     onPluginEnableFailure,
     onStoryClockChange,
+    subscribeSettingsChange,
     onAutoHideChange,
     onTimeEvolutionChange,
     calendarContextProvider,
@@ -117,10 +124,14 @@ export function bootstrap({
     syncFabVisibility();
     documentRef.body.append(fab.host);
   }
+  const applyActivity = value => { fab?.setBusy?.(value.busy); panel.setActivity?.(value); foundationView.setActivity?.(value); };
+  applyActivity(activity?.getState?.() ?? { busy: false, copy: '' });
+  const releaseActivity = activity?.subscribe?.(applyActivity);
   syncAppearance(panel.syncAppearance?.());
   wandInstaller(open);
   const instance = {
     ...panel,
+    disposeActivity: () => releaseActivity?.(),
     fab,
     dialog,
     show: open,

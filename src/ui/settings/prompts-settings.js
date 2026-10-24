@@ -7,15 +7,16 @@ import { BASE_PROCESSING_PROMPT } from '../../internal-processing-prompt.js';
 import { normalizeMemoryTagList } from '../../memory-content-sanitizer.js';
 
 // 长提示词在草稿弹窗内编辑，保存时一次写入；短设置仍即时生效。
-export function createPromptsSettings({ settings, documentRef = globalThis.document, open = false, onToggle, onStoryClockChange, customImpl = null } = {}) {
+export function createPromptsSettings({ settings, documentRef = globalThis.document, open = false, onToggle, onStoryClockChange, customImpl = null, subscribeSettingsChange = null } = {}) {
   const { element, button, field, subDrawer } = createSettingsKit(documentRef);
   const { drawer, body } = subDrawer({ title: '提示词与包裹符', id: 'qqj-settings-prompts', open, onToggle });
   body.className += ' settings-drawer-list';
   const { drawer: wrapperDrawer, body: wrapperBody } = subDrawer({ title: '包裹符', id: 'qqj-settings-wrappers' });
   const current = settings.get();
 
-  const keepTags = element('input', 'settings-input'); keepTags.value = current.sourceKeepTags ?? ''; keepTags.placeholder = '留空＝不清洗；示例：content, [[...]]';
-  const extraTags = element('input', 'settings-input'); extraTags.value = current.sourceExtraTags ?? ''; extraTags.placeholder = '示例（不会自动生效）：think, reasoning, [[...]], {{...}}';
+  const wrappers = settings.wrappers();
+  const keepTags = element('input', 'settings-input'); keepTags.value = wrappers.keepTags; keepTags.placeholder = '留空＝不清洗；示例：content, [[...]]';
+  const extraTags = element('input', 'settings-input'); extraTags.value = wrappers.extraTags; extraTags.placeholder = '示例（不会自动生效）：think, reasoning, [[...]], {{...}}';
   const storyClockEnabled = element('input'); storyClockEnabled.type = 'checkbox'; storyClockEnabled.checked = current.storyClockEnabled !== false;
   const storyClockReferenceTags = element('input', 'settings-input'); storyClockReferenceTags.value = current.storyClockReferenceTags ?? ''; storyClockReferenceTags.placeholder = '填写成对标签名（可选）';
   const storyClockStatus = element('p', 'settings-result', onStoryClockChange?.({ readOnly: true })?.label ?? '时间戳状态会在下一次正文生成前刷新。');
@@ -28,34 +29,42 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
   const { drawer: profileDrawer, body: profileBody } = subDrawer({ title: '人物资料内容指导', id: 'qqj-settings-profile-prompt' });
 
   // 保留/清洗两栏不得同名（对齐 ST-SevenDaysCal bindTagField 校验）：命中交集即拒绝落存、
-  // 回退输入框为持久层当前值并给行内错误提示（本项目无 toast 体系，沿用 settings-result error 模式）。
+  // 回退输入框为共享容器当前值并给行内错误提示（本项目无 toast 体系，沿用 settings-result error 模式）。
   // 标签名与 `起始...结束` 字面量包裹规则都经 normalizeMemoryTagList 归一后参与比较，
   // 故两栏填同一条包裹规则（如都写 {{...}}）同样会被拦下。
+  // 写入走 updateWrappers（跨插件共享容器）；回退读 settings.wrappers()＝最近一次成功保存值
+  // （可能被其他白鳥插件面板更新，不用面板创建时快照——本面板只在 panel 初始化时创建一次）。
   const tagClashHint = element('p', 'settings-result');
   const setTagClashHint = names => {
     if (!names) { tagClashHint.textContent = ''; tagClashHint.className = 'settings-result'; return; }
     tagClashHint.textContent = `「保留包裹符」与「清洗包裹符」两栏不能填相同标签：${names.join(',')}。请先从另一栏移除。`;
     tagClashHint.className = 'settings-result error';
   };
-  const bindTagFieldWithClashCheck = (control, key, otherValue) => {
+  const bindTagFieldWithClashCheck = (control, key, otherKey) => {
     control.addEventListener('change', () => {
       const normalized = normalizeMemoryTagList(control.value);
-      const other = normalizeMemoryTagList(otherValue());
+      const other = normalizeMemoryTagList(settings.wrappers()[otherKey] ?? '');
       const clash = normalized.filter(name => other.includes(name));
       if (clash.length) {
-        // 回退读持久层当前值（= 最近一次成功保存值）：本面板只在 panel 初始化时创建一次，
-        // 若用创建时快照，二次冲突会把用户刚保存的合法值回退成陈旧值。
         // 回退后显示归一化结果（如 Content → content），与真实落盘状态一致。
-        control.value = settings.get()[key] ?? '';
+        control.value = settings.wrappers()[key] ?? '';
         setTagClashHint(clash);
         return;
       }
       setTagClashHint(null);
-      settings.update({ [key]: control.value });
+      settings.updateWrappers({ [key]: control.value });
     });
   };
-  bindTagFieldWithClashCheck(keepTags, 'sourceKeepTags', () => settings.get().sourceExtraTags ?? '');
-  bindTagFieldWithClashCheck(extraTags, 'sourceExtraTags', () => settings.get().sourceKeepTags ?? '');
+  bindTagFieldWithClashCheck(keepTags, 'keepTags', 'extraTags');
+  bindTagFieldWithClashCheck(extraTags, 'extraTags', 'keepTags');
+  const refreshWrappers = () => {
+    const value = settings.wrappers();
+    for (const [input, key] of [[keepTags, 'keepTags'], [extraTags, 'extraTags']]) {
+      if (documentRef.activeElement !== input && !input.matches?.(':focus')) input.value = value[key];
+    }
+  };
+  keepTags.addEventListener('blur', refreshWrappers); extraTags.addEventListener('blur', refreshWrappers);
+  const releaseSettings = subscribeSettingsChange?.(refreshWrappers);
   const refreshClock = () => {
     const result = onStoryClockChange?.() ?? null;
     storyClockStatus.textContent = result?.label ?? '时间戳状态会在下一次正文生成前刷新。';
@@ -94,12 +103,12 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
     editorBody.append(element('p', 'settings-hint', hint));
     promptButton(editorBody, label, key, value, defaultText, async text => settings.update({ [key]: text }));
   };
-  promptEditor({ body: processingBody, value: processingPrompt, key: 'processingPrompt', defaultText: BASE_PROCESSING_PROMPT, label: '破限提示词', hint: '用于摘要、双丝网和人物整理。留空用默认；自定义文本原样发送，替换默认。' });
+  promptEditor({ body: processingBody, value: processingPrompt, key: 'processingPrompt', defaultText: BASE_PROCESSING_PROMPT, label: '破限提示词', hint: '所有文本模型任务共用，包括摘要、双丝网、人物、召回选材、千事、时间与连接测试。保存后供后续请求使用；留空用默认，自定义文本替换默认。' });
   promptEditor({ body: summaryBody, value: summaryPrompt, key: 'summaryPrompt', defaultText: DEFAULT_EXTRACTOR_GUIDANCE, label: '摘要内容指导' });
   promptEditor({ body: cseBody, value: csePrompt, key: 'csePrompt', defaultText: DEFAULT_CSE_GUIDANCE, label: 'CSE 内容指导' });
   promptEditor({ body: profileBody, value: profilePrompt, key: 'profilePrompt', defaultText: DEFAULT_PROFILE_GUIDANCE, label: '人物资料内容指导' });
 
-  wrapperBody.append(field('保留包裹符', keepTags), field('清洗包裹符', extraTags), tagClashHint);
+  wrapperBody.append(element('p', 'settings-hint', '白鳥系列插件全部共享'), field('保留包裹符', keepTags), field('清洗包裹符', extraTags), tagClashHint);
   body.append(
     wrapperDrawer,
     storyClockDrawer,
@@ -108,5 +117,5 @@ export function createPromptsSettings({ settings, documentRef = globalThis.docum
     cseDrawer,
     profileDrawer,
   );
-  return { node: drawer };
+  return { node: drawer, dispose: () => releaseSettings?.() };
 }

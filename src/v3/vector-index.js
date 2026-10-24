@@ -1,7 +1,7 @@
 import { sha256 } from '../identity.js';
 import { normalizeVector } from '../vector-api.js';
 import { rawWitnessShape, rawWitnessValid, vectorWitnessShape } from './vector-source.js';
-import { projectVectorSources } from './vector-source.js';
+import { createRawSourceLookup, projectVectorSources, rawSourceKey } from './vector-source.js';
 import { selectRecallMemories } from './recall-source.js';
 
 export const VECTOR_INDEX_ID = 'qqj-vector-index';
@@ -10,8 +10,6 @@ const SCHEMA = 1, BATCH = 16, COPY_BATCH = 4, INDEX_LOAD_TIMEOUT_MS = 15000, VEC
 const hash = async value => `sha256:${await sha256(value)}`;
 const configKey = config => JSON.stringify([config.url, config.model, config.dimensions]);
 const ownerKey = (source, modelKey) => JSON.stringify([source.chatId, source.narrativeGeneration, modelKey]);
-// 摘要修订会换 FloorMemory.id；缓存复用仅依赖真实原文楼、锚点与正文指纹。
-const rawSourceKey = value => JSON.stringify([value.floorId, value.assistantSeq, value.memoryFloorId, value.memoryAssistantSeq, value.fingerprint]);
 const rawChunkKey = value => JSON.stringify([rawSourceKey(value), value.offset, value.length]);
 const bindRawWitness = (raw, witness) => ({ floorId: raw.floorId, assistantSeq: raw.assistantSeq, floorMemoryId: raw.floorMemoryId,
   memoryFloorId: raw.memoryFloorId, memoryAssistantSeq: raw.memoryAssistantSeq, fingerprint: raw.fingerprint,
@@ -202,7 +200,7 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
     const key = ownerKey(source, modelKey), captured = epoch;
     const reportLoad = value => { if (diagnostic) { diagnostic.load = value; diagnostic.onLoadProgress?.(); } };
     if (loading?.key === key && loading.epoch === captured) return loading.promise;
-    const job = { key, epoch: captured, promise: null }; loading = job;
+    const job = { key, epoch: captured, promise: null }; loading = job; notify({});
     job.promise = (async () => {
       try {
         if (!isEnabled()) { reportLoad({ pending: null, shardsRead: 0, shardCount: null, exitReason: 'disabled', backendCode: null, httpStatus: null }); return; }
@@ -266,7 +264,7 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
           httpStatus: Number.isSafeInteger(error?.status) && error.status >= 100 && error.status <= 599 ? error.status : null });
         /* 缓存读取失败仍按既有行为退回无索引召回；快照只保留安全错误元数据。 */
       }
-      finally { if (loading === job) loading = null; }
+      finally { if (loading === job) loading = null; notify({}); }
     })();
     return job.promise;
   }
@@ -502,6 +500,7 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
       ? { status: 'ready', chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration, rawSources }
       : { ...source, chatId: targetIdentity.chatId, narrativeGeneration: targetNarrativeGeneration };
     const witnessSource = branchPrefix ? target : source;
+    const rawLookup = createRawSourceLookup(witnessSource);
     const rows = [], seen = new Set();
     for (let start = 0; start < sourceManifest.data.shardIds.length; start += COPY_BATCH) {
       const ids = sourceManifest.data.shardIds.slice(start, start + COPY_BATCH);
@@ -510,7 +509,7 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
         if (!shard || !vectorRecordOwned(shard) || shard.data.modelKey !== modelKey
           || ownerKey(shard.data, modelKey) !== ownerKey(source, modelKey)) return Object.freeze([]);
         for (const row of shard.data.rows) {
-          if (!rawWitnessShape(row.witness) || !await rawWitnessValid(row.witness, witnessSource)
+          if (!rawWitnessShape(row.witness) || !await rawWitnessValid(row.witness, witnessSource, rawLookup)
             || seen.has(rawChunkKey(row.witness))) continue;
           try { decodeVector(row.vector, sourceManifest.data.dimensions); } catch { continue; }
           seen.add(rawChunkKey(row.witness));
@@ -859,10 +858,11 @@ export function createVectorIndex({ client, api, configProvider, sourceProvider,
       return code.startsWith('VECTOR_') ? { ...result, diagnostic: { ...result.diagnostic, status: code } } : result;
     } finally {
       signal?.removeEventListener('abort', abortQuery);
-      if (queryOperation === operation) queryOperation = null;
+      if (queryOperation === operation) queryOperation = null; notify({});
     }
   }
   return Object.freeze({
+    getActivityState: () => ({ busy: Boolean(active || updating || loading || queryOperation), phase: queryOperation ? 'selecting' : active || updating ? 'building' : loading ? 'loading' : null }),
     build, updateIncrementally, query, readIndexStatus, getState: () => ({ ...state, active: Boolean(active || updating && state.status === 'building'), updating: Boolean(updating), background: Boolean(updating && state.status === 'building'), query: querySnapshot }), subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
     cancelIncrementally,
     copyPrefix,

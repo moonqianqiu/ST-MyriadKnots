@@ -84,10 +84,11 @@ test('记忆提取周期固定为 1，旧配置与更新请求都不能继续生
   assert.equal(normalizeAutoMemoryBatchSize(1), 1);
   assert.equal(normalizeAutoMemoryBatchSize(20), 1);
   for (const invalid of [undefined, null, 0, 21, 1.5, 'abc']) assert.equal(normalizeAutoMemoryBatchSize(invalid), 1);
+  assert.equal(saves(), 0, '读取与规范化默认值不触发保存');
   settings.update({ autoMemoryEnabled: true, autoMemoryBatchSize: 20 });
   assert.equal('autoMemoryEnabled' in extensionSettings.qianqianjie, false);
   assert.equal(extensionSettings.qianqianjie.autoMemoryBatchSize, 1);
-  assert.equal(saves(), 1, '归一化后的设置只保存一次，不重复落盘');
+  assert.equal(saves(), 1, '一次设置更新只保存一次');
 
   settings.update({ autoMemoryBatchSize: 2 });
   assert.equal(settings.get().autoMemoryBatchSize, 1);
@@ -199,7 +200,7 @@ test('剔除包裹符设置保留标签名与字面起止符混合配置', () =>
   const extensionSettings = {};
   const { settings } = setup(extensionSettings);
   settings.update({ sourceExtraTags: ' THINK，[[...]]\nreasoning ' });
-  assert.equal(settings.get().sourceExtraTags, 'think,[[...]],reasoning');
+  assert.equal(settings.wrappers().extraTags, 'think,[[...]],reasoning');
 });
 
 test('总开关 change 立即持久化并调用运行时；运行时失败时恢复原真值', async () => {
@@ -318,6 +319,10 @@ test('只双向共享 schedule-planner 预设池；千千结主配置与两边�
   const source = await readFile(new URL('../../ST-SevenDaysCal/runtime/settings.js', import.meta.url), 'utf8');
   globalThis.__QQJ_SEVEN_TEST_SETTINGS__ = extensionSettings; globalThis.__QQJ_SEVEN_TEST_SAVES__ = 0;
   const executable = source
+    .replace("'../utils/shared-body-wrappers.js'", JSON.stringify(new URL('../../ST-SevenDaysCal/utils/shared-body-wrappers.js', import.meta.url).href))
+    // moon SDC 的 settings.js 另 import 本仓合同的 normalizeTagRules（AGENTS §2.1），data: 模块内
+    // 相对导入不可解析，同样重写为绝对 file URL。
+    .replace("'../utils/tag-names.js'", JSON.stringify(new URL('../../ST-SevenDaysCal/utils/tag-names.js', import.meta.url).href))
     .replace("import { extension_settings } from '../../../../extensions.js';", 'const extension_settings = globalThis.__QQJ_SEVEN_TEST_SETTINGS__;')
     .replace("import { saveSettingsDebounced } from '../../../../../script.js';", 'const saveSettingsDebounced = () => { globalThis.__QQJ_SEVEN_TEST_SAVES__ += 1; };');
   const seven = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
@@ -703,13 +708,17 @@ test('存量存档的上游默认 keepTags=content 被迁移重置一次，此�
   assert.equal(settings.get().sanitizerKeepTagsMigrationVersion, 0);
   assert.equal(settings.migrateSanitizerKeepTags(), true);
   assert.equal(settings.get().sourceKeepTags, '');
+  // 共享容器的首次初始化先于迁移执行、已吃到旧默认 'content'：须随迁移一并重置，M0 才不丢失。
+  assert.equal(settings.wrappers().keepTags, '', '共享容器随迁移重置为 M0 直通');
   assert.equal(settings.get().sanitizerKeepTagsMigrationVersion, 1);
   assert.equal(extensionSettings.qianqianjie.sourceExtraTags, 'think', '迁移不得触碰清洗栏');
+  assert.equal(settings.wrappers().extraTags, 'think', '清洗栏经共享容器原样保留');
   assert.equal(saves(), 1, '迁移只调度一次保存');
-  // 用户在 UI 里再次手填 content：版本号已置 1，迁移永不覆盖
+  // 用户在 UI 里再次手填 content：版本号已置 1，迁移永不覆盖；
+  // v0.9 起手填落在共享容器（sourceKeepTags 键只是迁移期的旧值来源，不再回写）。
   settings.update({ sourceKeepTags: 'content' });
   assert.equal(settings.migrateSanitizerKeepTags(), false);
-  assert.equal(settings.get().sourceKeepTags, 'content');
+  assert.equal(settings.wrappers().keepTags, 'content', '手填值落共享容器且不被迁移覆盖');
 });
 
 test('迁移不触碰用户手改过的多标签值，且全新存档同样置位', () => {

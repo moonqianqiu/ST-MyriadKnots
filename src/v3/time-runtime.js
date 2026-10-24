@@ -1,3 +1,5 @@
+import { createActivitySignal } from '../plugin-activity.js';
+import { withBaseProcessingPrompt } from '../internal-processing-prompt.js';
 import { estimateRecallTokens } from './recall-selector.js';
 import { TIME_HEAD_ID, TIME_INPUT_TOKENS, prepareTimeBatch, compileTimeResponse, compileTimeEdits, evaluateTimeBatches, replayTimeBatches, sanitizeTimeBatchForDeletion, sanitizeTimeHeadForDeletion, projectTime, effectiveTime, timeRecallProjection, timeFingerprint, validTimeProjection, normalizeTimeKeywords, timeBodyReads, timeItemFailures } from './time-engine.js';
 import { projectRecallSource } from './recall-source.js';
@@ -8,6 +10,7 @@ import { readRecentBodyStoryTimes, readTimeBody, timeBodyStart, resolveTimeStart
 import { ANNUAL_SETTING_SYSTEM_PROMPT, buildAnnualSettingSources, compileAnnualSettingResponse, projectAnnualSettings } from './time-annual-setting.js';
 import { prepareQianshiCandidates, projectQianshiGraph } from './qianshi-domain.js';
 import { migrationPartition } from './migration-prefix.js';
+import { isMemoryExcludedMessage } from './memory-exclusion.js';
 
 export function createTimeStore({ client }) {
   const BATCH_READ_CONCURRENCY = 16;
@@ -190,8 +193,10 @@ export async function prepareTimeRequest(reachable, batches = [], options = {}) 
   return prepared;
 }
 
-export function createTimeRuntime({ store, foundationStore, hostAdapter, session, generateTimeTask, annualSettingsProvider = () => ({ ready: false }), storyCalendarProvider = () => null, sanitizerOptions = () => ({}), storyClockReferenceTags = () => '', newUuid = newIdentityUuid, getReachable = () => null, getMemoryState = () => null, getMemoryActivityState = getMemoryState, isEnabled = () => false, onInvalidate = () => {}, logger = console }) {
+export function createTimeRuntime({ store, foundationStore, hostAdapter, session, generateTimeTask, processingPrompt = () => '', annualSettingsProvider = () => ({ ready: false }), storyCalendarProvider = () => null, sanitizerOptions = () => ({}), storyClockReferenceTags = () => '', newUuid = newIdentityUuid, getReachable = () => null, getMemoryState = () => null, getMemoryActivityState = getMemoryState, isEnabled = () => false, onInvalidate = () => {}, logger = console }) {
   let epoch = 0, active = null, last = null, pendingDeletionCount = 0, projectionCache = null, pendingReceipt = null, statusKey = null, statusRead = null, trackedItems = null, stoppedItems = null, annualItems = null, qianshiReferences = null, itemsKey = null, coverage = null, clockContentChanged = false, historyAuthorization = null, automatic = null, startingController = null;
+  let refreshingStatuses = 0;
+  const activity = createActivitySignal(() => ({ busy: Boolean(active || startingController || statusRead || refreshingStatuses), phase: active?.phase ?? (startingController || statusRead || refreshingStatuses ? 'loading' : null) }));
   const subscribers = new Set();
   const enabled = () => isEnabled() === true;
   const identity = () => { try { return session.identity(); } catch { return { chatId: null }; } };
@@ -216,7 +221,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
   const sourceKey = source => {
     let host; try { host = hostAdapter.snapshot(); } catch { return null; }
     return JSON.stringify([epoch, storyCalendarProvider(), source?.root?.chatId, source?.root?.narrativeGeneration, (source?.floors ?? []).map(floor => floor.id),
-      host.chatId, host.chat.map(message => [message.is_user, message.is_system, message.is_hidden, message.hidden, message.mes, message.swipe_id, message.swipes?.[Number.isSafeInteger(message.swipe_id) ? message.swipe_id : 0]])]);
+      host.chatId, host.chat.map(message => [message.is_user, message.is_system, message.is_hidden, message.hidden, isMemoryExcludedMessage(message), message.mes, message.swipe_id, message.swipes?.[Number.isSafeInteger(message.swipe_id) ? message.swipe_id : 0]])]);
   };
   async function bodySource(base = getReachable()) {
     const owner = identity(), host = hostAdapter.snapshot();
@@ -323,18 +328,17 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
     return trackedItems.length;
   }
   const getState = () => {
-    if (!enabled()) return { ...getActivityState(null, null), trackedItems: null, stoppedItems: null, annualItems: null };
-    const memory = getMemoryActivityState(), source = getReachable(), activity = getActivityState(memory, source);
+    const memory = enabled() ? getMemoryActivityState() : null, source = enabled() ? getReachable() : null, activity = getActivityState(memory, source);
     const canDisplay = enabled() && !memoryNeedsSync(memory) && itemsKey !== null && itemsKey === sourceKey(source);
     return { ...activity, trackedItems: canDisplay ? structuredClone(trackedItems) : null, stoppedItems: canDisplay ? structuredClone(stoppedItems) : null, annualItems: canDisplay ? structuredClone(annualItems) : null };
   };
-  const getActivityState = (memory = getMemoryActivityState(), source = getReachable()) => {
+  const getActivityState = (memory = enabled() ? getMemoryActivityState() : null, source = enabled() ? getReachable() : null) => {
     const disabledReason = manualBlock(false, memory, source, true);
     return Object.freeze({ status: active ? 'running' : enabled() ? memoryNeedsSync(memory) ? 'waiting' : last?.status ?? 'idle' : 'disabled',
-      phase: active?.phase ?? null, active: Boolean(active), last, coverage, clockContentChanged: enabled() && clockContentChanged,
+      phase: activity.getActivityState().phase, busy: activity.getActivityState().busy, active: Boolean(active), last, coverage, clockContentChanged: enabled() && clockContentChanged,
       progress: active?.progress ?? null, canOrganize: !disabledReason, disabledReason, pendingDeletionCount });
   };
-  const notify = () => { const state = getState(); for (const listener of subscribers) try { listener(state); } catch { /* UI isolation */ } return state; };
+  const notify = () => { activity.notifyActivity(); const state = getState(); for (const listener of subscribers) try { listener(state); } catch { /* UI isolation */ } return state; };
   function invalidate() {
     // Stopping or switching chats starts a new runtime epoch: do not join a
     // pending store read from the old chat/session, even when its UUID is reused.
@@ -348,7 +352,12 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
   }
   const itemCount = (batches, reachable) => replayTimeBatches(batches, reachable).filter(item => item.status === 'active').length;
   const retryable = (head, batches) => ['failed', 'running', 'partial'].includes(head?.lastRun?.status) || Boolean(head?.lastAttemptSignature && !head.lastRun && head.lastAttemptSignature !== batches.at(-1)?.signature);
-  async function refreshStatus({ force = false } = {}) {
+  function refreshStatus(options = {}) {
+    if (!enabled() || active) return performRefreshStatus(options);
+    refreshingStatuses += 1; activity.notifyActivity();
+    return performRefreshStatus(options).finally(() => { refreshingStatuses -= 1; activity.notifyActivity(); });
+  }
+  async function performRefreshStatus({ force = false } = {}) {
     if (!enabled() || active) return notify();
     if (last?.status === 'failed' && last.persisted === false) return notify();
     const source = getReachable();
@@ -366,7 +375,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
     if (statusRead?.key === key) return statusRead.promise;
     if (!force && statusKey === key) return notify();
     const token = epoch, chatId = source.root.chatId;
-    const read = { key, promise: null }; statusRead = read;
+    const read = { key, promise: null }; statusRead = read; activity.notifyActivity();
     read.promise = (async () => {
       try {
         const stored = await store.read(chatId);
@@ -390,13 +399,17 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
         statusKey = key;
       } catch {
         if (token === epoch && !active && identity().chatId === chatId) { trackedItems = null; stoppedItems = null; annualItems = null; qianshiReferences = null; itemsKey = null; last = { status: 'failed', reason: 'read', message: '时间记录读取失败，请稍后重新整理。' }; }
-      } finally { if (statusRead === read) statusRead = null; }
+      } finally { if (statusRead === read) statusRead = null; activity.notifyActivity(); }
       return notify();
     })();
     return read.promise;
   }
   const reviewScopeKey = (source, witness) => timeFingerprint([source.root.narrativeGeneration, witness.floorId]);
-  async function prepareHistoryPlan() {
+  function prepareHistoryPlan(...args) {
+    refreshingStatuses += 1; activity.notifyActivity();
+    return performPrepareHistoryPlan(...args).finally(() => { refreshingStatuses -= 1; activity.notifyActivity(); });
+  }
+  async function performPrepareHistoryPlan() {
     if (manualBlock()) throw new Error(manualBlock());
     const token = epoch, source = await bodySource(), stored = await store.read(identity().chatId);
     if (token !== epoch || source.root.chatId !== identity().chatId) throw new Error('当前聊天已变化。');
@@ -591,7 +604,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
     stored = { ...stored, head, revision: attempted.revision };
     try {
       const transportBudget = { remaining: 1, used: 0 }; operation.requests += 1;
-      const result = await generateTimeTask({ systemPrompt: ANNUAL_SETTING_SYSTEM_PROMPT, taskMessages: [{ role: 'user', content: JSON.stringify(annual.request) }],
+      const result = await generateTimeTask({ systemPrompt: withBaseProcessingPrompt(ANNUAL_SETTING_SYSTEM_PROMPT, operation.processingPrompt), taskMessages: [{ role: 'user', content: JSON.stringify(annual.request) }],
         temperature: 0, includeCharacterCard: false, worldInfoSource: 'none', parseMode: 'semantic', transportBudget, transportRetries: 0, signal: operation.controller.signal });
       if (!await stillCurrent()) return stored;
       const compiled = compileAnnualSettingResponse(result, { sources: annual.sources });
@@ -620,6 +633,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
   async function runPlan(plan, manual = false) {
     if (active || !enabled()) return getState();
     const operation = { epoch, chatId: plan.chatId, controller: new AbortController(), phase: 'preparing', promise: null, manual,
+      processingPrompt: typeof processingPrompt === 'function' ? processingPrompt() : processingPrompt,
       requests: 0, progress: { completed: 0, total: plan.groups.length + Number(Boolean(plan.currentReview && plan.groups.at(-1)?.length)) + Number(Boolean(plan.annualSetting?.shouldRequest || plan.annualSetting?.removed?.length)) } };
     active = operation; notify();
     operation.promise = (async () => {
@@ -683,7 +697,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
           operation.requests += 1;
           let result, batch;
           try {
-            result = await generateTimeTask({ systemPrompt: prepared.systemPrompt, taskMessages: [{ role: 'user', content: JSON.stringify(prepared.request) }],
+            result = await generateTimeTask({ systemPrompt: withBaseProcessingPrompt(prepared.systemPrompt, operation.processingPrompt), taskMessages: [{ role: 'user', content: JSON.stringify(prepared.request) }],
               temperature: 0, includeCharacterCard: false, worldInfoSource: 'none', parseMode: 'semantic', transportBudget, transportRetries: 0, signal: operation.controller.signal });
             if (!current(operation)) return;
             operation.phase = 'saving'; notify();
@@ -761,7 +775,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
   }
   async function runAutomatic(receipt) {
     if (!enabled() || active || receipt?.chatId !== identity().chatId) return getState();
-    const token = epoch, controller = new AbortController(); startingController = controller;
+    const token = epoch, controller = new AbortController(); startingController = controller; activity.notifyActivity();
     try {
       const source = await bodySource();
       let stored = await store.read(identity().chatId);
@@ -842,7 +856,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
         notify();
       }
       return getState();
-    } finally { if (startingController === controller) startingController = null; }
+    } finally { if (startingController === controller) startingController = null; activity.notifyActivity(); }
   }
   async function authorizeHistory() {
     const token = epoch, chatId = identity().chatId;
@@ -921,7 +935,7 @@ export function createTimeRuntime({ store, foundationStore, hostAdapter, session
     return replayTimeBatches(stored.batches, reachable).filter(item => item.qianshiRef?.matterId && item.qianshiRef?.originEventId)
       .map(item => ({ id: item.id, qianshiRef: { ...item.qianshiRef } }));
   }
-  return Object.freeze({ runBatch, prepareHistoryPlan, organize, authorizeHistory, editItem, editItems, deleteItems, refreshStatus, recallProjection, currentStoryContext,
+  return Object.freeze({ subscribeActivity: activity.subscribeActivity, runBatch, prepareHistoryPlan, organize, authorizeHistory, editItem, editItems, deleteItems, refreshStatus, recallProjection, currentStoryContext,
     getQianshiReferences: () => qianshiReferences === null ? null : structuredClone(qianshiReferences), getQianshiReferencesForChat, getState, getActivityState, invalidate, stop, bind,
     subscribe(listener) { subscribers.add(listener); return () => subscribers.delete(listener); } });
 }
