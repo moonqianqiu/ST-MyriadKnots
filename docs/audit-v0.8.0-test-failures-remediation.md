@@ -186,3 +186,30 @@ npm test
 - **记忆化等价**：`verify-equivalence.mjs upstream/main` 直接对比因本地条件边界文案分歧 36/144——临时中和边界（改回上游长文案）后 **144/144 逐字节一致**，证明四项记忆化+recordsByValue+sameMaterial 对上游 v0.9.2 新语义完全透明。工具 `absolutizeImports` 补 `memory-exclusion.js`（存在才重写）。
 - **基线**：纯上游 v0.9.2 = 2018/2012/6（其中 2 例为跨仓读 moon-SDC 的环境性红，合并树已绿）；合并树终态 **2076/2072/4**，4 红全部实证上游原生（依赖清单缺 4 新模块叠加人物→时间门控断言脱钩 ×1；foundation 反馈文案 ×3）。`normalizeTagRules` 去重两仓同步（`f7a426f`）。
 - 产物：版本 0.9.2，缓存键 `20261024.129-658429a52fe9524a`；门禁 1 清洗器 43 例、门禁 2 22/23（1=上述上游原生）、门禁 4 跨仓金样 40/40。
+
+## 附：v0.9.3 合并实录（2026-10-24，合并提交 `d8eac84`）
+
+**上游跨度**：单发布 `f40b574`（7948af1..f40b574），主题「人物资料、头像与故事时间」：新模块 `avatar-generation`/`avatar-image-store`/`story-time-clock`/`v3/people-profile-material`；`people-workspace`+298、`entity-identity`+113、`time-engine`+118、`index.js` 生命周期改 APP_READY 回放。
+
+**冲突（4 文件，全为轻量并集）**：
+- `src/v3/memory-runtime.js` import 并集：本地 `extraOnlySanitizerOptions` + 上游 4 个 entity-identity 新导入（`deriveUserIdentityProjection`/`projectFloorMemoryIdentityReferences` 等）。
+- `src/ui/settings/prompts-settings.js` import 并集：本地 `normalizeMemoryTagList` + 上游 `DEFAULT_AVATAR_PROMPT`。
+- `manifest.json` 缓存键行（版本行已自动并到 0.9.3）；`dist/qqj-app.js` 重建。
+
+**唯一实伤——plugin-activity 双声明（新教训，已沉淀 §2.1）**：
+- v0.9.2 时本地给上游漏声明的 4 个纯模块补 real-module define（`plugin-activity`/`internal-processing-prompt`/`memory-exclusion`/`shared-body-wrappers`）。
+- v0.9.3 上游给 `plugin-activity` **自带 stub 声明**（并借 stub 捕获 `pluginActivitySources` 供 1213 行断言）；同测试内两个 define，`modules.set` **后到覆盖** → 本地 real 压掉 stub，人物→时间批次链路断（`timeBatches` 0≠1，`production-entry-load:1088`）。
+- 归因过程：纯上游 v0.9.3 worktree（junction 链 node_modules）22/22 全绿 → 排除上游原生；「合并树 vs 纯上游 diff」显示链路 src 全逐字一致，仅测试文件多本地 real define → 删本地 `plugin-activity` define（保留上游仍缺的三例）即 23/23。
+- 教训：**上游补声明的方式可能与本地代修相撞**；上游对同一缺陷自带修复时，本地代修从「资产」变「冲突源」，合并后须复核对同一 specifier 是否双声明。
+
+**上游 v0.9.3 修复的旧红**：v0.9.2 的 4 上游原生红之一「生产入口行为接线：人物资料/生日变化仍触发时间更新」在本版被上游修复（重写人物资料链路时补齐装配）；门禁 2 由 22/23 回到 23/23。
+
+**基线对照（isolation=none, concurrency=1）**：
+- 纯上游 v0.9.3 Windows 树：**2086/2076/10**。其中 2 例环境红在合并树已绿：跨仓 settings 预设例（需 moon-SDC 兄弟仓）、1000 楼夹具 POSIX `/tmp` 路径（`D:\tmp` ENOENT——正是 §2.1 本地 tmpdir 代修所修，复跑 2 次确定性复现，非漏窗）。
+- 合并树：**2144/2136/8**（+58 本地测试）。8 红**全部**含于纯上游 10 红集合：`v3-extractor-memory` ×4（时间状态字段具名纪年配对/增量千事索引共用/root 保存失败跨楼复用/历史楼顺序提取带时间——v0.9.3 上游自身新引入）+ `v3-foundation-view` ×3（v0.9.2 延续）+ `v3-people-workspace` ×1（取消选择迟到结果）。**零合并引入回归**。
+
+**门禁终态**：①清洗器 43/43；②生产入口+装配 23/23；③全量 2136/2144（8 上游原生红）；④跨仓金样 40/40 逐字一致 + `verify-equivalence.mjs 7b8331d` **144/144 逐字节**（上游对 recall-selector 仅 2 行改动，记忆化透明性无需中和法）。
+
+**本地资产复核（合并后 grep 实证在位）**：settings.js M0 三件套（共享容器初始化后置/wrappers 先 get/迁移重置）、extraOnly 三调用点、foundation-view 三处 invalidate（含 981 行弹窗 chatId 守卫、2253 行 rebuildChatId 捕获）、people-profiles-view:149 peopleProfileSaved、help-guide 两处文案、extractor record 单数+兜底顺序+namespace 早退、bootstrap recallRuntime 双注入、time-runtime 三元快路径、四项记忆化+recordsByValue+sameMaterial 别名。
+
+**产物**：版本 0.9.3，缓存键 `20261024.130-9a9cb2f6e43e7773`（当日序号已用 .128/.129，上游同日 .90 不占本仓序列）。
