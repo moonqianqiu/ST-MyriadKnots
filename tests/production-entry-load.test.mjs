@@ -884,7 +884,9 @@ test('生产入口行为接线：V3 memory 区分分析与摘要 API，session/l
   define('./src/private-recall-diagnostics.js', { createPrivateRecallDiagnostics: () => ({ start: async () => false, dispose() {} }) });
   define('./src/bootstrap.js', { bootstrap: options => { bootstrapOptions = options; return { refresh() {}, setEnabled() {}, openMemory() { openMemoryCalls += 1; } }; } });
   const productionSettings = { generalPrompt: '旧通用附加残留', processingPrompt: '  破限接线\n', summaryPrompt: '摘要指导', csePrompt: 'CSE 指导', profilePrompt: '人物资料指导', storyClockReferenceTags: 'Ti,时标', storyCalendars: {} };
-  define('./src/settings.js', { createSettingsStore: () => ({ migrateLegacyApiSettings() {}, isEnabled: () => false, wrappers: () => ({ keepTags: 'content', extraTags: '' }), get: () => productionSettings, update: patch => Object.assign(productionSettings, patch) }) });
+  // 上游 v0.9.5 起 index.js 改调 settings.processingPrompt()（共享破限容器读取器），
+  // 其自带 mock 声明未同步（纯上游树同红）→ 本地按惯例代修补访问器，断言与夹具不动。
+  define('./src/settings.js', { createSettingsStore: () => ({ migrateLegacyApiSettings() {}, isEnabled: () => false, processingPrompt: () => productionSettings.processingPrompt, wrappers: () => ({ keepTags: 'content', extraTags: '' }), get: () => productionSettings, update: patch => Object.assign(productionSettings, patch) }) });
   define('./src/v3/calendar-rules.js', { normalizeStoryCalendar });
   define('./src/api-routing.js', {
     createApiResolver: () => ({}),
