@@ -1,4 +1,5 @@
 import { getSharedBodyWrappers } from './shared-body-wrappers.js';
+import { initializeSharedProcessingPrompt, getSharedProcessingPrompt, updateSharedProcessingPrompt } from './shared-processing-prompt.js';
 import { normalizeTagRules } from './utils/tag-names.js';
 import { normalizeStoryClockReferenceTags } from './story-clock.js';
 import { normalizeStoryCalendar } from './v3/calendar-rules.js';
@@ -177,6 +178,10 @@ export async function applyPluginEnabledImmediately({ settings, enabled, onChang
 
 export function createSettingsStore({ extensionSettings, save = () => {}, now, random } = {}) {
   if (!extensionSettings || typeof extensionSettings !== 'object') throw new Error('千千结设置存储不可用');
+  // 共享破限容器照上游在 store 创建期一次性初始化（迁移旧局部自定义值并落一次 save）。
+  // 注意 bodyWrappers 容器不在此初始化：其回退值 'content' 会在本地默认回填前吃进容器丢 M0，
+  // 初始化点保留在 get() 内默认回填之后（AGENTS §2.3）。
+  initializeSharedProcessingPrompt(extensionSettings, save);
   const get = () => {
     const settings = extensionSettings[SETTINGS_ID] ??= { ...DEFAULT_SETTINGS, apiExcludeParams: [], apiPresets: [] };
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) if (!own(settings, key)) {
@@ -257,7 +262,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     if (own(patch, 'sourceWorldInfoExcludedBooks')) settings.sourceWorldInfoExcludedBooks = Array.isArray(patch.sourceWorldInfoExcludedBooks) ? patch.sourceWorldInfoExcludedBooks : [];
     if (own(patch, 'sourceKeepTags')) writeWrappers({ keepTags: patch.sourceKeepTags });
     if (own(patch, 'sourceExtraTags')) writeWrappers({ extraTags: patch.sourceExtraTags });
-    if (own(patch, 'processingPrompt')) settings.processingPrompt = text(patch.processingPrompt);
+    if (own(patch, 'processingPrompt')) updateSharedProcessingPrompt(extensionSettings, patch.processingPrompt);
     if (own(patch, 'summaryPrompt')) settings.summaryPrompt = text(patch.summaryPrompt);
     if (own(patch, 'csePrompt')) settings.csePrompt = text(patch.csePrompt);
     if (own(patch, 'profilePrompt')) settings.profilePrompt = text(patch.profilePrompt);
@@ -519,8 +524,9 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
   return {
     get,
     update,
+    processingPrompt: () => getSharedProcessingPrompt(extensionSettings),
     // 经 get() 先行物化本地默认（幂等）：任何读取/写入路径都不得在默认回填前初始化共享容器，
-    // 否则全新安装会落到上游回退值 'content' 而丢失 M0（AGENTS §3.3）。
+    // 否则全新安装会落到上游回退值 'content' 而丢失 M0（AGENTS §2.3）。
     wrappers: () => { get(); return getSharedBodyWrappers(extensionSettings); },
     updateWrappers: patch => { get(); writeWrappers(patch); notify(); },
     localConfig,
