@@ -160,7 +160,7 @@
 - **v0.9.2 合并要点（2026-10-24）**：20 冲突按「fork 资产保本地 / 上游同向修复取上游 / 本地语义嫁接上游管线」三原则裁决（清洗器三向分歧 §3.1、共享容器 M0 三件套 §2.3、地点/disabled 快路径/schema 拒绝均上游同向趋同取上游形状）；`verify-equivalence` 144/144（边界文案临时中和法隔离验证记忆化透明）；四项记忆化与 §2.2 全资产在位；
 - **v0.8.0 审计修复（2026-10-22~24，已随 `7729c3a` 提交）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
 - **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`（其 `absolutizeImports` 兄弟清单含 `memory-exclusion.js`，跨版本对比按「存在才重写」）；
-- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.9.6moon（2026-10-24 合入 v3.9.5+v3.9.6，合并提交 `8222038` + 修复 `f691dc6`/`f7a426f`；共享容器同款 M0 三件套已同步）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），`normalizeTagRules` 去重两仓同步；SDC 全量 411/409+1 上游原生红+1skip；MK 跨仓 settings 断言由 SDC v3.8.0 起满足。
+- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v3.10.1moon（2026-10-25 合入 v3.10.0+v3.10.1，合并提交 `fa0572f` + 测试代修；**其入口已切换 Rolldown bundle `gouhua-app.js`，改源码后须 `npm run build`**）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 451/455+3 上游原生红+1skip；MK `tests/settings-api.test.mjs` 的 data: 导入重写清单已覆盖 SDC 新增的 `shared-processing-prompt.js`（SDC 每新增相对导入须同步补一行，实例见 `7ce9f32`）。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 
