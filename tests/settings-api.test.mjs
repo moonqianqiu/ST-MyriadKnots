@@ -323,6 +323,9 @@ test('只双向共享 schedule-planner 预设池；千千结主配置与两边�
     // moon SDC 的 settings.js 另 import 本仓合同的 normalizeTagRules（AGENTS §2.1），data: 模块内
     // 相对导入不可解析，同样重写为绝对 file URL。
     .replace("'../utils/tag-names.js'", JSON.stringify(new URL('../../ST-SevenDaysCal/utils/tag-names.js', import.meta.url).href))
+    // SDC v3.10.0 起 settings.js 另 import 共享破限提示词模块（纯函数、无宿主依赖），
+    // data: 模块内相对导入同样不可解析，重写为绝对 file URL。
+    .replace("'../utils/shared-processing-prompt.js'", JSON.stringify(new URL('../../ST-SevenDaysCal/utils/shared-processing-prompt.js', import.meta.url).href))
     .replace("import { extension_settings } from '../../../../extensions.js';", 'const extension_settings = globalThis.__QQJ_SEVEN_TEST_SETTINGS__;')
     .replace("import { saveSettingsDebounced } from '../../../../../script.js';", 'const saveSettingsDebounced = () => { globalThis.__QQJ_SEVEN_TEST_SAVES__ += 1; };');
   const seven = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
