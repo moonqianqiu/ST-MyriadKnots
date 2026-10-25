@@ -143,7 +143,7 @@
    ```
 
    *标准*：23/23 全通过（v0.9.3 起上游自修「人物→时间」装配与依赖清单，上一版「生产入口行为接线」上游原生红消失）；后者验证 manifest 缓存键与 bundle SHA-256 绝对吻合。
-3. **全量测试套件**：`npm test` —— 当前基线 **2144 例 / 2136 通过 / 8 上游原生红**（2026-10-24，v0.9.3 合并后；纯上游 v0.9.3 树 Windows 基线 2086/2076/10 实测，其中 2 例系环境差在纯上游树必红、在合并树已绿：跨仓 settings 例读 moon-SDC、1000 楼夹具 POSIX `/tmp` 路径——后者即 §2.1 本地代修所修）。8 红 = `v3-extractor-memory` 四条（「时间状态字段按同一容器局部配对」——红因即其断言「不截取具名纪年中的数字作为公历」，2026-10-24 审计更正：此前误把断言消息记作用例名、「逐楼摘要准备复用增量千事索引」「root 保存失败待保存跨楼复用」「历史楼顺序提取带末段时间」——v0.9.3 上游新引入自身红）+ `v3-foundation-view` 三条（「needsReview 终态/管理页刷新反馈/旧刷新失败所有权」，v0.9.2 起延续）+ `v3-people-workspace` 一条（「取消选择阻止首次整理迟到结果落档」）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+3. **全量测试套件**：`npm test` —— 当前基线 **2150 例 / 2142 通过 / 8 上游原生红**（2026-10-25，v0.9.4 合并后；8 红与 v0.9.3 基线完全同集，纯上游 v0.9.3 树 Windows 基线 2086/2076/10 实测可回查，其中 2 例系环境差在纯上游树必红、在合并树已绿：跨仓 settings 例读 moon-SDC、1000 楼夹具 POSIX `/tmp` 路径——后者即 §2.1 本地代修所修）。8 红 = `v3-extractor-memory` 四条（「时间状态字段按同一容器局部配对」——红因即其断言「不截取具名纪年中的数字作为公历」，2026-10-24 审计更正：此前误把断言消息记作用例名、「逐楼摘要准备复用增量千事索引」「root 保存失败待保存跨楼复用」「历史楼顺序提取带末段时间」——v0.9.3 上游新引入自身红）+ `v3-foundation-view` 三条（「needsReview 终态/管理页刷新反馈/旧刷新失败所有权」，v0.9.2 起延续）+ `v3-people-workspace` 一条（「取消选择阻止首次整理迟到结果落档」）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
    > **上游原生红判定法**：某测试文件与上游**逐字节相同**而失败时，先在纯上游树跑同一文件；计数相同即上游原生，禁止为「让全量变绿」而改本地 `src/` 合同。**慢文件勿整跑**（`v3-extractor-memory.test.mjs` 含 1000 楼生产夹具，整文件数分钟），用 `--test-name-pattern` 按例对照。**叠层红揭蔽**：上游某断言层失败会遮蔽其后的断言（如依赖清单红遮蔽人物→时间断言），代修第一层后须在纯上游树复跑确认第二层归属再定处理。
    > **v0.8.0 起新增一类上游原生红**：上游新增/改写的测试依赖其清洗器**缺省剥除 `<location>`** 标签，本仓 M0 合同保留该标签（§3.1）→ 按 §2.1 代修（显式 `extraTags:'location'` 或改 canonical 期望值），**不得改清洗器缺省行为**（会破坏 40 例金样与跨仓对拍）。v0.9.2 起 `<location>` 适配面随上游测试重写基本消失（9 例定位、实跑仅零星需适配）；同类新增「上游 keep='content' 宽松语义」依赖（夹具正文无标签仍期望保留文本）按 §3.1 M2 合同改夹具（如 `production-entry-load` 别名分支改 M0 直通），勿改清洗器。
@@ -153,8 +153,9 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v0.9.3（提交 `f40b574`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `0.9.3`（含 `author: "atonal519"`），缓存键 `20261024.130-9a9cb2f6e43e7773`（哈希与真实 bundle 一致）；
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v0.9.4（提交 `dab5cae`）。本次合并提交及父提交见 §5.1 与 git 历史；
+- **产物版本**：`manifest.json` 版本号 `0.9.4`（含 `author: "atonal519"`），缓存键 `20261025.131-c0fa8f87adb58dee`（哈希与真实 bundle 一致）；
+- **v0.9.4 合并要点（2026-10-25）**：2 冲突（dist 重建、manifest 键 `.131`）；上游引号解析修复整体直通（`json-symbol-repair`/`compact-api-client` 非本地资产，`normalizeFinishReason` 导出化 + `end_turn`→`stop`）；上游自升入口断言 0.9.4、plugin-activity 无双声明复发；四门禁全绿（66/66、全量 +6 例全绿、等价 144/144、金样逐字节）；
 - **v0.9.3 合并要点（2026-10-24）**：4 冲突全并集裁决（memory-runtime/prompts-settings import）；人物资料/头像/故事时间为上游新域整体直通（`people-workspace` 逐字对齐复核）；唯一实伤 = `plugin-activity` 本地 real define 与上游自带 stub 双声明（§2.1，已删本地版）；门禁 1-4 全绿（等价 144/144、跨仓金样 40/40）；
 - **v0.9.2 合并要点（2026-10-24）**：20 冲突按「fork 资产保本地 / 上游同向修复取上游 / 本地语义嫁接上游管线」三原则裁决（清洗器三向分歧 §3.1、共享容器 M0 三件套 §2.3、地点/disabled 快路径/schema 拒绝均上游同向趋同取上游形状）；`verify-equivalence` 144/144（边界文案临时中和法隔离验证记忆化透明）；四项记忆化与 §2.2 全资产在位；
 - **v0.8.0 审计修复（2026-10-22~24，已随 `7729c3a` 提交）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
@@ -181,5 +182,6 @@
 | v0.8.0 | 10-20 | `bd44158` | 14 冲突；编辑器迁移+三处 invalidate 保位；删 legacyIndexPuts；键 `.126-58d4b7dcebff9b7f` | 1882/1922 |
 | v0.8.1+v0.9.0+v0.9.1+v0.9.2 | 10-24 | `c6ace7c` | 20 冲突：清洗器三向分歧保本地（§3.1）、SANITIZER_VERSION 保 v2、共享容器 M0 三件套（§2.3）、extractor schema 拒绝/弱参考降级取上游、地点 beforeIndex/disabled 快路径上游同向取上游、prompts-settings 管线嫁接、wrappers 去重两仓同步、记忆化等价 144/144；键 `.129-658429a52fe9524a` | 2072/2076（4 上游原生红） |
 | v0.9.3 | 10-24 | `d8eac84` | 4 冲突全并集；人物/头像/时间上游直通；删 plugin-activity 本地 real define（上游自带 stub，双声明覆盖致人物→时间红，§2.1）；键 `.130-9a9cb2f6e43e7773` | 2136/2144（8 上游原生红） |
+| v0.9.4 | 10-25 | `7864d36` | 2 冲突（dist 重建、manifest 版本+键 `.131-c0fa8f87adb58dee`）；引号解析修复直通 | 2142/2150（8 上游原生红） |
 
 > **审计更新（2026-10-11）**：`src/v3/extractor.js` 的 `excludedTags` 已补入 `record` 单数；嵌套 `<status><record>…</record></status>` 不再经父块 `plain` 文本进入时间读取，回归锁定于 `tests/v3-time-body.test.mjs`。§2.2 时间体条目中的该缺口描述仅保留为历史取证。
