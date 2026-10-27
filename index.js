@@ -37,7 +37,7 @@ import { createV3MemoryRuntime } from './src/v3/memory-runtime.js';
 import { preparationFailureDiagnostic } from './src/v3/preparation-diagnostic.js';
 import { runHistoricalRebuildTask } from './src/v3/historical-rebuild-task.js';
 import { captureHistoricalRebuildSources as captureRebuildSources } from './src/v3/historical-rebuild-sources.js';
-import { persistMessageFloorAnchors, persistTargetChatIdentity } from './src/v3/message-floor-anchor.js';
+import { persistMessageFloorAnchors, persistTargetChatIdentity, readTargetChatFile } from './src/v3/message-floor-anchor.js';
 import { createV3RecallRuntime } from './src/v3/recall-runtime.js';
 import { createAutoHideController } from './src/v3/auto-hide.js';
 import { createPeopleWorkspaceStore, createPeopleWorkspaceRuntime, projectAnnualPeople } from './src/v3/people-workspace.js';
@@ -130,10 +130,14 @@ const taskRouter = createTaskRouter({
   compactClient,
   isEnabled: settings.isEnabled,
 });
+const peopleTaskRouter = createTaskRouter({ resolver: apiResolver, compactClient, isEnabled: settings.isEnabled });
 const apiTools = createApiTools({ resolver: apiResolver, compactClient, processingPrompt, isEnabled: settings.isEnabled });
 const listHostChats = createHostChatList({ headers: () => hostContext()?.getRequestHeaders?.() ?? {} });
-const initializeChatBranch = createChatBranchInitializer({ client: backendClient, hostAdapter, vectorRuntimeProvider: () => vectorIndex, sanitizerOptions });
+const initializeChatBranch = createChatBranchInitializer({ client: backendClient, hostAdapter, vectorRuntimeProvider: () => vectorIndex });
 const identityCoordinator = createChatIdentityCoordinator({ client: backendClient, freshUuid: newUuid, listHostChats, initializeBranch: initializeChatBranch,
+  readTargetFile: (raw, host, { signal }) => readTargetChatFile(captureTargetChatCoordinates({ context: raw, chatId: host.hostChatId }, {
+    hostChatId: host.hostChatId, characterLocator: host.characterAvatar,
+  }), { signal, readPhase: 'identityBeforeSave' }),
   persist: (raw, chatId, taskInputs, signal) => {
     if (!taskInputs?.target) throw Object.assign(new Error('固定聊天保存坐标不可用。'), { code: 'QQJ_TARGET_CHAT_DESCRIPTOR_REQUIRED' });
     return persistTargetChatIdentity({ coordinates: taskInputs.target, raw, snapshot: taskInputs, chatId, listHostChats, signal });
@@ -147,7 +151,6 @@ const session = createChatSession({ contextProvider, isEnabled: settings.isEnabl
     chat: structuredClone(Array.isArray(raw.chat) ? raw.chat : []),
     chatMetadata: cloneHostJsonMetadata(raw.chatMetadata ?? {}),
     target,
-    sanitizerOptions: Object.freeze({ ...sanitizerOptions() }),
   };
 } });
 // 设置页在禁用、未选聊天及身份准备期间仍须可打开；此时不读写聊天历法，保存仍走严格身份校验。
@@ -328,7 +331,7 @@ peopleWorkspaceRuntime = createPeopleWorkspaceRuntime({
   foundationStore,
   hostAdapter,
   memoryRuntime: v3MemoryRuntime,
-  generateUtilityTask: taskRouter.generateUtilityTask,
+  generateUtilityTask: peopleTaskRouter.generateUtilityTask,
   sourcePermissions,
   contextProvider,
   profilePromptGuidance: profilePrompt,
@@ -558,7 +561,8 @@ ui = bootstrap({
 });
 lifecycle = createPluginLifecycle({
   session,
-  aborters: [taskRouter, apiTools, peopleWorkspaceRuntime, vectorIndex, vectorApi],
+  aborters: [taskRouter, apiTools, peopleTaskRouter, peopleWorkspaceRuntime, vectorIndex, vectorApi],
+  contextAborters: [taskRouter, apiTools, vectorIndex, vectorApi],
   isEnabled: settings.isEnabled,
   getUi: () => ui,
   onPrepared: async ({ result, isCurrent, explicitEnable }) => {

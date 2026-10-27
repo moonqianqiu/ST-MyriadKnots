@@ -228,13 +228,15 @@ test('显式来源楼指纹不符时不回退到同号B活动楼', () => {
   assert.deepEqual(aliases, [], '显式来源与正文见证冲突时不认领B同号楼');
 });
 
-test('搬家读回忽略宿主显示元数据，但继续核对正文与已完成楼的迁移alias', async t => {
+test('搬家成功读回只核QQJ身份与alias，宿主正文回复变化沿原生结果', async t => {
   const cases = [
     { name: '原生：正常保存读回', host: 'native', mutation: null, expected: 'completed' },
     { name: 'Luker：正常保存读回', host: 'luker', mutation: null, expected: 'completed' },
     { name: '原生：宿主只更新外部显示字段', host: 'native', mutation: chat => { chat[1].extra.otherPluginDisplay = { label: '宿主更新后的标题' }; }, verifyExternalDisplay: true, expected: 'completed' },
     { name: 'Luker：宿主只更新外部显示字段', host: 'luker', mutation: chat => { chat[1].extra.otherPluginDisplay = { label: '宿主更新后的标题' }; }, verifyExternalDisplay: true, expected: 'completed' },
-    { name: '读回正文变化', mutation: chat => { chat[1].mes += ' 被改动'; }, expected: 'QQJ_MIGRATION_HOST_VERIFY_FAILED' },
+    { name: '读回正文变化', mutation: chat => { chat[1].mes += ' 被改动'; }, expected: 'completed' },
+    { name: '读回复选变化', mutation: chat => { chat[1].swipes = ['另一个回答']; chat[1].swipe_id = 0; }, expected: 'completed' },
+    { name: 'QQJ文件归属未写入', mutation: chat => { delete chat[0].chat_metadata.qianqianjie.file; }, expected: 'QQJ_MIGRATION_HOST_VERIFY_FAILED' },
     { name: '已选alias在读回时缺失', mutation: chat => { delete chat[1].extra[MIGRATION_ALIAS_KEY]; }, expected: 'QQJ_MIGRATION_HOST_VERIFY_FAILED' },
     { name: '已选alias在读回时变化', mutation: chat => { chat[1].extra[MIGRATION_ALIAS_KEY] = '99999999-9999-4999-8999-999999999999'; }, expected: 'QQJ_MIGRATION_HOST_VERIFY_FAILED' },
   ];
@@ -263,4 +265,16 @@ test('搬家读回忽略宿主显示元数据，但继续核对正文与已完�
     }
     assert.equal(JSON.stringify([...h.records].filter(([key]) => key.startsWith(`chat-${A}/`))), sourceBefore, '所有读回结果都不改写A来源图');
   });
+});
+
+
+test('辅助目录发布失败不否定已读回的搬家文件和独立图', async () => {
+  const h = await fixture([user('中性问题'), assistant('中性回复'), user('继续')]);
+  const put = h.client.put;
+  h.client.put = async (collection, ...args) => { if (collection === CHAT_IDENTITY_COLLECTION) throw new Error('辅助目录发布失败'); return put(collection, ...args); };
+  const result = await h.migration.migrateCurrent();
+  assert.equal(result.status, 'completed'); assert.ok(h.files.has(result.hostChatId));
+  const qqj = h.files.get(result.hostChatId)[0].chat_metadata.qianqianjie;
+  assert.equal(qqj.chatId, result.chatId); assert.deepEqual(qqj.file, { characterLocator: 'character.png', hostChatId: result.hostChatId });
+  assert.ok(h.records.has(`chat-${result.chatId}/v3-root`)); assert.deepEqual(h.opened, [result.hostChatId]);
 });

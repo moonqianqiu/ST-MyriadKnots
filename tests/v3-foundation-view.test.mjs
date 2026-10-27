@@ -1,5 +1,9 @@
+import { createFoundationRuntime } from '../src/v3/foundation-runtime.js';
+import { createFoundationStore } from '../src/v3/foundation-store.js';
+import { createHostAdapter } from '../src/v3/host-adapter.js';
+import { createV3MemoryRuntime } from '../src/v3/memory-runtime.js';
 import { createChatSession } from '../src/chat-session.js';
-import { readTargetChat } from '../src/v3/message-floor-anchor.js';
+import { assertCapturedBranchTargetMatches, readTargetChat } from '../src/v3/message-floor-anchor.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -1079,7 +1083,8 @@ test('状态诊断在无可刷新状态与同步删除灰态仍可复制即时�
   assert.deepEqual(diagnostic.memory.lastExtractorError, { present: true, name: 'TypeError', code: 'V3_EXTRACTOR_FAILED', httpStatus: 429 });
   assert.deepEqual(diagnostic.memory.lastAutomationError, { present: true, name: 'Error', code: 'V3_AUTO_MEMORY_FAILED', prepareStep: null, detail: null, location: null, lastFailedAt: null });
   assert.equal(diagnostic.cse.active.phase, 'committing'); assert.equal(diagnostic.recall.active.phase, 'selecting');
-  assert.deepEqual(diagnostic.management, { status: 'deleting', phase: 'deletingRecords', workBusy: true, error: { present: true } });
+  assert.deepEqual(diagnostic.management, { status: 'deleting', phase: 'deletingRecords', workBusy: true, error: { present: true },
+    activity: { busy: 'unknown', phase: 'unknown' }, rebuildState: null });
   assert.equal(qianshiReads, 1, '每次复制诊断即时读取轻量千事状态');
   assert.equal(qianshiSnapshotReads, 0, '复制诊断不复制完整千事快照');
   assert.equal(diagnostic.qianshi.status, 'ready');
@@ -1120,6 +1125,122 @@ test('状态诊断在无可刷新状态与同步删除灰态仍可复制即时�
   assert.equal(diagnostic.qianshi.history.commitStatus, 'unknown');
   assert.equal(diagnostic.qianshi.history.outcomes[0].reasonCode, 'QIANSHI_HISTORY_COMMIT_AMBIGUOUS');
   assert.deepEqual(diagnostic.backend, backendState, '每次复制都应读取最新后端安全快照');
+});
+
+test('复制状态诊断区分基础空闲与独立历史owner，安全摘要读取最新状态', async () => {
+  const privateText = 'PRIVATE_OWNER_BODY_KEY';
+  const memory = { status: 'ready', chatId: 'current-chat', foundationStatus: 'ready', memorySnapshotStatus: 'ready',
+    memorySyncStatus: 'idle', stableCount: 138, rememberedCount: 0, memoryWorkBusy: false,
+    activeMemoryWork: null, activeExtraction: null, activeAutoMemory: null, activeCse: null, floors: [],
+    lastAutomationError: { code: 'CHAT_SESSION_NOT_READY', phase: 'extracting', prepareStep: 'identityDirectory', count: 1,
+      lastFailedAt: '2026-10-26T09:20:51.000Z', message: privateText } };
+  let historical = { ...memory, chatId: privateText, rebuildStatus: 'rebuilding', phase: 'extracting',
+    rebuildCompletedCount: 0, rebuildTotalCount: 138, memoryWorkBusy: true,
+    activeMemoryWork: { kind: 'auto', phase: 'extracting', floorIds: [privateText] },
+    activeExtraction: { phase: 'extracting', floorId: privateText }, activeAutoMemory: { phase: 'extracting', reason: privateText },
+    rawBody: privateText, identity: { key: privateText } };
+  let activity = { busy: true, phase: 'extracting', requestBody: privateText }, activityReads = 0, copied;
+  const management = { getState: () => ({ status: 'idle', phase: null, workBusy: activity.busy, rebuildState: historical }), deleteCurrent: async () => ({}),
+    getActivityState: () => { activityReads += 1; return activity; } };
+  const container = new Node('main');
+  const view = createV3FoundationView({ runtime: { getState: () => memory, refreshStatus: async () => memory, confirmLatest: async () => memory }, memoryManagement: management,
+    documentRef, navigatorRef: { clipboard: { writeText: async value => { copied = value; } } } });
+  view.mount(container);
+  flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  await new Promise(resolve => setImmediate(resolve));
+  let diagnostic = JSON.parse(copied);
+  assert.equal(diagnostic.formatVersion, 2);
+  assert.equal(diagnostic.memory.activeExtraction.present, false);
+  assert.equal(diagnostic.management.status, 'idle');
+  assert.deepEqual(diagnostic.management.activity, { busy: true, phase: 'extracting' });
+  assert.equal(diagnostic.management.rebuildState.rebuildStatus, 'rebuilding');
+  assert.equal(diagnostic.management.rebuildState.stableCount, 138);
+  assert.equal(diagnostic.management.rebuildState.rebuildCompletedCount, 0);
+  assert.equal(diagnostic.management.rebuildState.rebuildTotalCount, 138);
+  assert.deepEqual(diagnostic.management.rebuildState.activeMemoryWork, { present: true, kind: 'auto', phase: 'extracting' });
+  assert.deepEqual(diagnostic.management.rebuildState.activeExtraction, { present: true, phase: 'extracting' });
+  assert.equal(diagnostic.memory.lastAutomationError.lastFailedAt, '2026-10-26T09:20:51.000Z', '历史错误保持其原时间，不冒充当前owner');
+  assert.doesNotMatch(copied, new RegExp(privateText));
+  historical = { ...historical, rebuildStatus: 'paused', phase: null, memoryWorkBusy: false,
+    activeMemoryWork: null, activeExtraction: null, activeAutoMemory: null };
+  activity = { busy: false, phase: null };
+  flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  await new Promise(resolve => setImmediate(resolve));
+  diagnostic = JSON.parse(copied);
+  assert.deepEqual(diagnostic.management.activity, { busy: false, phase: null });
+  assert.equal(diagnostic.management.rebuildState.rebuildStatus, 'paused');
+  assert.equal(diagnostic.management.rebuildState.memoryWorkBusy, false);
+  assert.equal(diagnostic.management.rebuildState.activeAutoMemory.present, false);
+  assert.equal(activityReads, 2, '每次复制直接采既有轻量getter，无后台监测');
+  view.deactivate();
+});
+
+test('管理页激活等旧回执时runtime已通知收尾，迟到回执不得回画旧重建中状态', async () => {
+  const rebuilding = { status: 'ready', pluginEnabled: true, chatId: 'stale-activation', foundationStatus: 'ready',
+    memorySnapshotStatus: 'ready', memorySyncStatus: 'idle', stableCount: 40, rememberedCount: 30,
+    rebuildStatus: 'rebuilding', rebuildCompletedCount: 30, rebuildTotalCount: 40, rebuildHasActionableWork: true,
+    memoryWorkBusy: true, activeMemoryWork: { kind: 'auto', phase: 'extracting' },
+    activeAutoMemory: { mode: 'historical', phase: 'extracting' }, activeExtraction: { phase: 'extracting' },
+    activeCse: null, cseRebuildStatus: 'idle', floors: [] };
+  let state = rebuilding, releaseReceipt, listener;
+  const receipt = new Promise(resolve => { releaseReceipt = resolve; });
+  const runtime = { getState: () => state, refreshStatus: async () => rebuilding, confirmLatest: async () => state,
+    startHistoricalRebuild: async () => state, pauseHistoricalRebuild: async () => { throw new Error('本例不点击暂停'); },
+    subscribe(value) { listener = value; return () => { listener = null; }; } };
+  const recallRuntime = { getState: () => ({ recallStatus: 'idle' }), restorePersistedReceipt: () => receipt };
+  const container = new Node('main'), view = createV3FoundationView({ runtime, recallRuntime, documentRef });
+  view.setPage('management'); view.mount(container);
+  const activation = view.activate();
+  await new Promise(resolve => setImmediate(resolve));
+  state = { ...rebuilding, rebuildStatus: 'partial', memoryWorkBusy: false, activeMemoryWork: null,
+    activeAutoMemory: null, activeExtraction: null, lastExtractorError: { code: 'V3_MEMORY_STALE', phase: 'stale', message: '操作已取消' } };
+  listener(state);
+  assert.equal(flatten(container).some(node => node.textContent === '暂停补齐'), false, 'runtime最新通知已将页面从重建中收尾');
+  assert.equal(flatten(container).find(node => node.textContent === '继续补齐').disabled, false);
+  releaseReceipt();
+  await activation;
+  assert.equal(runtime.getState().memoryWorkBusy, false);
+  assert.equal(flatten(container).some(node => node.textContent === '暂停补齐'), false, '迟到旧回执不得把已空闲页面回画成重建中');
+  assert.equal(flatten(container).find(node => node.textContent === '继续补齐').disabled, false);
+  view.deactivate();
+});
+
+test('等待诊断复制摘要CSE各自阶段与时间失败码范围，旧记录未知且敏感材料不导出', async () => {
+  const request = { phase: 'responseBody', outcome: 'cancelled', elapsedMs: 200, phaseElapsedMs: 80, attemptElapsedMs: 90,
+    attempts: 2, timeoutMs: 100, fromAssistantSeq: 31, toAssistantSeq: 40,
+    lastAttemptError: { code: 'QQJ_TIMEOUT', name: 'Error', httpStatus: 504, attempt: 1, message: 'PRIVATE_WAIT' },
+    body: 'PRIVATE_WAIT', url: 'https://PRIVATE_WAIT', key: 'PRIVATE_WAIT', model: 'PRIVATE_WAIT' };
+  const state = { status: 'ready', pluginEnabled: true, chatId: 'wait', floors: [], extractorRequest: request,
+    cseRequest: { ...request, phase: 'sseBody', fromAssistantSeq: 21, toAssistantSeq: 30 } };
+  let time = { status: 'partial', active: false, last: { status: 'partial', failedBatchCount: 1,
+    failedBodyAttempts: [{ fromAssistantSeq: 1, toAssistantSeq: 20, failure: { phase: 'compile', code: 'QQJ_TIME_INVALID', name: 'Error', message: 'PRIVATE_WAIT' } }] } }, copied;
+  const view = createV3FoundationView({ runtime: { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state },
+    timeRuntime: { getState: () => time }, documentRef, navigatorRef: { clipboard: { writeText: async text => { copied = text; } } } });
+  const container = new Node('main'); view.mount(container);
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  let value = JSON.parse(copied);
+  assert.equal(value.memory.request.phase, 'responseBody'); assert.equal(value.memory.request.attempts, 2);
+  assert.equal(value.memory.request.lastAttemptError.code, 'QQJ_TIMEOUT');
+  assert.equal(value.cse.request.phase, 'sseBody');
+  assert.equal(value.time.last.batchFailures[0].phase, 'compile');
+  assert.deepEqual([value.time.last.batchFailures[0].fromAssistantSeq, value.time.last.batchFailures[0].toAssistantSeq], [1, 20]);
+  assert.doesNotMatch(copied, /PRIVATE_WAIT/u);
+  time = { ...time, last: { status: 'partial', failedBatchCount: 4 } };
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  value = JSON.parse(copied); assert.equal(value.time.last.failureDetails, 'unknown');
+  time = { ...time, last: { status: 'failed', failedBodyAttempts: [{ cutoffAssistantSeq: 20 }],
+    failure: { phase: 'saving', code: 'QQJ_TIME_CONFLICT', httpStatus: 409, at: 200, message: 'PRIVATE_WAIT' } } };
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  value = JSON.parse(copied); assert.equal(value.time.last.error.phase, 'saving');
+  assert.equal(value.time.last.error.httpStatus, 409); assert.equal(value.time.last.error.at, 200);
+  assert.equal(value.time.last.failureDetails, 'recorded'); assert.doesNotMatch(copied, /PRIVATE_WAIT/u);
+  time = { ...time, last: { status: 'partial', failedBatchCount: 2, failedBodyAttempts: [{ cutoffAssistantSeq: 20 }],
+    failureDiagnostics: [{ currentReview: false, fromAssistantSeq: 1, toAssistantSeq: 20, failure: { phase: 'compilePartial' } },
+      { currentReview: true, cutoffAssistantSeq: 20, failure: { phase: 'request', code: 'QQJ_EMPTY', at: 300 } }] } };
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  value = JSON.parse(copied); assert.equal(value.time.last.batchFailures.length, 2);
+  assert.equal(value.time.last.batchFailures[1].currentReview, true); assert.equal(value.time.last.batchFailures[1].code, 'QQJ_EMPTY');
+  view.deactivate();
 });
 
 test('无 chat 与无状态 provider 仍提供状态诊断，复制不会抢占正在激活的业务回显', async () => {
@@ -3914,4 +4035,144 @@ test('真实身份读回失败在设置复制诊断保留有限头部与入口�
   assert.deepEqual(parsed.pluginLifecycle.failure.identityRead, parsed.identity.preparationFailure.identityRead);
   assert.doesNotMatch(copied, /SECRET|Authorization|privatePlugin|chat_metadata|mes"/u);
   view.deactivate();
+});
+
+test('分支失败具体楼经真实session进入设置复制状态诊断', async () => {
+  const branchMatch = { reason: 'floorOrder', candidateIndex: 3, floorIndex: 3, assistantSeq: 4,
+    messageIndex: 8, markerStatus: 'valid', inheritedFloors: 3, sourceFloorCount: 6, candidateCount: 8 };
+  const raw = { chatId: '合成分支', characterId: 0, characters: [{ name: '人物', avatar: 'person.png' }], userAvatar: 'user.png', chat: [],
+    chatMetadata: { qianqianjie: { chatId: '123e4567-e89b-42d3-a456-426614174000' } } };
+  const session = createChatSession({ contextProvider: () => raw, identityCoordinator: { prepare() {
+    throw Object.assign(new Error('SECRET'), { code: 'V3_BRANCH_NOT_PREFIX', branchMatch: { ...branchMatch, body: 'SECRET' } });
+  } } });
+  await assert.rejects(session.prepare({ entryPoint: 'startup' }));
+  const state = { status: 'idle', pluginEnabled: false, floors: [] }; let copied;
+  const view = createV3FoundationView({ runtime: { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state }, documentRef,
+    sessionStateProvider: session.getState, pluginDiagnosticProvider: () => ({ phase: 'startup', failure: session.getState().preparationFailure }),
+    navigatorRef: { clipboard: { writeText: async value => { copied = value; } } } });
+  const container = new Node('main'); view.mount(container);
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  const result = JSON.parse(copied);
+  assert.deepEqual(result.identity.preparationFailure.branchMatch, branchMatch);
+  assert.deepEqual(result.pluginLifecycle.failure.branchMatch, branchMatch);
+  assert.doesNotMatch(copied, /SECRET/u); view.deactivate();
+});
+
+test('新轮准备经真实foundation和memory清旧页面错误，合并操作保进度且本轮新错仍显示', async () => {
+  const chatId = '123e4567-e89b-42d3-a456-426614174000';
+  const raw = { chatId: '合成读取反馈', characterId: 0, characters: [{ name: '人物', avatar: 'person.png' }], userAvatar: 'user.png',
+    chatMetadata: { qianqianjie: { schemaVersion: 2, chatId } }, chat: [{ is_user: false, is_system: false, mes: '中性正文。' }, { is_user: true, mes: '继续', send_date: 'confirmed' }] };
+  const records = new Map();
+  const client = {
+    async get(collection, key) { const record = records.get(`${collection}/${key}`); if (!record) throw Object.assign(new Error('not found'), { status: 404 }); return structuredClone(record); },
+    async put(collection, key, data, expectedRevision) { const mapKey = `${collection}/${key}`, previous = records.get(mapKey);
+      assert.equal(previous?.revision ?? 0, expectedRevision); const result = { data: structuredClone(data), revision: expectedRevision + 1 };
+      records.set(mapKey, result); return structuredClone(result); },
+  };
+  const adapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => raw } } });
+  const store = createFoundationStore({ client, contextProvider: () => ({ hostChatId: raw.chatId, chatId, characterLocator: 'person.png', personaLocator: 'user.png' }) });
+  let prepared = 0, release, modelCalls = 0, uuid = 10;
+  const foundation = createFoundationRuntime({ store, hostAdapter: adapter, contextProvider: () => raw,
+    now: () => new Date('2026-10-25T12:00:00.000Z'), newUuid: () => `${(++uuid).toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`, logger: { warn() {} },
+    prepareSession: async () => { const round = ++prepared; if (round === 1) throw new Error('上轮读取失败');
+      if (round <= 3) await new Promise(resolve => { release = resolve; });
+      if (round === 2) throw new Error('本轮读取失败'); return { status: 'ready' }; } });
+  const rejectModel = async () => { modelCalls++; throw new Error('读取反馈不调用模型'); };
+  const memory = createV3MemoryRuntime({ foundationRuntime: foundation, store, hostAdapter: adapter,
+    automationSettings: () => ({ enabled: false }), generateAnalysisTask: rejectModel, generateUtilityTask: rejectModel, logger: { warn() {} } });
+  assert.equal((await foundation.start()).status, 'error');
+  const container = new Node('main'), view = createV3FoundationView({ runtime: memory, documentRef }); view.mount(container, { page: 'management' });
+  const health = () => flatten(container).find(node => node.className.includes('qqj-page-health'));
+  const feedback = () => flatten(container).find(node => node.className.includes('v3-foundation-feedback'));
+  assert.match(feedback().textContent, /上轮读取失败/); assert.match(health().className, /error/);
+  const retry = foundation.refreshStatus(); view.render(memory.getState());
+  assert.equal(foundation.getState().activeRun.phase, 'capturing'); assert.equal(memory.getState().lastError, null);
+  assert.doesNotMatch(feedback().textContent, /上轮读取失败/); assert.doesNotMatch(health().className, /error/); assert.match(health().textContent, /正在/);
+  release(); await retry; view.render(memory.getState());
+  assert.match(feedback().textContent, /本轮读取失败/); assert.match(health().className, /error/);
+  const success = foundation.refreshStatus(), operationId = foundation.getState().activeRun.id;
+  view.render(memory.getState()); assert.doesNotMatch(feedback().textContent, /本轮读取失败/);
+  const merged = foundation.refreshStatus();
+  assert.equal(foundation.getState().activeRun.id, operationId); assert.equal(prepared, 3, '合并现有operation时不制造新的开始');
+  release(); await success; await merged;
+  // Inspect already waits for the original dirty-operation follow-up.
+  await foundation.inspect('feedbackSettled', { allowCached: false });
+  assert.equal(foundation.getState().status, 'ready', JSON.stringify({ state: foundation.getState(), recordKeys: [...records.keys()] }));
+  await memory.refreshStatus({ preferCached: true }); view.render(memory.getState());
+  assert.equal(foundation.getState().status, 'ready'); assert.equal(memory.getState().lastError, null);
+  assert.doesNotMatch(health().className, /error/); assert.match(health().textContent, /已记忆/);
+  assert.doesNotMatch(feedback().textContent, /读取失败/); assert.equal(modelCalls, 0);
+  view.deactivate();
+});
+
+test('真实分支目标差异进入设置复制诊断，仅保首楼与固定差异枚举', async () => {
+  const chatId = '123e4567-e89b-42d3-a456-426614174000', targetId = '223e4567-e89b-42d3-a456-426614174000';
+  const raw = { chatId: '合成差异反馈', characterId: 0, characters: [{ name: '人物', avatar: 'person.png' }], userAvatar: 'user.png',
+    chatMetadata: { qianqianjie: { schemaVersion: 2, chatId } }, chat: [{ is_user: false, mes: 'SECRET_BODY', name: 'SECRET_NAME',
+      extra: { qianqianjie_floor: { schemaVersion: 1, chatId, floorId: '33333333-3333-4333-8333-333333333333' } } }] };
+  const persisted = structuredClone(raw.chat); persisted[0].mes = 'SECRET_NEW_BODY';
+  persisted[0].extra.qianqianjie_floor.floorId = '44444444-4444-4444-8444-444444444444';
+  const session = createChatSession({ contextProvider: () => raw, identityCoordinator: { prepare() {
+    assertCapturedBranchTargetMatches({ chat: raw.chat, chatMetadata: raw.chatMetadata },
+      { chat: persisted, header: { chat_metadata: raw.chatMetadata } }, chatId, targetId);
+  } } });
+  await assert.rejects(session.prepare({ entryPoint: 'sourcePrepare' }));
+  let copied;
+  const state = { status: 'idle', pluginEnabled: false, floors: [] };
+  const view = createV3FoundationView({ runtime: { getState: () => state, refreshStatus: async () => state, confirmLatest: async () => state }, documentRef, sessionStateProvider: session.getState,
+    pluginDiagnosticProvider: () => ({ phase: 'identityPrepare', failure: session.getState().preparationFailure }),
+    navigatorRef: { clipboard: { writeText: async value => { copied = value; } } } });
+  const container = new Node('main'); view.mount(container);
+  assert.match(flatten(container).map(node => node.textContent).join('|'), /第 1 条消息的记忆归属不同/u);
+  await flatten(container).find(node => node.textContent === '复制状态诊断').click();
+  const result = JSON.parse(copied), difference = { reason: 'message', messageIndex: 0, capturedCount: 1, persistedCount: 1, fields: ['ownership'] };
+  assert.deepEqual(result.identity.preparationFailure.branchTargetDifference, difference);
+  assert.deepEqual(result.pluginLifecycle.failure.branchTargetDifference, difference);
+  assert.doesNotMatch(copied, /SECRET|swipes/u); view.deactivate();
+});
+
+
+test('管理页真实打开与固定目标刷新在读取中清全局旧错，零模型与零额外写入', { timeout: 15000 }, async () => {
+  for (const entry of ['open', 'refresh']) {
+    const chatId = '123e4567-e89b-42d3-a456-426614174000';
+    const raw = { chatId: '合成管理读取', characterId: 0, characters: [{ name: '人物', avatar: 'person.png' }], userAvatar: 'user.png',
+      chatMetadata: { qianqianjie: { schemaVersion: 2, chatId } }, chat: [{ is_user: false, is_system: false, mes: '中性正文。' }, { is_user: true, mes: '继续', send_date: 'confirmed' }] };
+    const records = new Map(); let writes = 0, rootFailure = false, onRoot = null, failCoverage = true, modelCalls = 0;
+    const client = {
+      async get(collection, key) { if (key === 'v3-root') { if (rootFailure) throw new Error('旧全局foundation读取失败'); await onRoot?.(); }
+        const value = records.get(`${collection}/${key}`); if (!value) throw Object.assign(new Error('not found'), { status: 404 }); return structuredClone(value); },
+      async put(collection, key, data, revision) { writes++; const result = { data: structuredClone(data), revision: revision + 1 }; records.set(`${collection}/${key}`, result); return structuredClone(result); },
+    };
+    const adapter = createHostAdapter({ globalRef: { SillyTavern: { getContext: () => raw } } });
+    const store = createFoundationStore({ client, contextProvider: () => ({ hostChatId: raw.chatId, chatId, characterLocator: 'person.png', personaLocator: 'user.png' }) });
+    const foundation = createFoundationRuntime({ store, hostAdapter: adapter, contextProvider: () => raw, logger: { warn() {} } });
+    assert.equal((await foundation.start()).status, 'ready');
+    const rejectModel = async () => { modelCalls++; throw new Error('管理读取不调用模型'); };
+    const memory = createV3MemoryRuntime({ foundationRuntime: foundation, store, hostAdapter: adapter, automationSettings: () => ({ enabled: false }),
+      generateAnalysisTask: rejectModel, generateUtilityTask: rejectModel, logger: { warn() {} }, sanitizerOptions: () => {
+        if (failCoverage) { failCoverage = false; throw new Error('旧全局memory读取失败'); } return {};
+      } });
+    await memory.start(); assert.equal(memory.getState().lastExtractorError.phase, 'load');
+    rootFailure = true; assert.equal((await foundation.inspect('failedRead', { allowCached: false })).status, 'error'); rootFailure = false;
+    const container = new Node('main'), view = createV3FoundationView({ runtime: memory, documentRef }); view.mount(container, { page: 'management' });
+    assert.match(flatten(container).map(node => node.textContent).join('|'), /旧全局/);
+    let release, markStarted; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { markStarted = resolve; });
+    onRoot = async () => { markStarted(); await gate; };
+    const beforeWrites = writes;
+    const operation = entry === 'open' ? view.activate() : flatten(container).find(node => node.textContent === '刷新状态').click();
+    await started;
+    const during = memory.getState();
+    assert.equal(during.memorySyncStatus, 'syncing'); assert.equal(during.lastError, null); assert.equal(during.lastExtractorError, null);
+    assert.equal(foundation.getState().status, 'running');
+    assert.doesNotMatch(flatten(container).map(node => node.textContent).join('|'), /旧全局/);
+    assert.match(flatten(container).find(node => node.className.includes('qqj-page-health')).textContent, /正在/);
+    let stopSettled; const settled = new Promise(resolve => { stopSettled = memory.subscribe(state => { if (state.memorySyncStatus !== 'syncing') resolve(); }); });
+    onRoot = null; release(); await operation; await settled; stopSettled();
+    assert.equal(memory.getState().memorySyncStatus, 'idle'); assert.equal(memory.getState().lastError, null); assert.equal(memory.getState().lastExtractorError, null);
+    assert.equal(writes, beforeWrites); assert.equal(modelCalls, 0);
+    rootFailure = true; await view.activate();
+    assert.equal(memory.getState().memorySyncStatus, 'error');
+    assert.match(flatten(container).map(node => node.textContent).join('|'), /旧全局foundation读取失败/);
+    assert.equal(writes, beforeWrites); assert.equal(modelCalls, 0); view.deactivate();
+  }
 });

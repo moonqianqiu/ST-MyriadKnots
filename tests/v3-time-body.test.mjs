@@ -39,7 +39,7 @@ function backend() {
     setPermanentDelete(value){permanentDelete=value;},setRemoveHook(value){removeHook=value;} };
 }
 const raw = (i, body='陌生人阿岚的手腕擦伤仍疼痛。') => `<!-- QQJ-start | date=2026-05-${String(i+1).padStart(2,'0')} | weekday=周一 | time=08:00 -->${body}<!-- QQJ-end | date=2026-05-${String(i+1).padStart(2,'0')} | weekday=周一 | time=09:00 -->`;
-async function harness({ count=2, unstable=false, generate=()=>({changes:[]}), sanitizer={}, tags='', bodyWrapper=value=>value, annualSettingsProvider=()=>({ready:false}), memoryStateProvider=null }={}) {
+async function harness({ count=2, unstable=false, generate=()=>({changes:[]}), sanitizer={}, tags='', bodyWrapper=value=>value, annualSettingsProvider=()=>({ready:false}), memoryStateProvider=null, memoryActivityStateProvider=null }={}) {
   let chatId=CHAT,on=true,calls=0,busy=true,cse=false,sync='idle', counter=0;
   const chat=[]; for(let i=0;i<count;i++) { chat.push({is_user:false,mes:raw(i, bodyWrapper('陌生人阿岚的手腕擦伤仍疼痛。'))}); if(!unstable||i<count-1) chat.push({is_user:true,mes:'继续'}); }
   const source={status:'ready',root:{chatId:CHAT,narrativeGeneration:'gen',headCheckpointId:'head'},rootRevision:1,floors:[],floorMemories:[],stateDeltas:[],entities:[],capabilities:{}};
@@ -48,11 +48,48 @@ async function harness({ count=2, unstable=false, generate=()=>({changes:[]}), s
   const options={store,hostAdapter,newUuid:()=>`test-${++counter}`,foundationStore:{readRoot:async()=>({data:source.root})},session:{identity:()=>({chatId,hostChatId:'host'})},
     getReachable:()=>source,getMemoryState:()=>memoryStateProvider ? memoryStateProvider() : ({memoryWorkBusy:busy,activeCse:cse?{}:null,memorySyncStatus:sync}),sanitizerOptions:()=>sanitizer,storyClockReferenceTags:()=>tags,isEnabled:()=>on,annualSettingsProvider,logger:{warn(){}},
     generateTimeTask:async task=>{calls++;assert.equal(task.transportBudget.remaining,1);assert.equal(task.transportRetries,0);assert.ok(estimateRecallTokens(task.systemPrompt+task.taskMessages[0].content)<=TIME_INPUT_TOKENS);return generate(JSON.parse(task.taskMessages[0].content),calls,task);}};
+  if (memoryActivityStateProvider) options.getMemoryActivityState = memoryActivityStateProvider;
   let runtime=createTimeRuntime(options);
   return {source,chat,store,back,seal,hostAdapter,get runtime(){return runtime;},reload(){runtime=createTimeRuntime(options);return runtime;},calls:()=>calls,setChat:value=>chatId=value,setEnabled:value=>on=value,setSync:value=>sync=value,body:()=>readTimeBody(source,hostAdapter.snapshot(),{sanitizerOptions:sanitizer,storyClockReferenceTags:tags})};
 }
 const reviewModel = (request,patch={}) => ({changes:request.trackedItems.map(item=>({itemId:item.id,progression:'截至当前可能仍有轻微不适，未确认恢复。',assessmentReason:'',...patch}))});
 const bodyModel = (request,patch={}) => request.currentReview ? reviewModel(request,patch) : ({changes:[{itemId:null,subjectEntityId:null,subjectName:'阿岚',type:'body',label:'手腕擦伤',observation:'手腕擦伤仍疼痛',occurrenceTime:'昨天',dueTime:'',periodDays:null,status:'active',stateRefs:[],progression:'疼痛可能逐渐减轻，仍待新观察确认',sourceKeys:[request.observations[0].sourceKey],...patch}]});
+
+test('等待诊断边界下一组来源校验失败不继承上一组saving阶段',async()=>{
+  const h=await harness({count:21,generate:()=>({changes:[]})});
+  const put=h.back.client.put;let changed=false;
+  h.back.client.put=async(...args)=>{const result=await put(...args);const data=args[2];
+    if(!changed&&data?.lastRun?.status==='empty'&&data.batchIds?.length===1){changed=true;h.chat[40].mes=raw(20,'真实改变的下一组正文');}
+    return result;};
+  await h.runtime.organize(await h.runtime.prepareHistoryPlan());
+  assert.equal(changed,true);assert.equal(h.runtime.getState().last.failure.phase,'sourceValidation');assert.equal(h.calls(),1);
+});
+
+test('等待诊断边界正文与currentReview同轮失败全有窄出口但不改业务失败范围',async()=>{
+  const h=await harness({count:21,generate:(request,calls)=>{
+    if(calls===1)return {changes:[bodyModel(request).changes[0],bodyModel(request,{sourceKeys:['S99']}).changes[0]]};
+    throw Object.assign(new Error('PRIVATE_REVIEW'),{code:request.currentReview?'QQJ_EMPTY':'QQJ_TIMEOUT'});
+  }});
+  await h.runtime.organize(await h.runtime.prepareHistoryPlan());
+  const last=(await h.store.read(CHAT)).head.lastRun;
+  assert.equal(last.failedBatchCount,3);assert.equal(last.failedBodyAttempts.length,2);
+  assert.equal(last.failureDiagnostics.length,3);assert.equal(last.failureDiagnostics[2].currentReview,true);
+  assert.equal(last.failureDiagnostics[2].failure.code,'QQJ_EMPTY');assert.doesNotMatch(JSON.stringify(last.failureDiagnostics),/PRIVATE_REVIEW/u);
+});
+
+test('等待诊断时间失败区分请求与编译并沿原保存保留安全码和楼范围',async t=>{
+  for(const phase of ['request','compile'])await t.test(phase,async()=>{
+    const h=await harness({count:2,generate:()=>{if(phase==='request')throw Object.assign(new Error('PRIVATE_BODY https://secret.invalid'),{code:'QQJ_TIMEOUT',status:504});return {changes:null};}});
+    await h.runtime.organize(await h.runtime.prepareHistoryPlan());
+    const stored=await h.store.read(CHAT),attempt=stored.head.lastRun.failedBodyAttempts[0];
+    assert.equal(attempt.failure.phase,phase);
+    assert.equal(attempt.failure.code,phase==='request'?'QQJ_TIMEOUT':'QQJ_TIME_INVALID');
+    assert.deepEqual([attempt.fromAssistantSeq,attempt.toAssistantSeq],[1,2]);
+    assert.ok(Number.isSafeInteger(attempt.failure.at));
+    assert.doesNotMatch(JSON.stringify(attempt.failure),/PRIVATE_BODY|secret.invalid/u);
+    assert.equal(h.calls(),1);
+  });
+});
 const rankedItem = (id,{type='deadline',label=id,observation=label,dueTime='',status='active',projection=null}={}) => ({
   id,subjectEntityId:PERSON,subjectName:'阿岚',type,label,status,observation,observationKey:`key-${id}`,
   observationTime:projectTime('2026-05-01'),occurrenceTime:projectTime('2026-05-01'),dueTime:projectTime(dueTime),periodDays:null,sourceRefs:[],stateRefs:[],projection,
@@ -1438,6 +1475,19 @@ test('批量人工状态一次保存一个批次并拒绝旧观察键',async()=>
   state=h.runtime.getState();assert.equal(state.trackedItems.length,1);assert.equal(state.stoppedItems.filter(item=>item.status==='paused').length,2);assert.equal(h.calls(),0);
   await assert.rejects(h.runtime.editItems([{itemId:state.trackedItems[0].id,observationKey:'旧键',fields:{status:'completed'}}]),/事项已变化|来源已失效/u);
   assert.equal((await h.store.read(CHAT)).batches.length,after.batches.length);assert.equal(seed.batches.length,1);
+});
+
+test('时间refreshStatus只用窄活动状态，ready同步审查错误不读取完整记忆投影', async () => {
+  for (const memory of [{status:'ready',memorySyncStatus:'idle'}, {status:'ready',memorySyncStatus:'syncing'},
+    {status:'ready',memorySyncStatus:'needsReview'}, {status:'error',memorySyncStatus:'idle'}]) {
+    let narrowReads = 0;
+    const h = await harness({ memoryStateProvider: () => { throw new Error('不得读取完整UI投影'); },
+      memoryActivityStateProvider: () => { narrowReads++; return memory; } });
+    await h.runtime.refreshStatus();
+    assert.ok(narrowReads > 0);
+    assert.equal(h.runtime.getState().status, memory.memorySyncStatus === 'idle' && memory.status === 'ready' ? 'idle' : 'waiting');
+    assert.equal(h.calls(), 0);
+  }
 });
 
 test('每次getState只读取一次记忆状态且下一次调用刷新快照', async () => {
