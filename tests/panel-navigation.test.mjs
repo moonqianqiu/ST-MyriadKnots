@@ -25,11 +25,14 @@ class Node {
   scrollIntoView(options) { this.scrollOptions = options; }
 }
 const flatten = node => [node, ...(node.children ?? []).flatMap(flatten)];
-async function waitFor(predicate, message) {
-  const deadline = Date.now() + 3000;
-  while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.ok(predicate(), message);
-}
+const waitFor = async (condition, message, timeoutMs = 2000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.fail(message);
+};
 
 test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，并恢复各页滚动位置', async () => {
   const [source, panelHtml, panelCss] = await Promise.all([
@@ -141,6 +144,12 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
     async activate() { calls.push(['storage-activate']); return { status: 'ready' }; },
     deactivate() { calls.push(['storage-deactivate']); },
   };
+  const transferViews = [];
+  const memoryTransferViewFactory = options => {
+    const value = { node: new Node('memory-transfer'), disposed: false, dispose() { this.disposed = true; } };
+    value.node.open = options.open; value.node.addEventListener('toggle', () => options.onToggle(value.node.open));
+    transferViews.push(value); return value;
+  };
   const values = { pluginEnabled: true, appearanceTheme: 'auto', appearanceFontFamily: '测试字体', appearanceFontCssUrl: 'https://example.invalid/font.css', fabShow: true, autoHideEnabled: false, autoHideKeepAiCount: 3, coreCacheEnabled: true };
   const updates = [];
   const settings = { isEnabled: () => values.pluginEnabled !== false, get: () => values, update(value, options = {}) { Object.assign(values, value); updates.push(value); if (rejectSaveSchedule && options.observeSaveFailure) throw saveScheduleError; return value; } };
@@ -159,7 +168,7 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   let autoHideApplyStatus = null;
   let calendarChatId = foundationState.chatId, savedCalendar = null; const calendarChanges = [];
   const calendarContextProvider = () => ({ chatId: calendarChatId, calendar: savedCalendar });
-  panel = entry.namespace.createPanel({ pluginUpdates, calendarContextProvider, onCalendarChange: async value => { calendarChanges.push(value); savedCalendar = value.calendar; }, settings, v3FoundationView, timeRuntime, memoryRuntime, peopleProfilesView, qianshiTimelineView, storageManagementView, documentRef, isSevenDaysLedgerInjectionEnabled: () => ledgerInjectionEnabled, onPluginEnabledChange: async value => { if (rejectPluginDisable && value === false) throw pluginDisableError; }, onPluginEnableFailure: (error, phase) => pluginFailures.push({ error, phase, settingsEnabled: settings.isEnabled() }), onTimeEvolutionChange: () => { timeChanges += 1; }, navigatorRef: { clipboard: { async writeText(value) { clipboardWrites.push(value); if (clipboardFail) throw new Error('clipboard denied'); } } }, dialog: { setAppearance(value) { dialogAppearances.push(value); }, confirm(options) { timeConfirms.push(options); dialogActive = true; return new Promise(resolve => { resolveTimeConfirm = result => { dialogActive = false; resolve(result); }; }); }, custom(options) { helpDialog = options; dialogActive = true; return Promise.resolve(true); }, closeAll() { resolveTimeConfirm?.(false); dialogActive = false; }, hasActive: () => dialogActive, cancelTop() { dialogCancels += 1; dialogActive = false; } }, onFabShowChange: value => { fabVisible = value; }, onAutoHideChange: async value => { autoHideApplies.push(value); return autoHideApplyStatus ? { status: autoHideApplyStatus } : undefined; } });
+  panel = entry.namespace.createPanel({ pluginUpdates, calendarContextProvider, onCalendarChange: async value => { calendarChanges.push(value); savedCalendar = value.calendar; }, settings, v3FoundationView, timeRuntime, memoryRuntime, peopleProfilesView, qianshiTimelineView, storageManagementView, memoryTransferViewFactory, documentRef, isSevenDaysLedgerInjectionEnabled: () => ledgerInjectionEnabled, onPluginEnabledChange: async value => { if (rejectPluginDisable && value === false) throw pluginDisableError; }, onPluginEnableFailure: (error, phase) => pluginFailures.push({ error, phase, settingsEnabled: settings.isEnabled() }), onTimeEvolutionChange: () => { timeChanges += 1; }, navigatorRef: { clipboard: { async writeText(value) { clipboardWrites.push(value); if (clipboardFail) throw new Error('clipboard denied'); } } }, dialog: { setAppearance(value) { dialogAppearances.push(value); }, confirm(options) { timeConfirms.push(options); dialogActive = true; return new Promise(resolve => { resolveTimeConfirm = result => { dialogActive = false; resolve(result); }; }); }, custom(options) { helpDialog = options; dialogActive = true; return Promise.resolve(true); }, closeAll() { resolveTimeConfirm?.(false); dialogActive = false; }, hasActive: () => dialogActive, cancelTop() { dialogCancels += 1; dialogActive = false; } }, onFabShowChange: value => { fabVisible = value; }, onAutoHideChange: async value => { autoHideApplies.push(value); return autoHideApplyStatus ? { status: autoHideApplyStatus } : undefined; } });
 
   await panel.show();
   await Promise.resolve();
@@ -171,14 +180,11 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   assert.ok(calls.some(([kind]) => kind === 'profiles-activate'));
   body.scrollTop = 31;
   settingsTab.fire('click');
-  await waitFor(() => {
-    const mount = view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
-    if (!mount) return false;
-    const link = flatten(mount).find(node => node?.className?.includes('qqj-vector-index-link'));
-    return link?.hidden === false;
-  }, '设置记忆管理未完成当前聊天索引状态读取');
-  const initialManagementMount = view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
-  const indexLink = flatten(initialManagementMount).find(node => node.className.includes('qqj-vector-index-link'));
+  const findManagementMount = () => view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
+  const findIndexLink = () => flatten(findManagementMount() ?? view).find(node => node.className.includes('qqj-vector-index-link'));
+  await waitFor(() => indexManifestReads === 1 && findIndexLink()?.hidden === false, '设置页索引状态未完成');
+  const initialManagementMount = findManagementMount();
+  const indexLink = findIndexLink();
   assert.ok(indexLink); assert.equal(indexLink.hidden, false, '直接打开设置记忆管理后按当前manifest显示零索引文字链接');
   assert.match(indexLink.textContent, /还没有向量索引/u);
   assert.equal(flatten(view).some(node => node.className.includes('qqj-vector-index-hint')), false, '千结内容页不再显示独立索引提示');
@@ -197,22 +203,24 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   assert.equal(apiSettingsMounts, apiMountsBeforeNavigation); assert.equal(apiSettingsDisposals, apiDisposalsBeforeNavigation);
   assert.equal(indexManifestReads, 1); assert.equal(indexShardReads, 0); assert.equal(identityReads, 0, '纯导航不重新读取manifest或identity');
   eventTab.fire('click');
-  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => foundationRefreshes === 2, '千结页状态刷新未完成');
   assert.equal(foundationRefreshes, 2, '随后打开千结页只读取当前状态');
   assert.equal(indexManifestReads, 1, '零索引检查属于设置记忆管理入口');
   assert.equal(flatten(view).some(node => node.className.includes('qqj-vector-index-hint')), false);
-  settingsTab.fire('click'); await new Promise(resolve => setImmediate(resolve));
+  settingsTab.fire('click');
+  await waitFor(() => findIndexLink()?.hidden === false, '重新进入设置页时索引状态未完成');
   const indexDiagnosticMount = view.children[0]?.children.find(node => node.className === 'qqj-settings-management');
   const copyStatus = flatten(indexDiagnosticMount).find(node => node.textContent === '复制状态诊断');
   assert.ok(copyStatus, '设置页保留记忆页状态诊断入口');
-  copyStatus.fire('click'); await new Promise(resolve => setImmediate(resolve));
+  copyStatus.fire('click'); await waitFor(() => clipboardWrites.length > 0, '状态诊断复制未完成');
   const copiedStatus = JSON.parse(clipboardWrites.at(-1));
   assert.equal(copiedStatus.vector.indexCheckStatus, 'ready');
   assert.equal(copiedStatus.vector.indexChunkCount, 0);
   assert.equal(copiedStatus.vector.indexChatMatchesMemory, true);
   assert.equal(JSON.stringify(copiedStatus).includes('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), false, '诊断说明是否匹配，不暴露聊天编号');
   clipboardWrites.length = 0;
-  eventTab.fire('click'); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  eventTab.fire('click');
+  await waitFor(() => indexManifestReads === 2, '重新打开记忆页时索引状态未完成');
   assert.equal(indexManifestReads, 2, '重新打开记忆页只再读取一次manifest');
   assert.equal(indexShardReads, 0); assert.equal(identityReads, 0);
   body.scrollTop = 31; eventTab.fire('click');
@@ -297,6 +305,12 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   const storageDrawer = memoryControls.find(node => node.drawerTitle === '存储管理');
   assert.equal(storageDrawer?.drawerLevel, 'sub');
   assert.equal(storageDrawer?.id, 'qqj-settings-sub-storage');
+  const [storageMount, transferNode] = storageDrawer.children[0].children;
+  assert.equal(transferNode.tag, 'memory-transfer', '导入导出位于存储管理内部最下方');
+  assert.equal(transferNode.open, false); transferNode.open = true; transferNode.fire('toggle');
+  assert.equal(drawerState.get('memory-transfer'), true, '记录导入导出折叠状态供重绘时恢复');
+  storageMount.replaceChildren(new Node('refreshed-storage'));
+  assert.equal(storageDrawer.children[0].children.at(-1), transferNode, '刷新存储统计保留导入预览节点');
   const storageActivationsBefore = calls.filter(([kind]) => kind === 'storage-activate').length;
   storageDrawer.open = true; storageDrawer.fire('toggle');
   assert.equal(calls.filter(([kind]) => kind === 'storage-activate').length, storageActivationsBefore, '父抽屉收起时子抽屉不得读取清单');
@@ -319,7 +333,7 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   const hideToggle = memoryControls.find(node => node.id === 'qqj-settings-auto-hide');
   assert.equal(hideToggle.children[0].textContent, '自动隐藏');
   assert.equal(hideToggle.children.at(-1).tag, 'input', '自动隐藏也应文字左/开关右');
-  assert.match(panelCss, /#qqj-settings-time,#qqj-settings-auto-hide\{justify-content:space-between\}/u);
+  assert.match(panelCss, /#qqj-settings-time,#qqj-settings-auto-hide,#qqj-settings-core-cache\{justify-content:space-between\}/u);
   const memoryHints = memoryControls.filter(node => node.className === 'settings-hint');
   assert.match(memoryHints[0]?.textContent ?? '', /身体状态、周期与期限.*AI 正文.*摘要 API.*当前楼.*近期事项/u);
   assert.match(memoryHints.find(node => /推算时间间隔/u.test(node.textContent))?.textContent ?? '', /推算时间间隔.*当前聊天/u);
@@ -551,6 +565,7 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   panel.close(); await closedTime;
   assert.equal(apiSettingsDisposals, apiSettingsMounts, '关闭面板释放最后一个 API 进度订阅');
   assert.equal(wrapperDisposals, wrapperMounts, '关闭面板释放最后一个包裹值回显订阅');
+  assert.ok(transferViews.length > 0 && transferViews.every(value => value.disposed), '切页、重绘与关闭均销毁导入导出视图');
   assert.equal(values.timeEvolutionEnabled, false); assert.equal(timeChanges, 4, '关面板取消确认，不开启时间推演');
   assert.equal(timeListeners.size, 0); assert.equal(memoryListeners.size, 0, '关面板解除时间与记忆订阅');
   panel.showStatus('保留模块错误空态');
@@ -558,5 +573,9 @@ test('真实面板入口按千人/千结/千事/双丝网/设置映射视图，�
   await panel.show(); settingsTab.fire('click');
   assert.ok(flatten(view.children[0]).some(node => node.id === 'qqj-settings-core-cache'), 'SillyTavern设置页显示缓存开关');
   eventTab.fire('click'); tauriTavern = true; settingsTab.fire('click');
-  assert.equal(flatten(view.children[0]).some(node => node.id === 'qqj-settings-core-cache'), false, 'TT继续使用原生存储，不展示无效开关');
+  const ttCacheToggle = flatten(view.children[0]).find(node => node.id === 'qqj-settings-core-cache');
+  assert.ok(ttCacheToggle, 'TT也显示同一core缓存开关');
+  const ttCacheInput = flatten(ttCacheToggle).find(node => node.tag === 'input');
+  ttCacheInput.checked = true; ttCacheInput.fire('change');
+  assert.equal(values.coreCacheEnabled, true, 'TT可用现有设置选择启用缓存');
 });

@@ -1537,6 +1537,44 @@ test('每十个稳定AI楼触发一次共享原文粗扫，摘要不参与筛楼
   assert.ok(requests[0].people.every(person => !Object.hasOwn(person, 'characterCard') && !Object.hasOwn(person, 'sourceFragments')));
 });
 
+test('自动原文粗扫只在可用图建立计数基线，旧楼恢复不当成新增楼', async t => {
+  for (const baseline of [null, 0]) await t.test(baseline === null ? '未知基线恢复旧20楼' : '真实空档从0楼开始', async t => {
+    const requests = [];
+    const h = harness({ generate: async options => {
+      const request = JSON.parse(options.taskMessages[0].content); requests.push(request);
+      return { jsonData: { profiles: request.people.map(person => ({ personKey: person.personKey })) } };
+    } });
+    t.after(() => h.runtime.destroy());
+    const target = h.peopleEntities[0];
+    await h.runtime.refresh({ refreshMemory: false });
+    await h.runtime.setSelectedEntityIds([target.id]); await h.markProfileInitialized(target.id);
+    const base = h.reachable;
+    const floors = Array.from({ length: 30 }, (_, index) => ({ id: ids[index], assistantSeq: index + 1,
+      content: { canonicalContent: `第${index + 1}楼原文` } }));
+    const graph = count => ({ ...base, floors: floors.slice(0, count),
+      checkpoint: { inputFingerprints: floors.slice(0, count).map(floor => ({ floorId: floor.id })) } });
+    const quiet = () => new Promise(resolve => setTimeout(resolve, 25));
+    h.setReachable(baseline === null ? null : graph(0)); h.runtime.invalidate();
+    await h.runtime.refresh({ refreshMemory: false });
+    h.setMainGenerationActive(false);
+    const knownCount = baseline === null ? 20 : 0;
+    h.setReachable(graph(knownCount)); h.notifyFoundation(); h.notifyFoundation(); await quiet();
+    assert.equal(requests.length, 0, '首次可用图只建立基线，恢复旧楼不派发');
+    await h.runtime.refresh({ refreshMemory: false }); h.notifyFoundation(); await quiet();
+    assert.equal(requests.length, 0, '同聊天重复ready和刷新不派发');
+    h.setReachable(graph(knownCount + 9)); h.notifyFoundation(); await quiet();
+    await h.runtime.refresh({ refreshMemory: false });
+    assert.equal(requests.length, 0, '实际新增九楼仍不派发，刷新也不重置已知基线');
+    h.setReachable(graph(knownCount + 10)); h.notifyFoundation(); h.notifyFoundation();
+    await waitFor(() => requests.length === 1 && h.runtime.getState().active === null);
+    assert.match(requests[0].task, /最近稳定AI楼原文粗扫/);
+    assert.deepEqual(requests[0].recentFloors.map(floor => floor.sourceFloor),
+      Array.from({ length: 10 }, (_, index) => knownCount + index + 1));
+    await h.runtime.refresh({ refreshMemory: false }); h.notifyFoundation(); h.notifyFoundation(); await quiet();
+    assert.equal(requests.length, 1, '十楼窗口只派发一次，同ID重复ready不重派');
+  });
+});
+
 test('十楼粗扫每个请求准备与CAS保存阶段只投影一次3901规模人物楼层', async () => {
   let request, passesAtRequest = 0, visitsAtRequest = 0;
   let projectionPasses = 0, memoryVisits = 0;
@@ -1585,8 +1623,8 @@ test('十楼粗扫每个请求准备与CAS保存阶段只投影一次3901规模�
   assert.equal(h.runtime.getState().profilesByEntityId[second.id].appearance, '有明确新事实');
   assert.equal(passesAtRequest, 2, '目标选择与同批请求资料各投影一次');
   assert.equal(visitsAtRequest, 2 * floors.length);
-  assert.equal(projectionPasses, 4, 'CAS updater 复用单次候选投影，之后 adopt 各自按需投影');
-  assert.equal(memoryVisits, 4 * floors.length);
+  assert.equal(projectionPasses, 5, '请求及CAS各复用单次候选投影，之后固定任务目标与当前页面各更新一次');
+  assert.equal(memoryVisits, 5 * floors.length);
 });
 
 test('新增选择只为真实空档自动首次整理，并排除宿主关闭世界书条目', async () => {
@@ -1777,11 +1815,12 @@ test('首次整理期间正文增长仍保存本次成功见证，取消再选�
 });
 
 test('取消选择会阻止首次整理迟到结果与完成进度落档', async () => {
-  let release; const gate = new Promise(resolve => { release = resolve; }); let calls = 0;
-  const h = harness({ generate: async () => { calls++; await gate; return { jsonData: { profiles: [{ personKey: 'person-1', name: '迟到结果' }] } }; } });
+  let release, announceRequest; const gate = new Promise(resolve => { release = resolve; }); let calls = 0;
+  const requestStarted = new Promise(resolve => { announceRequest = resolve; });
+  const h = harness({ generate: async () => { calls++; announceRequest(); await gate; return { jsonData: { profiles: [{ personKey: 'person-1', name: '迟到结果' }] } }; } });
   const target = h.peopleEntities[0]; await h.runtime.refresh({ refreshMemory: false });
   await h.runtime.setSelectedEntityIds([target.id]); h.setMainGenerationActive(false);
-  await waitFor(() => h.runtime.getState().active?.kind === 'generating');
+  await requestStarted;
   await h.runtime.setSelectedEntityIds([]); release(); await waitFor(() => h.runtime.getState().active === null);
   assert.equal(calls, 1); assert.equal(h.runtime.getState().profilesByEntityId[target.id], undefined);
   assert.equal(h.runtime.getState().profileMaterialProgressByEntityId[target.id], undefined);

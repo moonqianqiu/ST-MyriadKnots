@@ -934,7 +934,8 @@ export function createPeopleWorkspaceRuntime({
       reachable: source, memoryState: { cseSubjects: clone(memory?.cseSubjects ?? []) },
       workspace: workspace ?? emptyWorkspace(identity.chatId, nowIso(now)), revision,
       lastError: null, lastGenerationReport: null };
-    operation.people = displayPeopleProjection(candidateProjection(source, operation.memoryState, operation.workspace), operation.workspace);
+    operation.candidates = candidateProjection(source, operation.memoryState, operation.workspace);
+    operation.people = displayPeopleProjection(operation.candidates, operation.workspace);
     if (active) concurrentWrites.add(operation); else active = operation;
     lastGenerationReport = null;
     lastError = null; notify(); return operation;
@@ -991,8 +992,11 @@ export function createPeopleWorkspaceRuntime({
       await pruneUnreachableSelections(operation);
       if (!isCurrent(operation)) return;
       if (automaticChatId !== chatId || automaticFloorCount === null) {
-        automaticChatId = chatId;
-        automaticFloorCount = eligibleAutomaticFloorCount(foundationRuntime.getReachable?.());
+        const reachable = foundationRuntime.getReachable?.();
+        if (reachable && (!reachable.root?.chatId || reachable.root.chatId === chatId)) {
+          automaticChatId = chatId;
+          automaticFloorCount = eligibleAutomaticFloorCount(reachable);
+        }
       }
       lastError = null; notify();
     });
@@ -1372,7 +1376,7 @@ export function createPeopleWorkspaceRuntime({
       const guidanceSnapshot = typeof profilePromptGuidance === 'function' ? profilePromptGuidance() : profilePromptGuidance;
       const processingPromptSnapshot = typeof processingPrompt === 'function' ? processingPrompt() : processingPrompt;
       const systemPrompt = buildPeopleProfileSystemPrompt(guidanceSnapshot, processingPromptSnapshot);
-      let targets = targetResolver(candidateProjection(operation.reachable, operation.memoryState, operation.workspace));
+      let targets = targetResolver(operation.candidates);
       if (automatic) targets = targets.filter(target => hasProfileMaterial(target.profile));
       if (!targets.length) {
         if (automatic) return getState();

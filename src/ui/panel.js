@@ -13,7 +13,6 @@ import { openHelpGuide } from './help-guide.js';
 import { applyPluginEnabledImmediately } from '../settings.js';
 import { scaleCssFontSizes } from './font-scale.js';
 import { createPluginUpdatesView } from './plugin-updates-view.js';
-import { isTauriTavern } from '../tauri-backend.js';
 
 const PUBLIC_API_EXAMPLE = `const bridge = globalThis.qqj_v3_public_bridge_v1;
 const status = bridge.getStatus();
@@ -45,6 +44,7 @@ export function createPanel({
   peopleProfilesView,
   qianshiTimelineView,
   storageManagementView,
+  memoryTransferViewFactory,
   sourcePermissionView,
   onPluginEnabledChange,
   onPluginEnableFailure,
@@ -105,6 +105,7 @@ export function createPanel({
   let apiSettingsView = null;
   let promptsSettingsView = null;
   let updatesSettingsView = null;
+  let memoryTransferView = null;
   const scrollPositions = new Map();
   const themeButton = root.querySelector('.theme-btn');
   const fabToggleButton = root.querySelector('.fab-toggle-btn');
@@ -181,6 +182,7 @@ export function createPanel({
     }
   };
   const unmountContent = () => {
+    memoryTransferView?.dispose(); memoryTransferView = null;
     apiSettingsView?.dispose(); apiSettingsView = null;
     promptsSettingsView?.dispose(); promptsSettingsView = null;
     updatesSettingsView?.dispose(); updatesSettingsView = null;
@@ -449,29 +451,32 @@ export function createPanel({
       return changeCalendar(months);
     });
     prefixInput.addEventListener('change', () => changeCalendar(calendarInputs.find(({ input }) => input.checked)?.months ?? 12));
-    if (!isTauriTavern()) {
-      const coreCacheToggle = element('label', 'setting-switch');
-      coreCacheToggle.id = 'qqj-settings-core-cache';
-      const coreCacheInput = element('input'); coreCacheInput.type = 'checkbox'; coreCacheInput.checked = settings.get().coreCacheEnabled !== false;
-      coreCacheInput.setAttribute('aria-label', '浏览器缓存（IndexedDB）');
-      coreCacheToggle.append(element('span', '', '浏览器缓存（IndexedDB）'), coreCacheInput);
-      coreCacheToggle.addEventListener('click', event => event.stopPropagation());
-      const coreCacheHint = element('p', 'settings-hint', '关闭不会删除记忆，之后直接从正式存储读取，打开长聊天可能更慢。更改后整页刷新酒馆生效。');
-      const coreCacheResult = element('p', 'settings-result');
-      coreCacheResult.id = 'qqj-settings-core-cache-result';
-      coreCacheInput.addEventListener('change', () => {
-        settings.update({ coreCacheEnabled: coreCacheInput.checked });
-        coreCacheResult.textContent = '设置已修改；整页刷新酒馆后生效。';
-        coreCacheResult.className = 'settings-result success';
-      });
-      memoryBody.append(coreCacheToggle, coreCacheHint, coreCacheResult);
-    }
+    const coreCacheToggle = element('label', 'setting-switch');
+    coreCacheToggle.id = 'qqj-settings-core-cache';
+    const coreCacheInput = element('input'); coreCacheInput.type = 'checkbox'; coreCacheInput.checked = settings.get().coreCacheEnabled !== false;
+    coreCacheInput.setAttribute('aria-label', '浏览器缓存（IndexedDB）');
+    coreCacheToggle.append(element('span', '', '浏览器缓存（IndexedDB）'), coreCacheInput);
+    coreCacheToggle.addEventListener('click', event => event.stopPropagation());
+    const coreCacheHint = element('p', 'settings-hint', '关闭不会删除记忆，之后直接从正式存储读取，打开长聊天可能更慢。更改后整页刷新酒馆生效。');
+    const coreCacheResult = element('p', 'settings-result');
+    coreCacheResult.id = 'qqj-settings-core-cache-result';
+    coreCacheInput.addEventListener('change', () => {
+      settings.update({ coreCacheEnabled: coreCacheInput.checked });
+      coreCacheResult.textContent = '设置已修改；整页刷新酒馆后生效。';
+      coreCacheResult.className = 'settings-result success';
+    });
+    memoryBody.append(coreCacheToggle, coreCacheHint, coreCacheResult);
     const storageDrawer = createSettingsDrawer({
       documentRef, title: '存储管理', level: 'sub', id: 'qqj-settings-sub-storage', open: storageOpen,
       onToggle: open => { settingsDrawerState.set('storage', open); syncStorageActivation(); },
     });
     storageGroup = storageDrawer.drawer;
-    storageManagementView.mount(storageDrawer.body);
+    const storageMount = element('div');
+    storageManagementView.mount(storageMount);
+    storageDrawer.body.append(storageMount);
+    memoryTransferView = memoryTransferViewFactory?.({ open: settingsDrawerState.isOpen('memory-transfer', false),
+      onToggle: open => settingsDrawerState.set('memory-transfer', open) }) ?? null;
+    if (memoryTransferView) storageDrawer.body.append(memoryTransferView.node);
     memoryBody.append(autoHideToggle, keepRow, autoHideResult, calendarRow, prefixRow,
       element('p', 'settings-hint', '历法用于推算时间间隔，仅当前聊天生效。特殊年只填年份前的完整纪年名称，不填数字或“年”。'),
       element('p', 'settings-hint', '例：启航387年，填启航。'), calendarResult, storageGroup);
@@ -528,6 +533,7 @@ export function createPanel({
   }
 
   function close() {
+    memoryTransferView?.dispose(); memoryTransferView = null;
     rememberScroll();
     activationEpoch += 1;
     apiSettingsView?.dispose(); apiSettingsView = null;
