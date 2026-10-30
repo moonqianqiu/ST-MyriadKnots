@@ -237,9 +237,18 @@ async function verifyConversation(graph, chat, sanitizerOptions) {
   const scanned = await scanAssistantCandidates(chat, { chatId: graph.root.chatId, sanitizerOptions });
   const candidates = partitionScannedCandidates(graph, chat, graph.root.chatId, scanned).all;
   const bindings = matchFloorCandidates(graph.floors, candidates);
+  // 上游靠「清洗设置变化 → canonical 洗空 → 候选被丢弃」拦截导入导出两侧清洗配置漂移；
+  // 本仓 M0 直通合同下 canonical 永不因配置洗空、raw 指纹与配置无关，该防线不存在
+  // （AGENTS §3.1）。改为显式合同：每个楼层绑定须 canonical 一致，或清洗配置指纹一致
+  // （配置无关的等价变更放行），否则与上游同文报错，要求两边先对齐清洗设置。
+  const drift = graph.floors.findIndex((floor, index) => {
+    const match = bindings.floorMatches.get(index);
+    return !match || (!match.canonicalFingerprintMatches && !match.sanitizerFingerprintMatches);
+  });
   const missing = graph.floors.findIndex((_, index) => !bindings.floorMatches.has(index));
-  check(!bindings.issue && missing < 0,
-    `记忆中的楼层无法确认绑定：第 ${bindings.issue?.messageIndex ?? graph.floors[missing]?.hostLocator.messageIndex} 楼（从 0 开始）。请核对楼层标识、正文或清洗设置。`);
+  const fault = bindings.issue ? null : drift >= 0 ? drift : missing < 0 ? null : missing;
+  check(!bindings.issue && fault === null,
+    `记忆中的楼层无法确认绑定：第 ${bindings.issue?.messageIndex ?? graph.floors[fault]?.hostLocator.messageIndex} 楼（从 0 开始）。请核对楼层标识、正文或清洗设置。`);
   return bindings;
 }
 

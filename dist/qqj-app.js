@@ -36228,8 +36228,11 @@ async function SD(e, t, n) {
 	let r = await Wt(t, {
 		chatId: e.root.chatId,
 		sanitizerOptions: n
-	}), i = xc(e, t, e.root.chatId, r).all, a = rc(e.floors, i), o = e.floors.findIndex((e, t) => !a.floorMatches.has(t));
-	return XE(!a.issue && o < 0, `记忆中的楼层无法确认绑定：第 ${a.issue?.messageIndex ?? e.floors[o]?.hostLocator.messageIndex} 楼（从 0 开始）。请核对楼层标识、正文或清洗设置。`), a;
+	}), i = xc(e, t, e.root.chatId, r).all, a = rc(e.floors, i), o = e.floors.findIndex((e, t) => {
+		let n = a.floorMatches.get(t);
+		return !n || !n.canonicalFingerprintMatches && !n.sanitizerFingerprintMatches;
+	}), s = e.floors.findIndex((e, t) => !a.floorMatches.has(t)), c = a.issue ? null : o >= 0 ? o : s < 0 ? null : s;
+	return XE(!a.issue && c === null, `记忆中的楼层无法确认绑定：第 ${a.issue?.messageIndex ?? e.floors[c]?.hostLocator.messageIndex} 楼（从 0 开始）。请核对楼层标识、正文或清洗设置。`), a;
 }
 function CD(e, t, n) {
 	let r = (e) => Object.fromEntries([
