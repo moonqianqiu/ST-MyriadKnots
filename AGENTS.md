@@ -2,11 +2,10 @@
 
 本仓库是 [`atonal519/ST-MyriadKnots`](https://github.com/atonal519/ST-MyriadKnots) 的 fork（作者 moon 定制版）。`main` 分支跟踪上游最新基线，并叠加"moon"专属改动。`origin = moonqianqiu/ST-MyriadKnots`，`upstream = atonal519/ST-MyriadKnots`。
 
-> **用途**：供后续会话/开发者在执行"合并上游"、"升级维护"、"排查改动"时，迅速掌握本 fork 的核心定制、版本惯例、冲突裁决规则与架构设计决策，确保合并上游时不丢弃本地核心资产。
-> **体例**：本文件只维护**当前契约**与**索引**；历次合并的逐版本实录与验证数据随 git 历史沉淀（`git log -p AGENTS.md` 按版本回查，`git show <合并提交>` 看合并能力摘要）。每次合并后仅在 §5.1 索引表追加一行，并把新的持久性裁决沉淀进 §2/§3 相应契约。
-> **防回胀（硬规则）**：本文件每次会话都整体注入，体积即复现开销。① **§5.1 每行硬上限 120 字符**，只写「冲突数 + 裁决关键词 +（有则）缓存键」，细节落 §2/§3 或留 git 历史；② **同一事实只写一处**——规格与锚点归 §2.2，动机与理由归 §3，另一侧只留 `§x.y` 指针；③ 精确签名、`file:line` 锚点、缓存键序号规则、「勿回植/勿再删」红线与四门禁阈值**永久保留**，压缩只针对措辞与已外置的取证。
-> **不可压核心（精简白名单）**：§1.3 缓存键规则、§1.4 合并流程、§2.1 各行的「路径 + 裁决关键词」、§2.2 全部签名/常量/`file:line` 锚点/红线、§3.1 M0-M3+P5+40 例金样、§4 四门禁命令与阈值、§5 版本号与缓存键——压缩只动措辞与已外置取证，上述内容一字不删。
-> **取证外置**：合并实录与教训全文见 `docs/merge-notes.md`；召回性能取证见 `docs/audit-recall-budget-loop-2026-10.md`。本文件只留契约、锚点与指针。
+> **用途**：本 fork（moon 定制版）的维护记忆。合并上游、升级维护、排查改动前先读本文，掌握核心定制、版本惯例、冲突裁决与架构决策，确保合并不丢本地资产。
+> **三份文档分工**：本文＝**当前契约 + 索引**（§2 冲突规则与本地资产、§3 架构决策、§4 门禁、§5 底数与版本索引）；`docs/merge-notes.md`＝**合并实录与教训大全**（逐版本要点、冲突实录、上游原生红代修史、UI 迁移实录）；`docs/audit-*.md`＝**专项取证**（召回性能、v0.8.0 修复）。
+> **防回胀（硬规则）**：① **§5.1 每行 ≤120 字符**，只写「冲突数 + 裁决关键词 +（有则）缓存键」，细节落 §2/§3 或 merge-notes；② **同一事实只写一处**——规格与锚点归 §2.2，动机归 §3，另一侧只留 `§x.y` 指针；③ 精确签名、`file:line` 锚点、缓存键序号规则、「勿回植/勿再删」红线与四门禁阈值**永久保留**，压缩只针对措辞与已外置的取证；④ 新的逐版本实录一律写 `docs/merge-notes.md`，本文只追加 §5.1 一行。
+> **不可压核心**：§1.3 缓存键规则、§1.4 合并流程、§2.1 各行「路径 + 裁决关键词」、§2.2 全部签名/常量/`file:line` 锚点/红线、§3.1 M0-M3+P5+40 例金样、§4 四门禁命令与阈值、§5 版本号与缓存键——压缩只动措辞，上述内容一字不删。
 
 ---
 
@@ -27,9 +26,9 @@
 | :--- | :--- | :--- |
 | `manifest.json` | 版本号行与缓存键行冲突 | 版本采上游发布号；构建完成后回填最新缓存键（§1.3） |
 | `dist/qqj-app.js` | 编译产物冲突（数千 hunk） | 不手工解，直接 `npm run build` 覆盖重建即消除 |
-| `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：断言常停在上一发布号而 manifest 已递增，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（实例见 §5.1）。**上游补声明方式可能与本地代修相撞（v0.9.3 实录）**：v0.9.2 本地曾给上游漏声明的 `plugin-activity` 等补 real-module define，v0.9.3 上游自带 `plugin-activity` stub 声明（并借 stub 捕获活动源供断言）→ 同测试双声明、`modules.set` 后到覆盖，real 压掉 stub 打红「人物资料/生日变化仍触发时间更新」；本地 real define 只保留上游仍缺的 `internal-processing-prompt`/`memory-exclusion`/`shared-body-wrappers` 三例，上游已自带声明的必须移除本地版。**v0.9.5 实录（同类缺口）**：上游 index.js 改调 `settings.processingPrompt()` 而自带 settings stub 未加该访问器（纯上游树同红）→ 本地代补 `processingPrompt: () => productionSettings.processingPrompt`，断言与夹具不动（v0.9.9 上游已自行补齐该访问器，本地代修**已删**，勿回植）。**v0.9.9 实录（M0 夹具覆盖，本行最易错）**：上游把 `readyFoundationRecords` 重写为 `{ expectedFloors = 1, summaries = false }` 变体（供 `nativeBranch` 6 例的源聊天 3 楼+摘要），并把该处 `sanitizerOptions` 保持为 base 的 `keepTags:'content'`——**本地那一行落在重写区间内才报冲突，属「位置重叠」而非语义对抗**。裁决＝**上游结构全收 + 只把该值换回本地 `() => ({})` + 重写 M2 合同注释**。反事实实测（2026-10-27）：换回上游 `keepTags:'content'` 时本仓 M2 把无标签夹具正文剥空 → 每楼摘要重试 3 次 → `summaryCalls = 9 ≠ 3`，7 例全红；换回 M0 则 7/7 绿。**等价性论证**：本夹具正文无 `<content>`、无注释，M0 直通与上游宽松 keep 产出逐字相同的 canonical，故此处只换配置表达、不改被测语义。**判据**：①本地改的若是「本地合同注入点（sanitizerOptions/keepTags/SANITIZER_VERSION/invalidate 三参…）」→ 值必保本地；②上游该行相对 base **没动** → 只搬值不动结构；③交叉组合后两侧断言必须同时绿；④反事实换回上游值须能打红，否则该本地适配已成死补丁应删。**红线**：上游若给夹具正文加 `<content>` 包裹，M0 会把标签本体留在 canonical → 须改夹具（显式 `extraTags`）或改期望值，**不得**动清洗器缺省行为 |
+| `tests/production-entry-load.test.mjs` | 冒烟版本断言与上游新增 mock | 采纳上游修改（版本断言对齐上游最新版本）。**上游忘同步版本断言系惯例缺陷**：断言常停在上一发布号而 manifest 已递增，**纯上游树同样红** → 本地代修对齐上游发布号，勿误判为本地回归（实例见 §5.1）。**上游补声明方式可能与本地代修相撞**：同测试对同一 specifier 双声明时 `modules.set` 后到覆盖 → 只保留上游仍缺的代修，上游已自带声明的必须删本地版。**判据**：①本地改的若是「本地合同注入点（`sanitizerOptions`/`keepTags`/`SANITIZER_VERSION`/`invalidate` 三参…）」→ 值必保本地；②上游该行相对 base **没动** → 只搬值不动结构；③交叉组合后两侧断言必须同时绿；④反事实换回上游值须能打红，否则该本地适配已成死补丁应删。**红线**：上游若给夹具正文加 `<content>` 包裹，M0 会把标签本体留在 canonical → 须改夹具（显式 `extraTags`）或改期望值，**不得**动清洗器缺省行为。三则实录（v0.9.3 双声明 / v0.9.5 `processingPrompt` / v0.9.9 M0 夹具覆盖）见 `docs/merge-notes.md` §6.2 |
 | `tests/production-dist-branch.test.mjs` | 上游 v0.7.14 起记录读取强制先协商 `/v1/health`（能力探测），该文件夹具只认 `/v1/records/…` 单条路由 → 探针 404（**纯上游树同样红**，见 §5.1 v0.7.14+v0.7.15 行） | 本地代修：夹具补 `/v1/health` 桩并有意不声明 `recordBatchRead`/`recordIdList`，使客户端走单条 GET 回退；断言与夹具内容一字未动 |
-| `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突。**v0.8.0 代修**：上游把设置页挂载改为 `v3FoundationView.mount(managementMount, { page: 'management' })`，断言仍停在旧 `setPage?.('management')`（纯上游树同样红）→ 本地按上游实际机制改写断言，勿误判为本地回归 |
+| `tests/v3-wiring.test.mjs` | 装配接口导出与版本断言 | 采纳上游；v0.6.6 起版本断言已泛化（`assert.match(manifest.version, /^\d+\.\d+\.\d+$/u)`），不再常规冲突。v0.8.0 起上游改设置页挂载机制（`v3FoundationView.mount(...)`），断言随之按上游实际机制改写，勿误判本地回归（实录见 §6.2） |
 | `tests/v3-cse.test.mjs` | 上游 `runtimeHarness` 宿主参数 vs 本地 `sanitizerOptions` 参数 | **取并集**：本地默认值与上游 Persona 参数互不相干，两者都必须在场 |
 | `tests/v3-extractor-memory.test.mjs` | 上游调试导出写死 POSIX `/tmp/qqj-v048-<n>-current-reachable.json`（Windows 解析为不存在的 `D:\tmp` → ENOENT，纯上游树同样红）。**<n> 随上游版本变动**（当前 `1000`，早期 `271`） | **v0.10.1 起上游已自带仓库内 `mkdtemp(new URL('./.tmp-current-reachable-', import.meta.url))` + `t.after` 清理，本地 tmpdir 代修已删勿回植**；v0.7.5 另有一条上游自带挂起/红测试，本地补 name/avatar 适配（`7c87ea9`）；其余代修实例见 §5.1。**v0.8.0 起两例**（`地点名参照`、`地点绑定和父级`）新增/改写的原始消息带 `<location>` 标签并期望 canonical 不含它（依赖上游清洗器缺省剥除）→ 本地显式 `sanitizerOptions: () => ({ extraTags: 'location' })`，测试意图不变 |
 | `src/memory-content-sanitizer.js` | 上游 v0.5.8 起「默认 keep='content'」简化实现 vs 本地四模式合同；**v0.9.0 起上游改为重导出 `shared-body-wrappers.js` 的 `sanitizeStoryBody`**（缺省 keep='content'、命名对大小写不敏感、M0 直通/M1 未闭合/同名 extra 语义全不同——实测对拍 40 例金样仅 13 例一致） | **双层保留**：本地 M0-M3 渲染器、`sanitizeMemoryContent`（不注入默认 keepTags）、`extraOnlySanitizerOptions` 逐字保留（规格见 §3.1），**不采第 1 行共享重导出**；移植段随上游（v0.9.x 内部名 `normalizeTagBlockNames`+其局部 `TAG_NAME_PATTERN`、新导出 `readMemoryTagBlocks`）。`src/shared-body-wrappers.js` 文件照收（settings/foundation import，与 SDC 上游逐字一致，**勿改其内容**；上游 `tests/shared-body-wrappers.test.mjs` 的期望按本仓合同适配） |
@@ -48,7 +47,7 @@
 > - `src/v3/time-body.js`：**剥壳投影**（2026-10-11 定案）——`currentBodyClock` 在 canonical 结构化读取无果时对 canonical 同文做时间专用投影：先整块移除平台排除块（`TIME_EXCLUDED_TAGS`，含 `record` 单数），再剥掉其余闭合标签块的壳读时间。控制信号另走原文控制视图：仅应用用户 `extraTags` 隔离，保留 QQJ/SDC 注释、配置的时间参考标签和 `<br>` 换行；正文仍只消费 canonical。排除名单与 extractor 同步并由逐名行为守卫锁定。三条件：只投影 canonical 不碰原文；排除块整块移除；canonical 优先（结构化解释压过扁平文本）。未声明的闪回/回忆类块仍须用户填入 `extraTags` 才会排除。`readTimeBody` 仍向 `matchFloorCandidates` 传第三参 `{ equivalentContent }`（见 floor-binding 条目）。另（2026-10-24）：`readTimeBody` 时间指纹用 `sourceRaw || summaryRaw`（弱时间参考不再以空原文覆盖主线时间）。
 > - `src/v3/extractor.js`：**start-only 故事钟不合成起点时间行**（上游合同，第二早退：无模型主线、可靠结束、参考或正文时间时原样返回）——v0.8.0 时代的「残缺同楼时间戳」红例已随上游 v0.9.x 测试重写消解（2026-10-24 复核通过）。**v0.9.2 裁决**：schema 回显拒绝取上游 `isSchemaMetadataCandidate`（文本级、更严；本地 `isSchemaOnlyPacket`+`JSON_SCHEMA_KEYS` 已删）；第一早退取上游 namespace-scoped 版（`(!referenceText || clock?.namespace?.startsWith('tag:'))`，本地无锚定 solid-chronology 变体已弃）；本地保留：`excludedTags` 的 `record` 单数、fallbackText/kind/precision 中 canonicalTime 先于弱 `referenceText` 的降序（对现有用例惰性）。
 > - **UI 联动点**（上游重排装配代码时保住三处 `invalidate` 联动）：`src/ui/v3-foundation-view.js`（单楼编辑 / 完全重构）、`src/ui/people-profiles-view.js`（`saveProfile`）、`src/bootstrap.js`（`recallRuntime` 注入通道）。**v0.7.2 起完全重构跨聊天继续执行**——上游 `fullRebuild(expectedChatId, mode)` 绑定固定目标聊天（异聊天并发报 `QQJ_REBUILD_BUSY`、目标不符报 `QQJ_REBUILD_TARGET_INVALID`），其完成回调**不得**无条件 `clearPersisted`，须先比 `runtime.getState().chatId === 捕获时的 state.chatId` 再 `invalidate('foundationFullRebuild', …, { clearPersisted: true })`，否则 A 聊天重构跑完会误删当前显示的 B 聊天持久收据（`src/chat-memory-management.js:165 adoptRebuiltTarget` 在真实切聊后不切回；`src/ui/v3-foundation-view.js:1640` 的 `{...state, ...taskState}` 即该差异来源）。
-> - **v0.8.0 覆盖型迁移实录（`v3-foundation-view.js`）**：上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。**该 after 回调须先比 `nextState?.chatId === state.chatId`（保存发起时的聊天）才执行清理联动**（2026-10-24）：否则 A 保存期间切到 B，A 的完成回调会误删并保存 B 的回执。
+> - **UI 迁移纪律（v0.8.0 覆盖型迁移）**：上游把本地定制块**重写/搬迁**（而非删除）时，取上游结构并把本地联动**移植进新结构**——在此类冲突上「并集」是错的（会双渲染 + 缓存失效失灵）。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。**`run(…).after` 回调须先比 `nextState?.chatId === state.chatId`（保存发起时的聊天）才执行 `invalidate('manualMemoryEdit', …, { clearPersisted: true })`**（跨聊天误删保护）。完整实录（编辑器抽 `openMemoryEditor` 弹窗）见 `docs/merge-notes.md` §7。
 > - **v0.7.9 上游隐藏「空间记录」UI**：删除 `placeNameCache`/`placeNamesFor` 助手与整块 `qqj-memory-spatial` 渲染（内部空间记忆与「地点」meta 保留），并把 `EXTRACTOR_FIXED_CONTRACT` 第 11 条地点粒度改写为「按房间或有独立意义的区域」。本地未定制该区块，**全采纳，勿回植空间 UI**。
 > - `src/ui/help-guide.js`：本地改两处——设置章节「保留包裹符」说明段（P5 通用包裹符双栏语义）+ 排障手册「大量楼摘要缺正文」段尾的日期读取教义句（2026-10-11：含日期的闪回/回忆类块会被当作本楼当前时间，extraTags 声明可排除）。上游高频重写本文件文案——裁决：**上游新增段落全收 + 两处本地保持**（包裹符段上游侧仍是旧 `[[...]]` 专用描述，勿取上游侧；教义句属上游文案区内的本地追加句尾，合并后须核在位）。
 > - `src/v3/recall-selector.js`（本地四项纯性能记忆化，详见 §3.5）：**语义零改动**，判定输入一字未动；上游重写本文件时按以下锚点逐项回植，并以 `node tools/perf-audit/verify-equivalence.mjs <上游合并前提交>` 确认输出逐字节不变：
@@ -118,12 +117,7 @@
 - **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5 加速 **n=48 17.18× → n=192 35.49×**；实机卡死上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**，增长指数由 `n^1.76` 降到 `n^1.24`（完整数表见审计文档）。
 - **等价性证据**：`node tools/perf-audit/verify-equivalence.mjs HEAD` = **144/144 逐字节一致**（`injectionText` 逐字符 + 完整结果树 canonical 深比）；四门禁全绿。判据：三者都是纯函数（`compact`/`historyStableKey`/`prepareMaterial`）按输入记忆化，`entityDerivedCache` 只上提依赖 `context` 的常量。
 - **仍未解决的（有意留作后续）**：`buildStorylinePlan` 内层仍是 **O(m²)** 对比较（四层：候选线生成／建线合并／附着／continuity 兜底）。本改动只砍常数与部分指数，**不改阶**——悬崖仅从 192 楼推到 **~1500 楼**（数表见审计文档）。要真正压阶只能收缩参与分组的候选池（`baseHistory` 有原则预过滤）；硬切 `.slice(0,128)` 实测可得 17×–54×但**会改变召回结果**，不可取。
-- **五条教训**（`docs/audit-recall-budget-loop-2026-10.md` 有完整取证）：
-  ① **缓存要打在热点上，且键必须廉价**：成本分布是键推导 **42.4%** 对 `setIntersection` **0.3%**——为便宜运算付昂贵键即净亏（键成本对原运算之比实测 401× / 15.39×，见审计文档）。故本节只缓存**最贵的** `compact`/`historyStableKey`/`prepareMaterial`。
-  ② **跨轮记忆化不能按对象身份**：`decorate()` 每轮 `{...value}` 克隆候选 → 按对象键命中率仅 **4.5%**；但浅拷贝**共享字符串实例**，按字符串键才有效。
-  ③ **缓存键必须覆盖被缓存函数的全部输入**：用「`historyStableKey` + 内容」做 `recordFor` 的键会串记录（该方案收益也在噪声内：0.982×/0.989×），故剔除——详见 §2.2 反例警示。
-  ④ **审计基线的谱系必须断言**：性能夹具曾在跨上游版本比较中给出虚假的「逐字节一致」；`tools/perf-audit/lib/recall-audit.mjs` 的 `assertUpstreamMarkers()` 让这种情况**抛异常而非静默通过**。
-  ⑤ **对象身份缓存并非一律不可用，取决于输入是不是「原对象」且作用域是否够窄**：②的克隆前提不适用于 `recordFor`（它读 history 数组原对象），故上游 v0.7.0 的 `recordsByValue`（`WeakMap`，作用域仅单次 `buildStorylinePlan()`）既命中又安全，已采纳——详见 §2.2 正例。判据仍是③。
+- **五条教训**（全文取证 `docs/audit-recall-budget-loop-2026-10.md` §5）：①键必须廉价、只缓存最贵热点；②跨轮记忆化别按对象身份（`decorate()` 每轮克隆→按对象键命中率仅 **4.5%**，浅拷贝共享字符串实例、按字符串键才有效）；③缓存键须覆盖被缓存函数全部输入；④审计基线谱系须断言；⑤原对象 + 窄作用域下身份缓存可用（`recordsByValue`）——③⑤红线表述以 §2.2 反例/正例为准。
 - **审计工具**：`tools/perf-audit/`（`verify-equivalence.mjs` 等价门禁、`benchmark.mjs` 计时与指数拟合；`README.md` 载方法学与夹具设计理由）。变体物化到**系统临时目录**（`SCRATCH_DIR = tmpdir()/qqj-recall-perf-audit`，见 `lib/recall-audit.mjs`），即仓库之外——**绝不写入 `src/` 旁，也不需 `.gitignore` 条目**。
 
 ---
@@ -157,31 +151,14 @@
 - **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v1.0.3（提交 `db5f66e`）。本次合并提交及父提交见 §5.1 与 git 历史；
 - **产物版本**：`manifest.json` 版本号 `1.0.3`（含 `author: "atonal519"`），缓存键 `20261103.208-b689a42fd1e8aeb9`（bundle 6,041,813 B、sha256 `b689a42f…`，vite 8.2.2 重建；**bundle 摘要随检出路径变化**——键必须取自实际发布仓库的构建产物，勿跨检出身拷贝）；
 - **v1.0.3 合并要点（2026-11-03）**：9 冲突——settings.js 并集（本地 `writeWrappers` + 上游 `persistApiEdit`/`restoreApiFields`）、recall-runtime 三处并集（**前情凭证链须排在 placeWorkspace 扩展之前**，二者皆 undefined 时材料不变）、bootstrap 保 `recallRuntime` 注入通道并删 `uiDiagnosticProvider`（上游 v1.0.x 删该特性、工厂已不接收）、memory-runtime 导入并集 + `extraOnlySanitizerOptions` 两处。上游主题：千窗地图目录（`qianchuang-*` 新模块）、地点工作区依赖、`shared-body-wrappers` 收编 `sanitizeStoryBody`。dist 重建、manifest 1.0.3、键 `.208`；本地给 `tests/v3-recall.test.mjs` 的 harness 增 `sanitizerOptions` 透传（§3.1）后**全量 3117 全绿**；金样与 SDC 逐字节一致。
-- **v0.10.0+v0.10.1 合并要点（2026-10-30）**：6 冲突（预判全中）——dist 重建、manifest 键、`panel-navigation` 整取上游（其 CSS 断言自修 + 自带 `waitFor` 取代本地 stopgap）、`settings-api` 上游 env-root 子测试结构 + 补回本地 `'../utils/tag-names.js'` 重写行、`v3-extractor-memory` 1000 楼夹具取上游 `mkdtemp`（tmpdir 代修退役，§2.1）、`v3-foundation-view` 两侧都要（本地跨聊天回执测试 + 上游三红例断言重写）。上游主题：**记忆转移**（导出/导入单人聊天记忆、64MB 分卷、随包 JSONL，`memory-transfer*` 七新文件；TT 端改按设置启用 IndexedDB core cache）、人物十楼粗扫基线化（历史楼恢复不再误判新增）。**17 条旧上游原生红全清零**；新红 4 条（transfer wrapper 漂移）已修 `76cabfa`（§2.2）；全量 2635 全绿、等价 144/144、金样逐字、settings-api 41/41；
-- **v0.9.6~v0.9.9 合并要点（2026-10-27）**：4 冲突；上游四主题直通——身份读宿主聊天文件优先（图键不变、无需迁移）、分支继承改三指纹匹配（无二次清洗风险）、peopleTaskRouter 分域取消、诊断可复制；入口夹具 M0 覆盖（反事实 7 红/7 绿，§2.1）；键 `20261027.1-61c780ebc41c3a3c`；
-- **v0.9.5 合并要点（2026-10-25）**：5 冲突（dist 重建、manifest 键 `.132`、settings.js、help-guide、settings-api 测试）；上游三主题直通——identityFacts 结构化身份简介（新 `src/v3/identity-brief.js`）、共享破限容器（settings.js 并集裁决 §2.3）、分支复制（需白鳥后端 0.1.2）；help-guide 上游 3 处收 + 本地 2 处保；settings-api 测试并集 + data: 重写清单去重；入口 mock 缺 processingPrompt 访问器代修（§2.1）；全量 +4 上游原生红（§4）；等价 144/144、金样逐字节；
-- **v0.9.2~v0.9.4 要点**（裁决细节已沉淀 §2.1/§2.3/§3.1 与 §5.1，逐版本实录随 git 历史）：合并裁决遵循「fork 资产保本地 / 上游同向修复取上游 / 本地语义嫁接上游管线」三原则；v0.9.3 唯一实伤 = plugin-activity 双声明（§2.1，已删本地版）；v0.9.4 引号解析修复整体直通（`json-symbol-repair`/`compact-api-client` 非本地资产）；
-- **v0.8.0 审计修复（2026-10-22~24，已随 `7729c3a` 提交）**：空地点依赖、知情边界预算、时间 disabled 快路径、跨聊天弹窗保存保护、地点 beforeIndex、前情回执重选与旧回执有界迁移（§2.2 ④）、清洗器嵌套平衡（§3.1）；取证 `docs/audit-v0.8.0-test-failures-remediation.md`；
-- **本地性能修复（2026-10-07）**：`src/v3/recall-selector.js` 四项记忆化（§3.5 / §2.2 末条），语义零改动；取证全文 `docs/audit-recall-budget-loop-2026-10.md`，审计工具 `tools/perf-audit/`（其 `absolutizeImports` 兄弟清单含 `memory-exclusion.js`，跨版本对比按「存在才重写」）；
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v4.1.3moon（2026-11-03 合入上游 v4.1.3，合并提交 `8c56433`；**其入口已切换 Rolldown bundle `gouhua-app.js`，改源码后须 `npm run build`**；v3.10.2 起构画数据**随聊天 `chat_metadata` 保存**，存量用户须在「存储管理 → 迁回聊天」一次性迁回）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 542/540+1 上游原生红（ledger/ui-refresh，单跑绿）+1skip；MK `tests/settings-api.test.mjs` 的 SDC 跨读已改上游 env-root 子测试结构（`QQJ_SEVEN_DAYS_CAL_ROOT` + 缺文件优雅 skip），本地保留 `'../utils/tag-names.js'` 重写行（SDC 每新增相对导入须同步补一行，实例见 `7ce9f32`）。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 
-> **v0.6.11 及更早（v0.5.0~v0.6.11）共 7 行实录已外置**：见 `docs/merge-notes.md` §1。
+> **v0.7.15 及更早（v0.5.0~v0.7.15，共 18 行）实录已外置**：见 `docs/merge-notes.md` §1。
 
 | 上游版本 | 日期 | 合并提交 | 冲突与裁决要点 | 当期全量 |
 | :--- | :--- | :--- | :--- | :--- |
-| v0.6.12 | 10-07 | `b422e28` | 2 冲突（dist 重建 + 键 `20261006.19-f5bc5d2239eb3a09`）；三增强与三处 UI 方言幸存 | 1564 |
-| v0.7.0 | 10-08 | `118e68d` | 3 冲突；保本地四项记忆化，只采上游 `recordsByValue`（§2.2）；键 `20261008.39-e0cadf4e4a535afa` | 1588 |
-| v0.7.1 | 10-09 | `746b48c` | 身份与千事重判并集；本地召回/清洗资产保留；键 `.47-ff373043728cf283` | 1606 |
-| v0.7.2 | 10-10 | `a037fa4` | 3 冲突；完全重构跨聊天的失效门控（§2.2 UI）、空间事实与 IDB 缓存全采纳；键 `.386-e234f79fdc9e617a` | 1638 |
-| v0.7.3+v0.7.4 | 10-10 | `9c8667b` | 5 冲突；bootstrap/time-body 并集；迁移模块上游直通（§2.3）；键 `.387-16163a91ab386e31` | 1681 |
-| v0.7.5+v0.7.6 | 10-11 | `28a33b7` | 2 冲突；上游自带 2 认领挂/红测试代修；嵌套 record 修复；键 `.395` | 1702 |
-| v0.7.7+v0.7.8 | 10-12 | `3b3ddc1` | 3 冲突；bootstrap 并入诊断且保人物失效联动；键 `.72` | 1717 |
-| v0.7.9+v0.7.10 | 10-12 | `aa1691e` | 2 冲突（dist 重建、键 `.77-a5489a5c29fb0687`）；空间 UI 移除+prompt-31 全采纳 | 1721 |
-| v0.7.11+v0.7.12 | 10-13 | `1ede0fb` | 2 冲突（dist 重建、键 `.84-c8fb4019a5778016`）；分支迁移+prompt-32 | 1725 |
-| v0.7.13 | 10-14 | `c711ee8` | 2 冲突（dist 重建、键 `.89-e973510603efafb3`）；核记录缓存开关全采纳+上游版本断言代修 | 1727 |
-| v0.7.14+v0.7.15 | 10-15 | `a61cfd5` | 3 冲突（dist 重建、manifest 版本+键 `.125-cd3219844744ee4f`、入口断言采上游）；batch 读协商代修 | 1739 |
 | v0.8.0 | 10-20 | `bd44158` | 14 冲突；编辑器迁移+三处 invalidate 保位；删 legacyIndexPuts；键 `.126-58d4b7dcebff9b7f` | 1882/1922 |
 | v0.8.1+v0.9.0+v0.9.1+v0.9.2 | 10-24 | `c6ace7c` | 20 冲突：清洗器三向分歧保本地（§3.1）、SANITIZER_VERSION 保 v2、共享容器 M0 三件套（§2.3）、extractor schema 拒绝/弱参考降级取上游、地点 beforeIndex/disabled 快路径上游同向取上游、prompts-settings 管线嫁接、wrappers 去重两仓同步、记忆化等价 144/144；键 `.129-658429a52fe9524a` | 2072/2076（4 上游原生红） |
 | v0.9.3 | 10-24 | `d8eac84` | 4 冲突全并集；人物/头像/时间上游直通；删 plugin-activity 本地 real define（上游自带 stub，双声明覆盖致人物→时间红，§2.1）；键 `.130-9a9cb2f6e43e7773` | 2136/2144（8 上游原生红） |
