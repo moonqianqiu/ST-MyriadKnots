@@ -14,7 +14,7 @@ const searchText = event => text([event.title, event.description, event.object, 
   ...(event.people ?? []).map(person => person.name)].filter(Boolean).join(' '));
 
 function coverageProjection(snapshot) {
-  if (snapshot?.status !== 'ready') return { tone: 'error', copy: snapshot?.message || '当前聊天还没有可用的千事快照。' };
+  if (snapshot?.status !== 'ready') return { tone: 'error', copy: publicErrorMessage(snapshot, { fallback: '当前聊天还没有可用的千事快照。' }) };
   const coverage = snapshot.coverage ?? {};
   const processable = coverage.processable ?? coverage;
   const complete = Number(processable.completeFloors) || 0, eligible = Number(processable.eligibleFloors) || 0;
@@ -86,7 +86,7 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
   const resetForChat = nextChatId => {
     if (chatId === nextChatId) return;
     epoch += 1; chatId = nextChatId; query = ''; feedback = ''; textEditors.clear(); statusSaves.clear(); editableEvents.clear(); openIds.clear(); nestedOpenIds.clear(); matterOpenIds.clear(); openDayStates.clear(); undatedOpenState = false; anomalyOpenFloorIds.clear();
-    if (anomalyContent) dialog?.cancelTop?.();
+    if (anomalyContent || todoDialog) dialog?.cancelTop?.();
   };
   const canEditEvent = eventId => {
     if (!editableEvents.has(eventId)) editableEvents.set(eventId, runtime.canEditQianshiEventText(eventId));
@@ -165,7 +165,7 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
     note.setAttribute('role', saving.error ? 'alert' : 'status');
     return note;
   };
-  const sourceCopy = event => event.frozen === true && validMessageIndex(event.sourceOrigin?.sourceMessageIndex)
+  const sourceCopy = event => event.manuallyCreated ? '人工登记' : event.frozen === true && validMessageIndex(event.sourceOrigin?.sourceMessageIndex)
     ? `来源聊天第 ${event.sourceOrigin.sourceMessageIndex} 楼`
     : validMessageIndex(event.sourceMessageIndex) ? `第 ${event.sourceMessageIndex} 楼` : `AI 记录 ${event.sourceAssistantSeq ?? '未明'}`;
   const statusBadge = (event, { currentMatter = false } = {}) => {
@@ -318,7 +318,7 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
       try {
         const result = await runtime.editQianshiEventText({ eventId: event.id, expected: state.baseline, ...next });
         textEditors.delete(event.id); feedback = result?.status === 'unchanged' ? '内容没有变化，没有写入新版本。' : '事件修改已保存。'; render(); return true;
-      } catch (error) { state.pending = false; state.error = publicErrorMessage(error?.message, { fallback: '保存失败，请检查当前记录后重试。' }); throw new Error(state.error); }
+      } catch (error) { state.pending = false; state.error = publicErrorMessage(error, { fallback: '保存失败，请检查当前记录后重试。' }); throw new Error(state.error); }
     };
     return section;
   }
@@ -827,6 +827,22 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
       onClose: () => { if (anomalyContent === content) anomalyContent = null; } });
   }
 
+  function startTodoCreate(){
+    if(!dialog?.custom||!runtime.createQianshiTodo||!active||snapshot?.status!=='ready'||otherWorkBusy()||historyBusy())return;
+    const draft={title:'',description:'',storyTime:'',scheduledTime:'',people:[]},owner=chatId,mine=epoch,form=element('div','qqj-editor-dialog qqj-profile-form'),content=element('section','qqj-editor-group');content.append(element('h3','','待办内容'));form.append(content);
+    const field=(key,label,parent,multiline=false)=>{const row=element('label','settings-field'),input=element(multiline?'textarea':'input','settings-input');input.value=draft[key];input.setAttribute('aria-label',label);input.addEventListener('input',()=>{draft[key]=input.value;});if(multiline)input.rows=4;row.append(element('span','',label),input);parent.append(row);};
+    field('title','待办名称',content);field('description','待办说明',content,true);
+    const peopleGroup=element('details','qqj-editor-group');peopleGroup.append(element('summary','qqj-editor-group-summary','涉及人物（可选）'));
+    const search=element('input','settings-input');search.type='search';search.placeholder='搜索人物';search.setAttribute('aria-label','搜索待办人物');const searchField=element('label','settings-field');searchField.append(element('span','','搜索人物'),search);peopleGroup.append(searchField);
+    const choices=element('div','qqj-qianshi-people-choices'),rows=[],selected=new Map();
+    for(const person of runtime.getQianshiEditPeople?.()??[]){const row=element('label','qqj-qianshi-person-choice'),input=element('input');input.type='checkbox';input.setAttribute('aria-label',person.name);input.addEventListener('change',()=>{if(input.checked)selected.set(person.entityId,{entityId:person.entityId,name:person.name});else selected.delete(person.entityId);});row.append(input,element('span','',person.name));choices.append(row);rows.push({row,text:[person.name,...(person.aliases??[])].join(' ').toLocaleLowerCase()});}
+    const empty=element('p','settings-hint','没有匹配的人物。');empty.hidden=rows.length>0;choices.append(empty);search.addEventListener('input',()=>{const query=search.value.trim().toLocaleLowerCase();let visible=0;for(const item of rows){item.row.hidden=!item.text.includes(query);if(!item.row.hidden)visible++;}empty.hidden=visible>0;});peopleGroup.append(choices);form.append(peopleGroup);
+    const timing=element('details','qqj-editor-group');timing.append(element('summary','qqj-editor-group-summary','时间信息'));field('storyTime','发生时间（可空）',timing);field('scheduledTime','约定 / 预计时间（可空）',timing);form.append(timing,element('p','settings-hint','保存为人工待办，时间未知可留空；不调用模型。'));
+    const ownedDialog={content:form};todoDialog=ownedDialog;
+    let saving=false;
+    void dialog.custom({title:'新增待办',content:form,confirmText:'保存待办',cancelText:'取消',submit:async()=>{if(saving)return false;if(!active||chatId!==owner||epoch!==mine)return false;if(otherWorkBusy()||historyBusy())throw new Error('请等待当前任务结束后再保存。');saving=true;try{await runtime.createQianshiTodo({...draft,people:[...selected.values()],storyTime:draft.storyTime.trim()||null,scheduledTime:draft.scheduledTime.trim()||null});return true;}finally{saving=false;}},onClose:()=>{if(todoDialog===ownedDialog)todoDialog=null;}});
+  }
+
   function renderHealth() {
     const coverage = coverageProjection(snapshot);
     const history = snapshot?.history ?? {};
@@ -837,7 +853,7 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
         ? '整组正在提交，提交中不能停止' : `已处理 ${history.processedFloors ?? 0}/${history.totalFloors ?? 0} 楼`}`;
       health.className = 'qqj-page-health checking';
     } else if (['failed', 'partial'].includes(history.status)) {
-      health.textContent = '有任务未完成，请到设置复制状态诊断。';
+      health.textContent = '上次事项任务未完成，可重试。';
       health.className = 'qqj-page-health error';
     }
     return health;
@@ -862,6 +878,11 @@ export function createQianshiTimelineView({ runtime, dialog = null, documentRef 
       rejudge.disabled = otherWorkBusy(); rejudge.addEventListener('click', () => { void prepareRejudge(); }); actions.append(rejudge);
     }
     if (snapshot?.status === 'ready') {
+      if (typeof runtime.createQianshiTodo === 'function') {
+        const add = element('button', 'secondary-action compact', '新增待办'); add.type = 'button'; add.dataset.focusKey = 'qianshi-create-todo';
+        add.disabled = historyRunning || otherWorkBusy() || typeof dialog?.custom !== 'function';
+        add.addEventListener('click', startTodoCreate); actions.append(add);
+      }
       const todos = element('button', 'secondary-action', `待办事项（${todoCount}）`); todos.type = 'button'; todos.dataset.focusKey = 'qianshi-todos-action';
       todos.disabled = typeof dialog?.custom !== 'function'; todos.addEventListener('click', openTodos); actions.append(todos);
     }

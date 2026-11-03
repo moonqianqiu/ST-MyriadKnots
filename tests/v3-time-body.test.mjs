@@ -1,3 +1,4 @@
+import * as timeBodyDomain from '../src/v3/time-body.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -911,6 +912,52 @@ test('首次开启冻结未稳定实际当前AI，不扫前楼；稳定后只从
   const empty=await harness({count:0});await empty.runtime.runBatch();assert.equal((await empty.store.read(CHAT)).head.bodyStart.awaitingFirst,true);empty.chat.push({is_user:false,mes:raw(0)},{is_user:true,mes:'继续'});await empty.seal();await empty.runtime.runBatch();assert.equal(empty.calls(),1);
 });
 
+test('未绑定起点先换swipe再稳定时承接正式版本，只读起点之后并持久化且不重读',async()=>{
+ for(const oldIndex of [0,null]){
+  const h=await harness({count:3,unstable:true}),opening=h.chat[4];
+  if(oldIndex===0){opening.swipes=[opening.mes];opening.swipe_id=0;await h.seal();}
+  await h.runtime.runBatch();assert.equal(h.calls(),0);const before=structuredClone((await h.store.read(CHAT)).head.bodyStart);
+  assert.equal(before.floorId,null);assert.equal(before.hostLocator.selectedSwipeIndex,oldIndex);
+  const original=opening.mes,currentIndex=oldIndex===0?2:1;opening.swipes=oldIndex===0?[original,'未选中的中间版本',raw(2,'新版开场：窗边的杯子留下缺口。')]:[original,raw(2,'新版开场：窗边的杯子留下缺口。')];opening.swipe_id=currentIndex;opening.mes=opening.swipes[currentIndex];
+  h.chat.push({is_user:true,mes:'继续'},{is_user:false,mes:raw(3)},{is_user:true,mes:'继续'});await h.seal();await h.runtime.runBatch();
+  let stored=await h.store.read(CHAT);assert.equal(h.calls(),1);assert.equal(stored.head.bodyStart.floorId,'floor-3');assert.equal(stored.head.bodyStart.hostLocator.selectedSwipeIndex,currentIndex);
+  assert.notEqual(stored.head.bodyStart.rawFingerprint,before.rawFingerprint);assert.deepEqual(stored.batches.flatMap(batch=>batch.bodyReads.map(row=>row.floorId)),['floor-3','floor-4']);
+  const saved=structuredClone(stored);h.reload();await h.runtime.runBatch();stored=await h.store.read(CHAT);assert.equal(h.calls(),1);assert.deepEqual(stored.head.bodyStart,saved.head.bodyStart);assert.deepEqual(stored.batches,saved.batches);
+  h.chat.push({is_user:false,mes:raw(4)},{is_user:true,mes:'继续'});await h.seal();await h.runtime.runBatch();stored=await h.store.read(CHAT);assert.equal(h.calls(),2);assert.deepEqual(stored.batches.at(-1).bodyReads.map(row=>row.floorId),['floor-5']);
+ }
+});
+
+test('旧起点已由历史补录覆盖时只修调度边界，已有batch逐字保留且只处理后续新楼',async()=>{
+ const h=await harness({count:3,unstable:true}),opening=h.chat[4];opening.swipes=[opening.mes];opening.swipe_id=0;await h.seal();await h.runtime.runBatch();
+ const original=structuredClone((await h.store.read(CHAT)).head.bodyStart);
+ opening.swipes.push(raw(2,'另选当前版本'));opening.swipe_id=1;opening.mes=opening.swipes[1];h.chat.push({is_user:true,mes:'继续'},{is_user:false,mes:raw(3)},{is_user:true,mes:'继续'});await h.seal();
+ await h.runtime.organize(await h.runtime.prepareHistoryPlan());let stored=await h.store.read(CHAT);assert.equal(h.calls(),1);assert.equal(timeBodyReads(stored.batches,await h.body()).size,4);
+ await h.store.putHead(CHAT,{...stored.head,bodyStart:original},stored.revision);const legacy=await h.store.read(CHAT);h.reload();await h.runtime.runBatch();stored=await h.store.read(CHAT);
+ assert.equal(h.calls(),1,'已读范围不能再次派模型');assert.equal(stored.head.bodyStart.floorId,'floor-3');assert.deepEqual(stored.head.batchIds,legacy.head.batchIds);assert.deepEqual(stored.batches,legacy.batches);
+ h.chat.push({is_user:false,mes:raw(4)},{is_user:true,mes:'继续'});await h.seal();await h.runtime.runBatch();stored=await h.store.read(CHAT);assert.equal(h.calls(),2);assert.deepEqual(stored.batches.at(-1).bodyReads.map(row=>row.floorId),['floor-5']);
+});
+
+test('起点swipe承接只接受同槽完整双指纹见证，保已绑定/删除/当前歧义/未稳定拒绝',async()=>{
+ assert.equal(typeof timeBodyDomain.resolveReplacedTimeStart,'function');
+ const h=await harness({count:1,unstable:true}),message=h.chat[0];message.swipes=[message.mes];message.swipe_id=0;await h.seal();
+ const start=timeBodyStart(await h.body());message.swipes.push(raw(0,'正式新版本'));message.swipe_id=1;message.mes=message.swipes[1];h.chat.push({is_user:true,mes:'继续'});await h.seal();
+ const source=await h.body(),host=h.hostAdapter.snapshot();
+ const resolve=(saved=start,graph=source,current=host)=>timeBodyDomain.resolveReplacedTimeStart(saved,graph,current);
+ assert.equal((await resolve())?.floorId,'floor-1');
+ assert.equal(await resolve({...start,floorId:'already-bound'}),null);assert.equal(await resolve({...start,awaitingFirst:true}),null);
+ assert.equal(await resolve({...start,rawFingerprint:''}),null);assert.equal(await resolve({...start,canonicalFingerprint:'changed'}),null);
+ assert.equal(await resolve({...start,hostLocator:{...start.hostLocator,selectedSwipeIndex:undefined}}),null);
+ for(const change of [msg=>{msg.swipes[0]='被修改的旧版本';},msg=>{msg.swipes[1]='读取后又改变的当前版本';},msg=>{delete msg.swipes;},msg=>{msg.swipe_id=0;}]){
+  const changed=structuredClone(host);change(changed.chat[0]);assert.equal(await resolve(start,source,changed),null);
+ }
+ assert.equal(await resolve(start,{...source,bodyFloors:source.bodyFloors.map(body=>({...body,floorId:null}))}),null,'未稳定当前版本不承接');
+ assert.equal(await resolve(start,{...source,bodyFloors:[...source.bodyFloors,source.bodyFloors[0]]}),null,'同槽多正式候选不猜');
+ const duplicates=[1,2].map(index=>({...source.bodyFloors[0],floorId:`duplicate-${index}`,hostLocator:{messageIndex:index+1},rawFingerprint:start.rawFingerprint,canonicalFingerprint:start.canonicalFingerprint}));
+ assert.equal(await resolve(start,{...source,bodyFloors:[...source.bodyFloors,...duplicates]}),null,'当前旧指纹在别处重复仍保歧义');
+ const deleted=structuredClone(host);deleted.chat[0]={is_user:false,mes:raw(0,'删除后另占同号消息'),swipes:[raw(0,'别的旧版本'),message.swipes[1]],swipe_id:1};assert.equal(await resolve(start,source,deleted),null);
+ const nullStart={...start,hostLocator:{...start.hostLocator,selectedSwipeIndex:null,swipeId:null}};assert.equal((await resolve(nullStart))?.floorId,'floor-1');
+});
+
 test('未绑定起点前删楼后仅凭唯一双指纹迁移并持久化，稳定后仍只从原起点开始',async()=>{
   const h=await harness({count:4,unstable:true});await h.runtime.runBatch();let stored=await h.store.read(CHAT);
   const original=structuredClone(stored.head.bodyStart);assert.equal(original.floorId,null);assert.equal(original.hostLocator.messageIndex,6);
@@ -1779,8 +1826,8 @@ test('真实时间runtime DTO把归并主项状态传到编辑指引', async () 
   const view = createV3FoundationView({ runtime: foundationRuntime, timeRuntime: h.runtime, documentRef, customImpl: async options => { editor = options.content; return null; } });
   view.setPage('memories'); view.mount(container);
   await uiFlatten(container).find(node => node.textContent === `近期事项（${state.trackedItems.length}）`).click();
-  const menu = uiFlatten(container).find(node => node.className === 'qqj-profile-menu'); menu.open = true;
-  await uiFlatten(container).find(node => node.textContent === '编辑事项').click();
+  const menu = uiFlatten(editor).find(node => node.className === 'qqj-profile-menu'); menu.open = true;
+  await uiFlatten(editor).find(node => node.textContent === '编辑事项').click();
   assert.ok(uiFlatten(editor).some(node => node.textContent === '此项仍有归并成员；请先在“停止项”中恢复追踪所有成员，再修改人物归属。'), '表单消费实际 runtime DTO 并显示解除归并指引');
   view.deactivate();
 });
@@ -2104,4 +2151,19 @@ test('迁移后的正式时间runtime保留旧批次人工停止项并从B首个
   assert.equal(target.batches.at(-1).cutoffFloorId, liveFloor.id);
   assert.equal(replayed.find(item => item.id === oldItem.id)?.status, 'cancelled');
   assert.ok(replayed.some(item => item.sourceRefs?.some(ref => ref.floorId === liveFloor.id)), '新时间事项引用B真实楼');
+});
+
+test('190人工新建在空时间头保存独立身份，冷读和下一正文沿原ID更新',async()=>{
+ const h=await harness({count:1,generate:request=>({changes:[{itemId:request.trackedItems[0]?.id??null,sourceKeys:['S1'],subjectEntityId:PERSON,subjectName:'阿岚',type:'body',label:'人工伤情',observation:'新正文确认仍有不适',occurrenceTime:'',dueTime:'',periodDays:null,status:'active',stateRefs:[],progression:''}]})});
+ h.source.entities.push({id:PERSON,displayName:'阿岚',aliases:[],entityType:'person',recordStatus:'active',status:'active'});
+ await h.runtime.createItem({subjectEntityId:PERSON,type:'body',label:'人工伤情',observation:'人工记录的轻微伤情',observationTime:'',occurrenceTime:'',dueTime:'',periodDays:''});
+ assert.equal(h.calls(),0);let stored=await h.store.read(CHAT),item=h.runtime.getState().trackedItems[0];assert.ok(item.id);assert.equal(item.status,'active');assert.equal(item.projection,null);assert.equal(stored.batches[0].changes[0].previousObservationKey,null);assert.deepEqual(stored.batches[0].changes[0].sourceRefs,[]);assert.deepEqual(stored.batches[0].sourceKeys,[]);assert.equal(stored.batches[0].manualEdit,true);
+ const originalId=item.id;await h.reload().refreshStatus();assert.equal(h.runtime.getState().trackedItems[0].id,originalId);
+ h.chat.push({is_user:false,mes:raw(1,'阿岚的人工伤情仍有不适。')},{is_user:true,mes:'继续'});await h.seal();await h.runtime.runBatch();assert.equal(h.calls(),1);stored=await h.store.read(CHAT);assert.equal(replayTimeBatches(stored.batches,await h.body())[0].id,originalId);assert.equal(replayTimeBatches(stored.batches,await h.body())[0].observation,'新正文确认仍有不适');
+ const target='dddddddd-dddd-4ddd-8ddd-dddddddddddd';await h.store.copyPrefix(CHAT,target,[h.source.floors[0]]);const prefix=await h.store.read(target);assert.equal(prefix.batches.length,1);assert.equal(prefix.batches[0].changes[0].id,originalId);
+});
+
+test('190同内容人工新建仍有不同身份和观察键',async()=>{
+ const h=await harness({count:1});h.source.entities.push({id:PERSON,displayName:'阿岚',aliases:[],entityType:'person',recordStatus:'active',status:'active'});const fields={subjectEntityId:PERSON,type:'body',label:'人工观察',observation:'人工登记的当前状态'};
+ await h.runtime.createItem(fields);await h.runtime.createItem(fields);const items=h.runtime.getState().trackedItems;assert.equal(items.length,2);assert.notEqual(items[0].id,items[1].id);assert.notEqual(items[0].observationKey,items[1].observationKey);assert.equal(h.calls(),0);
 });
