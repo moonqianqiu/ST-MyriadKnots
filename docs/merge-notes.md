@@ -77,12 +77,13 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 | v0.7.5 | 认领前坐标校验致 2 条挂起/红 | 补 name/avatar 适配（`7c87ea9`） |
 | v0.7.13 | `tests/production-entry-load.test.mjs:240` 版本断言停留在 `'0.7.12'`，而 manifest 已 `0.7.13` | 代修断言对齐上游发布号 |
 | v0.7.14+v0.7.15 | `tests/production-dist-branch.test.mjs` 的 `fetchImpl` 只认 `/v1/records/qianqianjie/` 单条路由；v0.7.14 起记录读取强制先协商 `/v1/health`，探针 404 → 「聊天身份准备失败」（HTTP 404）→ 副本 binding 10s 超时 | 夹具补 `/v1/health` 桩：`{ ok: true, api: { current: 1, supported: [1] }, capabilities: { records: true, optimisticRevision: true } }`（不声明 `recordBatchRead`/`recordIdList`）→ 客户端走单条 GET 回退；断言与夹具内容一字未动 |
-## 6. 合并要点与冲突实录归档（v0.8.0 ~ v1.0.3）
+## 6. 合并要点与冲突实录归档（v0.8.0 ~ v1.0.6）
 
 > 由 `AGENTS.md` §5 / §2.1 外置：AGENTS 只保留**当下底数**与**最近一版**要点，历史版本要点与长实录全文在此。新增合并记录直接写本文（AGENTS 只追加 §5.1 一行）。
 
-### 6.1 版本要点（v0.8.0 ~ v0.10.1）
+### 6.1 版本要点（v0.8.0 ~ v1.0.6）
 
+- **v1.0.4+v1.0.5+v1.0.6 合并要点（2026-11-04，合并提交 `010e65a`）**：2 冲突（预判全中）——dist 重建、manifest 版本+键。六测试热区全部自动合并，本地核心资产零触碰（清洗器四件套/shared-body-wrappers/people-workspace 双文件/foundation-domain 审计确认在位）。上游主题：v1.0.4 重庆/香港/名古屋城市底图+园林庄园/环廊底图+城市别名；v1.0.5 地点资料归并/图钉交互/统一方形地图/本丸院落底图；v1.0.6 室内定位父树水滴图钉修复+同文材料精简+已归并方位不重复召回。键 `20261103.219-7a2aa56eb8fa52e9`（上游同日已用 `.218`，按 §1.3 取未用过的更大值 `.219`；bundle 7,112,424 B）。**门禁3 1 条上游原生红**：`tests/panel-navigation.test.mjs:37` 断言 `18张通用图`，实际文案「现有21张通用图」（`src/ui/help-guide.js:76`）出自上游 v1.0.5 `7d2d5a5` 改文案未同步测试——本地与 upstream/main 该测试逐字节一致、纯上游树同红（1/0/1），待上游修复，禁止本地代改。门禁数据：门禁1 43/43、门禁2 35/35（上游扩例 23→35）、门禁3 全量 3146/3145+1 红、门禁4 金样与 SDC 逐字节一致 + SDC 侧金样 9/9；
 - **v0.10.0+v0.10.1 合并要点（2026-10-30）**：6 冲突（预判全中）——dist 重建、manifest 键、`panel-navigation` 整取上游（其 CSS 断言自修 + 自带 `waitFor` 取代本地 stopgap）、`settings-api` 上游 env-root 子测试结构 + 补回本地 `'../utils/tag-names.js'` 重写行、`v3-extractor-memory` 1000 楼夹具取上游 `mkdtemp`（tmpdir 代修退役，§2.1）、`v3-foundation-view` 两侧都要（本地跨聊天回执测试 + 上游三红例断言重写）。上游主题：**记忆转移**（导出/导入单人聊天记忆、64MB 分卷、随包 JSONL，`memory-transfer*` 七新文件；TT 端改按设置启用 IndexedDB core cache）、人物十楼粗扫基线化（历史楼恢复不再误判新增）。**17 条旧上游原生红全清零**；新红 4 条（transfer wrapper 漂移）已修 `76cabfa`（§2.2）；全量 2635 全绿、等价 144/144、金样逐字、settings-api 41/41；
 - **v0.9.6~v0.9.9 合并要点（2026-10-27）**：4 冲突；上游四主题直通——身份读宿主聊天文件优先（图键不变、无需迁移）、分支继承改三指纹匹配（无二次清洗风险）、peopleTaskRouter 分域取消、诊断可复制；入口夹具 M0 覆盖（反事实 7 红/7 绿，§2.1）；键 `20261027.1-61c780ebc41c3a3c`；
 - **v0.9.5 合并要点（2026-10-25）**：5 冲突（dist 重建、manifest 键 `.132`、settings.js、help-guide、settings-api 测试）；上游三主题直通——identityFacts 结构化身份简介（新 `src/v3/identity-brief.js`）、共享破限容器（settings.js 并集裁决 §2.3）、分支复制（需白鳥后端 0.1.2）；help-guide 上游 3 处收 + 本地 2 处保；settings-api 测试并集 + data: 重写清单去重；入口 mock 缺 processingPrompt 访问器代修（§2.1）；全量 +4 上游原生红（§4）；等价 144/144、金样逐字节；

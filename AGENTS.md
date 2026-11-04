@@ -137,8 +137,8 @@
    node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs
    ```
 
-   *标准*：23/23 全通过（v0.9.3 起上游自修「人物→时间」装配与依赖清单，上一版「生产入口行为接线」上游原生红消失）；后者验证 manifest 缓存键与 bundle SHA-256 绝对吻合。
-3. **全量测试套件**：`npm test` —— 当前基线 **3117 例 / 3117 通过 / 0 红**（2026-11-03，v1.0.3 合并后全绿；v0.9.2~v0.9.9 间累计 17 条上游原生红已随上游 v0.10.x 测试重写全部消解，名录与报错取证回查 `git log -p AGENTS.md` §5.1 各行）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
+   *标准*：35/35 全通过（v1.0.6 起上游扩至 35 例，旧底数 23/23）；后者验证 manifest 缓存键与 bundle SHA-256 绝对吻合。
+3. **全量测试套件**：`npm test` —— 当前基线 **3146 例 / 3145 通过 / 1 上游原生红**（2026-11-04，v1.0.6 合并后；唯一红 `panel-navigation` 18→21张通用图文案断言，上游 v1.0.5 改 `help-guide.js` 文案未同步测试，本地与上游逐字节同红（§6.1）；更早的 17 条上游原生红已随上游 v0.10.x 重写消解）。若沙箱报 `Error: spawn EPERM`（环境边界非回归），加 `--test-isolation=none`——**注意 `npm test -- --test-isolation=none` 会把该标志追加在 glob 之后而被忽略（照样 EPERM 全红），须直跑 `node --experimental-vm-modules --test --test-isolation=none --test-concurrency=1 "tests/*.test.mjs"`**。
    > **已知偶发（勿误判为本地回归，先跑纯上游对照）**：① `tests/v3-extractor-memory.test.mjs` 个别时序断言在空闲快速机器上可能漏窗失败，重跑即过（纯上游树可复现）；② `tests/tauri-backend.test.mjs` 并行满载下 `t.after` 清理临时目录报 `ENOTEMPTY`，单跑该文件或重跑全量即过（纯上游树可复现）。
    > **上游原生红判定法**：某测试文件与上游**逐字节相同**而失败时，先在纯上游树跑同一文件；计数相同即上游原生，禁止为「让全量变绿」而改本地 `src/` 合同。**慢文件勿整跑**（`v3-extractor-memory.test.mjs` 含 1000 楼生产夹具，整文件数分钟），用 `--test-name-pattern` 按例对照。**叠层红揭蔽**：上游某断言层失败会遮蔽其后的断言（如依赖清单红遮蔽人物→时间断言），代修第一层后须在纯上游树复跑确认第二层归属再定处理。
    > **v0.8.0 起新增一类上游原生红**：上游新增/改写的测试依赖其清洗器**缺省剥除 `<location>`** 标签，本仓 M0 合同保留该标签（§3.1）→ 按 §2.1 代修（显式 `extraTags:'location'` 或改 canonical 期望值），**不得改清洗器缺省行为**（会破坏 40 例金样与跨仓对拍）。v0.9.2 起 `<location>` 适配面随上游测试重写基本消失（9 例定位、实跑仅零星需适配）；同类新增「上游 keep='content' 宽松语义」依赖（夹具正文无标签仍期望保留文本）按 §3.1 M2 合同改夹具（如 `production-entry-load` 别名分支改 M0 直通），勿改清洗器。
@@ -148,9 +148,9 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v1.0.3（提交 `db5f66e`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `1.0.3`（含 `author: "atonal519"`），缓存键 `20261103.208-b689a42fd1e8aeb9`（bundle 6,041,813 B、sha256 `b689a42f…`，vite 8.2.2 重建；**bundle 摘要随检出路径变化**——键必须取自实际发布仓库的构建产物，勿跨检出身拷贝）；
-- **v1.0.3 合并要点（2026-11-03）**：9 冲突——settings.js 并集（本地 `writeWrappers` + 上游 `persistApiEdit`/`restoreApiFields`）、recall-runtime 三处并集（**前情凭证链须排在 placeWorkspace 扩展之前**，二者皆 undefined 时材料不变）、bootstrap 保 `recallRuntime` 注入通道并删 `uiDiagnosticProvider`（上游 v1.0.x 删该特性、工厂已不接收）、memory-runtime 导入并集 + `extraOnlySanitizerOptions` 两处。上游主题：千窗地图目录（`qianchuang-*` 新模块）、地点工作区依赖、`shared-body-wrappers` 收编 `sanitizeStoryBody`。dist 重建、manifest 1.0.3、键 `.208`；本地给 `tests/v3-recall.test.mjs` 的 harness 增 `sanitizerOptions` 透传（§3.1）后**全量 3117 全绿**；金样与 SDC 逐字节一致。
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v1.0.6（v1.0.4+v1.0.5+v1.0.6，提交 `7d46b62`）。本次合并提交及父提交见 §5.1 与 git 历史；
+- **产物版本**：`manifest.json` 版本号 `1.0.6`（含 `author: "atonal519"`），缓存键 `20261103.219-7a2aa56eb8fa52e9`（bundle 7,112,424 B、sha256 `7a2aa56e…`，vite 8.2.2 重建；**bundle 摘要随检出路径变化**——键必须取自实际发布仓库的构建产物，勿跨检出身拷贝）；
+- **v1.0.6 合并要点（2026-11-04）**：2 冲突（dist 重建、manifest 版本+键）——六测试热区全部自动合并，本地核心资产零触碰（审计详见 docs/merge-notes.md §6.1 v1.0.6 条）。上游主题：v1.0.4 新增重庆/香港/名古屋城市底图+园林庄园/环廊底图+城市别名；v1.0.5 地点资料归并/图钉交互/统一方形地图/本丸院落底图；v1.0.6 室内定位父树水滴图钉修复+同文材料精简+已归并方位不重复召回。manifest 1.0.6、键 `20261103.219-7a2aa56eb8fa52e9`（上游同日已用 `.218`，本地取 `.219`）；**全量 3146/3145+1 上游原生红**（`panel-navigation` 18→21张通用图文案，上游 v1.0.5 改 `help-guide.js` 未同步测试，纯上游树同红）；门禁1 43/43、门禁2 35/35、金样与 SDC 逐字节一致、SDC 金样 9/9。
 - **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v4.1.3moon（2026-11-03 合入上游 v4.1.3，合并提交 `8c56433`；**其入口已切换 Rolldown bundle `gouhua-app.js`，改源码后须 `npm run build`**；v3.10.2 起构画数据**随聊天 `chat_metadata` 保存**，存量用户须在「存储管理 → 迁回聊天」一次性迁回）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 542/540+1 上游原生红（ledger/ui-refresh，单跑绿）+1skip；MK `tests/settings-api.test.mjs` 的 SDC 跨读已改上游 env-root 子测试结构（`QQJ_SEVEN_DAYS_CAL_ROOT` + 缺文件优雅 skip），本地保留 `'../utils/tag-names.js'` 重写行（SDC 每新增相对导入须同步补一行，实例见 `7ce9f32`）。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
@@ -167,3 +167,4 @@
 | v0.9.6~v0.9.9 | 10-27 | `9538f05` | 4 冲突；入口夹具 M0 覆盖（反事实 7 红/7 绿，§2.1）、time-body 参数并集、删 processingPrompt 代修；身份读文件优先（键不变）、分支继承改指纹匹配；键 `20261027.1-61c780ebc41c3a3c` | 2279/2296（17 上游原生红） |
 | v0.10.0+v0.10.1 | 10-30 | `4c455c6` | 6 冲突（细则 §5）；漂移合同 `76cabfa`；键 `20261030.134-9e539cc40fcb9c83` | 2635 全绿 |
 | v1.0.3 | 11-03 | `ee55b28` | 9 冲突；settings/recall-runtime 并集、bootstrap 删诊断参数；键 `.208-b689a42fd1e8aeb9` | 3117 全绿 |
+| v1.0.6 | 11-04 | `010e65a` | 2 冲突（dist、manifest）；上游原生红 1（panel-navigation 文案 18→21，纯上游同红）；键 `.219-7a2aa56eb8fa52e9` | 3146/3145 |
