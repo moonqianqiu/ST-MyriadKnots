@@ -15,6 +15,10 @@
 // （缺省 keep='content'、命名对大小写不敏感、M0 直通/M1 未闭合语义不同——对拍 40 例金样仅 13 例
 // 一致），本仓不采该重导出、保留本文件四模式实现；shared-body-wrappers.js 文件照收（settings/
 // foundation 消费，且与 SDC 上游逐字一致，勿改动其内容）。
+// 上游 v1.1.0 起 sanitizeMemoryContent 又包一层 sanitizeStoryBody(raw, {htmlFormatting: true})
+// （HTML 正文去壳留字）：该能力属于上游缺省 keep='content' 语义域，且会改 M2「内部逐字保留」
+// 合同（keep 块内 HTML 标签被剥壳），本仓继续不采——htmlFormatting 解析能力已随
+// shared-body-wrappers.js 文件照收（供上游侧消费），本仓四模式入口不注入，与 SDC 跨仓对拍口径不变。
 import { LITERAL_DOUBLE_BRACKET_RULE, literalWrapperRule, normalizeTagRules, normalizeTagNames, TAG_NAME_RE, TAG_NAME_SOURCE } from './utils/tag-names.js';
 
 const OPEN_NAME_RX = new RegExp(`^<\\/?(?:(${TAG_NAME_SOURCE}))`, 'u');

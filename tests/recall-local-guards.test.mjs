@@ -9,7 +9,7 @@ import { matchFloorCandidates } from '../src/v3/floor-binding.js';
 import { extraOnlySanitizerOptions, sanitizeMemoryContent } from '../src/memory-content-sanitizer.js';
 import { clockContentFingerprint } from '../src/v3/time-body.js';
 import { createExtractorEnvelope, normalizeExtractorResponse } from '../src/v3/extractor.js';
-import { CSE_RECALL_KNOWLEDGE_BOUNDARY, formatRecallInjection, selectRecall } from '../src/v3/recall-selector.js';
+import { CSE_RECALL_KNOWLEDGE_BOUNDARY, LEGACY_CSE_RECALL_KNOWLEDGE_BOUNDARY, formatRecallInjection, selectRecall } from '../src/v3/recall-selector.js';
 import { projectRecallSource } from '../src/v3/recall-source.js';
 import { sha256 } from '../src/identity.js';
 
@@ -18,19 +18,23 @@ const assistant = mes => ({ is_user: false, mes });
 const user = mes => ({ is_user: true, mes });
 
 test('CSE 知情边界独立锁定观察者、接收者、共同知情与 toward 非受众语义', () => {
-  for (const pattern of [/private限标明主体/u, /authorial仅供作者参考/u,
-    /observable、expressed、shared分别以正文证实的实际观察者、接收者、共同知情范围为限/u,
-    /不得补出无依据受众/u, /不确定时不扩大范围/u, /toward仅指态度对象，不标信息接收者或知情者/u]) {
+  // v1.1.0 起边界文案采上游统一短版（本仓 v0.8.0 两层制退役，§2.2）；守卫改为锁定
+  // 新文案的三个字段名与 LEGACY 长版存续（旧回执投影白名单依赖后者，§2.2 ①）。
+  for (const pattern of [/主体/u, /态度对象/u, /可见性/u]) {
     assert.match(CSE_RECALL_KNOWLEDGE_BOUNDARY, pattern);
   }
+  assert.equal(typeof LEGACY_CSE_RECALL_KNOWLEDGE_BOUNDARY, 'string');
+  assert.match(LEGACY_CSE_RECALL_KNOWLEDGE_BOUNDARY, /不证明所有人物知情/u);
   const common = { coverage: { memoryComplete: true, cseCurrent: true }, floors: [], entityById: new Map([['甲', { displayName: '甲' }]]) };
   const states = [{ subjectEntityId: '甲', category: 'core', item: { text: '只供作者参考', visibility: 'authorial', towardEntityId: null } }];
   for (const storylines of [undefined, [{ storylineId: 'recent', title: '近期剧情接续', basis: '已有来源' }]]) {
     const full = formatRecallInjection({ ...common, states, ...(storylines ? { storylines } : {}) });
-    assert.ok(full.includes(CSE_RECALL_KNOWLEDGE_BOUNDARY), '有人物状态必须使用完整分类边界');
+    assert.ok(full.includes(CSE_RECALL_KNOWLEDGE_BOUNDARY), '有人物状态必须使用统一边界');
+    // v1.1.0 起边界只随历史主块注入（25 字符短文案、不再两层切换）；纯时间提醒且无历史块时
+    // 走无边界回退分支（上游地点标注已删，referenceBlock 恒空），边界不出现。
     const short = formatRecallInjection({ ...common, states: [], ...(storylines ? { storylines } : {}),
       timeReminders: [{ itemId: '提醒', text: '期限尚未确认' }] });
-    assert.ok(!short.includes(CSE_RECALL_KNOWLEDGE_BOUNDARY), '无 CSE 时不消耗完整分类提示预算');
+    assert.ok(!short.includes(CSE_RECALL_KNOWLEDGE_BOUNDARY), '无历史块与 CSE 时边界不出现');
   }
 });
 
@@ -69,7 +73,8 @@ test('地点依赖只读触发 USER 前：追加 AI 不重选，真实前楼地�
     const changed = await h.runtime.intercept(h.chat, 12000, null, 'regenerate');
     assert.equal(changed.lastRecall.reusedReceipt, false, '真实地点依赖更新必须重选');
     assert.equal(h.selections, 2);
-    assert.match(changed.lastRecall.injectionText, /南区书房/u);
+    // 上游 v1.1.0 移除普通召回独立地点标注（§2.2）：依赖变化仍重选，但地点不再注入正文。
+    assert.doesNotMatch(changed.lastRecall.injectionText, /南区书房/u);
   }
 });
 
@@ -87,7 +92,6 @@ test('旧版空地点依赖归一为无依赖，损坏/非空依赖不误复用'
     receipt.timings, receipt.storylines, receipt.timeDependencies, ...(receipt.qianshiProgress ? [receipt.qianshiProgress] : []),
     receipt.selectedLocationReferences, receipt.locationReferenceDependency,
     ...(receipt.qianshiDeletionWitness === undefined ? [] : [receipt.qianshiDeletionWitness])];
-  if (receipt.prequelDependencyFingerprint !== undefined) material.push(receipt.prequelDependencyFingerprint);
   receipt.receiptFingerprint = `sha256:${await sha256(JSON.stringify(material))}`;
   h.runtime.invalidate('restart');
   const restored = await h.runtime.intercept(h.chat, 12000, null, 'regenerate');

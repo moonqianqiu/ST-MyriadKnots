@@ -48,3 +48,16 @@ test('首次共享归并在默认补齐前读own字段，后续空值和删项�
   const empty = createSettingsStore({ extensionSettings: {}, save() {} });
   assert.deepEqual(empty.wrappers(), { keepTags: '', extraTags: '' });
 });
+
+test('共享默认HTML输入输出逐字沿旧合同，仅QQJ包装启用排版模式', async () => {
+ const { sanitizeStoryBody } = await import('../src/shared-body-wrappers.js');
+ const html = '<!doctype html><html><body><p>她递出钥匙。</p></body></html>';
+ assert.equal(sanitizeStoryBody(html), '<!doctype html>');
+ assert.equal(sanitizeStoryBody('<content><p>旧成对排版块</p>正文</content>'), '正文');
+ assert.equal(sanitizeStoryBody('```html\n<!doctype html>\n```'), '```html\n<!doctype html>\n```');
+ // 本仓适配（v1.1.0）：上游 QQJ 包装注入 htmlFormatting 去壳留字；本仓 sanitizeMemoryContent
+ // 为四模式合同入口（§2.1，与 SDC 跨仓对拍），不注入 htmlFormatting——HTML 原文逐字保留。
+ assert.equal(sanitizeMemoryContent(html), html);
+ const options = { keepTags: 'content', extraTags: 'think' }, before = JSON.stringify(options);
+ sanitizeMemoryContent(html, options);assert.equal(JSON.stringify(options), before);
+});

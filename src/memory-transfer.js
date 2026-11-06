@@ -237,7 +237,7 @@ function validateMarkers(value, graph) {
 }
 
 async function verifyConversation(graph, chat, sanitizerOptions) {
-  const scanned = await scanAssistantCandidates(chat, { chatId: graph.root.chatId, sanitizerOptions });
+  const scanned = (await scanAssistantCandidates(chat, { chatId: graph.root.chatId, sanitizerOptions })).filter(candidate => candidate.canonicalContent);
   const candidates = partitionScannedCandidates(graph, chat, graph.root.chatId, scanned).all;
   const bindings = matchFloorCandidates(graph.floors, candidates);
   // 上游靠「清洗设置变化 → canonical 洗空 → 候选被丢弃」拦截导入导出两侧清洗配置漂移；
