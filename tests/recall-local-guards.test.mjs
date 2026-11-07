@@ -112,16 +112,16 @@ test('captureCoreBodyWitness：给了触发用户楼就只向前采集，尾部�
   // 4 参旧签名：从尾部倒推，会把触发楼之后的 a3/a4 也算进来
   const legacy = await captureCoreBodyWitness(chat, options, fingerprint, 3);
   assert.deepEqual(legacy.map(item => item.coreIndex), [2, 4, 5]);
-  // 5 参本地签名：以触发楼为界向前采集
-  const bounded = await captureCoreBodyWitness(chat, options, fingerprint, 3, chat[3]);
+  // 6 参合并签名（v1.1.1：第 5 参 canonicalByRaw 缓存传 null 禁用、第 6 参为本仓触发楼边界）：以触发楼为界向前采集
+  const bounded = await captureCoreBodyWitness(chat, options, fingerprint, 3, null, chat[3]);
   assert.deepEqual(bounded.map(item => item.coreIndex), [1, 2]);
   assert.deepEqual(bounded.map(item => item.canonicalContent), ['a1', 'a2']);
   assert.deepEqual(bounded.map(item => item.rawFingerprint), ['h:<content>a1</content>', 'h:<content>a2</content>']);
   // 宿主重建对象时按 mes 反查同一楼（对象身份不同）
-  const cloned = await captureCoreBodyWitness(chat, options, fingerprint, 3, user('u1'));
+  const cloned = await captureCoreBodyWitness(chat, options, fingerprint, 3, null, user('u1'));
   assert.deepEqual(cloned.map(item => item.coreIndex), [1, 2]);
   // 触发楼之后没有正文时行为与旧签名一致（不存在过度截断）
-  const tailTrigger = await captureCoreBodyWitness([user('u0'), assistant('<content>a1</content>'), user('u1')], options, fingerprint, 3, user('u1'));
+  const tailTrigger = await captureCoreBodyWitness([user('u0'), assistant('<content>a1</content>'), user('u1')], options, fingerprint, 3, null, user('u1'));
   assert.deepEqual(tailTrigger.map(item => item.coreIndex), [1]);
 });
 

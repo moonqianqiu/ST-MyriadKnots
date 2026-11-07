@@ -23,9 +23,9 @@ export const RECALL_RECEIPT_KEY = 'qqj_v3_recall_receipt';
 // 在上游已被结构性消灭；前情变更不再作废回执、不再强制整轮重选。遗留的失效标记元数据变为
 // 惰性数据（无写入方、无读取方），不影响任何行为。
 export const RECALL_RECEIPT_SCHEMA_VERSION = 18;
-export const RECALL_STRATEGY_VERSION = 'continuity-v30';
+export const RECALL_STRATEGY_VERSION = 'continuity-v32';
 const RECALL_PROMPT_DEPTH = 2;
-const IDENTIFIED_RECALL_STRATEGIES = [RECALL_STRATEGY_VERSION, 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18', 'continuity-v17', 'continuity-v16', 'continuity-v15', 'continuity-v14', 'continuity-v13', 'continuity-v12', 'continuity-v11'];
+const IDENTIFIED_RECALL_STRATEGIES = [RECALL_STRATEGY_VERSION, 'continuity-v31', 'continuity-v30', 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18', 'continuity-v17', 'continuity-v16', 'continuity-v15', 'continuity-v14', 'continuity-v13', 'continuity-v12', 'continuity-v11'];
 
 const SUPPORTED_TYPES = new Set(['normal', 'regenerate', 'swipe', 'continue']);
 const MAX_STOPPED_GENERATION_CHAINS = 16;
@@ -40,7 +40,7 @@ const LEGACY_MAX_RECEIPT_STORYLINES = 4;
 const MAX_RECEIPT_STATE_PROGRESSIONS = 8;
 const MAX_RECEIPT_SKIP_REASONS = 32;
 const EXPANDED_RECALL_SELECTION_STRATEGIES = new Set([
-  RECALL_STRATEGY_VERSION, 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18',
+  RECALL_STRATEGY_VERSION, 'continuity-v31', 'continuity-v30', 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18',
   'continuity-v17', 'continuity-v16', 'continuity-v15',
 ]);
 const EXPANDED_RECALL_RECEIPT_LIMITS = Object.freeze({ expanded: true, floors: MAX_RECEIPT_FLOORS,
@@ -396,7 +396,7 @@ function withoutStaleTime(receipt, source, projection) {
   const corrections = Object.fromEntries(saved.corrections.filter(item => same(item, projection?.corrections?.[item.key])).map(item => [item.key, item]));
   const reminders = saved.reminders.filter(item => (projection?.reminders ?? []).some(live => same(item, live)));
   const floors = clone(saved.renderPlan.floors), states = clone(receipt.selectedStates), changes = clone(receipt.selectedCseChanges);
-  const places = clone(receipt.selectedPlaces ?? []), groupedPlaces = ['continuity-v29', RECALL_STRATEGY_VERSION].includes(receipt.strategyVersion);
+  const places = clone(receipt.selectedPlaces ?? []), groupedPlaces = ['continuity-v29', 'continuity-v30', 'continuity-v31', RECALL_STRATEGY_VERSION].includes(receipt.strategyVersion);
   const placeCount = () => groupedPlaces ? groupRecallPlaces(places).length : places.length;
   const originalPlaceCount = placeCount();
   const locationReferences = clone(receipt.selectedLocationReferences ?? []);
@@ -407,7 +407,7 @@ function withoutStaleTime(receipt, source, projection) {
     const active = new Set([...floors.flatMap(floor => floor.items), ...states, ...changes].map(value => value.storylineId));
     storylines = receipt.storylines.filter(line => active.has(line.storylineId));
     dependencies = { mode: 'selected', corrections: [], reminders: [] };
-    ordinaryText = formatRecallInjection({ coverage: receipt.coverage, floors, manualPlaces: places, groupPlaces: groupedPlaces, states, cseChanges: changes, storylines, locationReferences, entityById,
+    ordinaryText = formatRecallInjection({ coverage: receipt.coverage, floors, manualPlaces: places, groupPlaces: groupedPlaces, deduplicatePlaces: receipt.strategyVersion === RECALL_STRATEGY_VERSION, states, cseChanges: changes, storylines, locationReferences, entityById,
       timeProjection: { corrections }, timeReminders: reminders, timeDependencies: dependencies });
     text = appendQianshiProgress(ordinaryText, receipt.qianshiProgress, dependencies);
   };
@@ -574,7 +574,7 @@ function receiptShapeValid(receipt, { historical = false } = {}) {
     || (receipt.schemaVersion >= 18 && !boundedString(receipt.locationReferenceDependency, 4000, { empty: true }))
     || (receipt.schemaVersion >= 8 && !boundedString(receipt.bodyMatchFingerprint, 200))
     || (receipt.schemaVersion >= 9 && (historical
-      ? ![RECALL_STRATEGY_VERSION, 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18', 'continuity-v17', 'continuity-v16', 'continuity-v15', 'continuity-v14', 'continuity-v13', 'continuity-v12', 'continuity-v11', 'continuity-v10', 'continuity-v9', 'continuity-v8', 'continuity-v7', 'continuity-v6', 'continuity-v5', 'continuity-v4', 'continuity-v3', 'continuity-v2', 'continuity-v1'].includes(receipt.strategyVersion)
+      ? ![RECALL_STRATEGY_VERSION, 'continuity-v31', 'continuity-v30', 'continuity-v29', 'continuity-v28', 'continuity-v27', 'continuity-v26', 'continuity-v25', 'continuity-v24', 'continuity-v23', 'continuity-v22', 'continuity-v21', 'continuity-v20', 'continuity-v19', 'continuity-v18', 'continuity-v17', 'continuity-v16', 'continuity-v15', 'continuity-v14', 'continuity-v13', 'continuity-v12', 'continuity-v11', 'continuity-v10', 'continuity-v9', 'continuity-v8', 'continuity-v7', 'continuity-v6', 'continuity-v5', 'continuity-v4', 'continuity-v3', 'continuity-v2', 'continuity-v1'].includes(receipt.strategyVersion)
       : receipt.strategyVersion !== RECALL_STRATEGY_VERSION))
     || !SUPPORTED_TYPES.has(receipt.generationType)
     || !Array.isArray(receipt.selectedFloors) || receipt.selectedFloors.length > receiptFloorLimit
@@ -862,7 +862,9 @@ function sourceFitsEarlyBody(source, matchedSource, scope, witness) {
   return sourceIds.every(id => covered.has(id) || replacedFloors.has(id));
 }
 
-export async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, userMessage = null) {
+// v1.1.1 合并裁决：上游第 5 参 canonicalByRaw（查询帧与正文见证共享的原文→清洗文缓存）与本仓
+// 第 5 参 userMessage（§3.4① 触发楼 startIndex 边界）同位相撞——正交增强，合成 6 参共存。
+export async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerprint, maximumFloors = 3, canonicalByRaw = null, userMessage = null) {
   const chat = Array.isArray(coreChat) ? coreChat : [];
   let triggerIndex = -1;
   if (userMessage) {
@@ -884,7 +886,8 @@ export async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerp
     if (message.is_user !== false || typeof message.mes !== 'string') continue;
     const rawContent = message.mes.replace(/\r\n?/g, '\n');
     if (!rawContent.trim()) continue;
-    const canonical = sanitizeMemoryContent(rawContent, sanitizerOptions);
+    const canonical = canonicalByRaw?.has(rawContent) ? canonicalByRaw.get(rawContent) : sanitizeMemoryContent(rawContent, sanitizerOptions);
+    canonicalByRaw?.set(rawContent,canonical);
     if (!canonical) continue;
     selected.push(Object.freeze({
       coreIndex: index, message, rawContent, canonicalContent: canonical,
@@ -1834,7 +1837,13 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         ['swipe', 'regenerate'].includes(type) ? user.index : undefined);
       notify();
       advanceOperation(operation, 'queryContext');
-      const queryContext = queryBuilder({ coreChat: coreInput, assistantTurns: 1 });
+      const canonicalByRaw = new Map(), canonicalAssistantByCoreIndex = new Map();
+      for (const message of buildRecallQueryFrame({coreChat:coreInput,assistantTurns:1}).messages.filter(value=>value.role==='assistant')) {
+        const raw = String(coreInput[message.index].mes ?? '').replace(/\r\n?/g,'\n');
+        const canonical = sanitizeMemoryContent(raw,operation.sanitizerOptions);
+        canonicalByRaw.set(raw,canonical); canonicalAssistantByCoreIndex.set(message.index,canonical);
+      }
+      const queryContext = queryBuilder({ coreChat: coreInput, assistantTurns: 1, canonicalAssistantByCoreIndex });
       operation.queryContext = queryContext;
       operation.prequelSourceText = currentPrequelText(before);
       advanceOperation(operation, 'prequelSelection');
@@ -1871,7 +1880,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         if (earlyPreparedSource?.status === 'ready' && !earlyPreparedSource.migrationDescriptor
           && earlyPreparedSource.coverage.stableThroughAssistantSeq <= earlyScope.maximumSourceSeq) {
           advanceOperation(operation, 'bodyWitness');
-          earlyBodyWitness = await captureCoreBodyWitness(earlyScope.core, operation.sanitizerOptions, fingerprint, earlyScope.limit);
+          earlyBodyWitness = await captureCoreBodyWitness(earlyScope.core, operation.sanitizerOptions, fingerprint, earlyScope.limit, canonicalByRaw);
           // The replaced reply is neither prior history nor one of its N visible body slots.
           const earlySnapshot = earlyScope.targetIndexes.size ? { ...before, chat: before.chat.map((message, index) => earlyScope.targetIndexes.has(index) ? null : message) } : before;
           const matchedSource = { ...earlyPreparedSource, bodyMatch: await attachCoreBodyMatch(earlyPreparedSource, earlyBodyWitness, earlySnapshot,
@@ -1954,7 +1963,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       const sanitizerSnapshot = operation.sanitizerOptions;
       advanceOperation(operation, 'bodyWitness');
       const [coreBodyWitness, baseQueryFingerprint] = await Promise.all([
-        earlyBodyWitness && earlyScope.core === coreInput ? earlyBodyWitness : captureCoreBodyWitness(coreInput, sanitizerSnapshot, fingerprint, recentBodyFloorLimit(), user?.message),
+        earlyBodyWitness && earlyScope.core === coreInput ? earlyBodyWitness : captureCoreBodyWitness(coreInput, sanitizerSnapshot, fingerprint, recentBodyFloorLimit(), canonicalByRaw, user?.message),
         fingerprint(queryContext.text),
       ]);
       operation.coreBodyWitness = coreBodyWitness;
