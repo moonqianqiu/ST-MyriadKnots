@@ -114,7 +114,7 @@
 ### 3.5 召回选材性能（`src/v3/recall-selector.js` 四项记忆化）
 
 - **动机**：长聊天（129 楼层记忆 / 92 实体）点「重新生成」时 `buildStorylinePlan()` 占 `selectRecall()` 壁钟 **92.7–97.3%**（`candidateBuild` 一步 ~20.2s），主线程被单核跑满、界面无响应。根因是**同一批字符串被反复重算**：键推导（主要是作用在最长 12000 字符 `_coreText` 上的 `compact()`）占 self time **42.4%**，而真正做集合交集的 `setIntersection` 只占 **0.3%**（逐项成本分布见 `docs/audit-recall-budget-loop-2026-10.md`）。
-- **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5 加速 **n=48 17.18× → n=192 35.49×**；实机卡死上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**，增长指数由 `n^1.76` 降到 `n^1.24`（完整数表见审计文档）。
+- **四项改动（语义零改动，判定输入一字未动）**：见 §2.2 末条。实测 `contextSize=8192`、median-of-5 加速：v0.x 结构 n=48 17.18× → n=192 35.49×；v1.1.1 结构对上游裸版 n=48 **7.88×**、n=96 11.72×、n=192 **17.65×**、n=384 21.75×（指数 n^1.76→n^1.26）；实机卡死上报场景（n=129 / `contextSize=20000`）**20201ms → 706ms = 28.62×**，增长指数由 `n^1.76` 降到 `n^1.24`（完整数表见审计文档）。
 - **等价性证据**：`node tools/perf-audit/verify-equivalence.mjs HEAD` = **144/144 逐字节一致**（`injectionText` 逐字符 + 完整结果树 canonical 深比）；四门禁全绿。判据：三者都是纯函数（`compact`/`historyStableKey`/`prepareMaterial`）按输入记忆化，`entityDerivedCache` 只上提依赖 `context` 的常量。
 - **仍未解决的（有意留作后续）**：`buildStorylinePlan` 内层仍是 **O(m²)** 对比较（四层：候选线生成／建线合并／附着／continuity 兜底）。本改动只砍常数与部分指数，**不改阶**——悬崖仅从 192 楼推到 **~1500 楼**（数表见审计文档）。要真正压阶只能收缩参与分组的候选池（`baseHistory` 有原则预过滤）；硬切 `.slice(0,128)` 实测可得 17×–54×但**会改变召回结果**，不可取。
 - **五条教训**（全文取证 `docs/audit-recall-budget-loop-2026-10.md` §5）：①键必须廉价、只缓存最贵热点；②跨轮记忆化别按对象身份（`decorate()` 每轮克隆→按对象键命中率仅 **4.5%**，浅拷贝共享字符串实例、按字符串键才有效）；③缓存键须覆盖被缓存函数全部输入；④审计基线谱系须断言；⑤原对象 + 窄作用域下身份缓存可用（`recordsByValue`）——③⑤红线表述以 §2.2 反例/正例为准。
@@ -148,10 +148,10 @@
 
 ## 5. 当前仓库状态底数（基线备忘）
 
-- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v1.1.0（提交 `c767988`）。本次合并提交及父提交见 §5.1 与 git 历史；
-- **产物版本**：`manifest.json` 版本号 `1.1.0`（含 `author: "atonal519"`），缓存键 `20261106.229-5634f7367c631b03`（bundle 7,128,073 B、sha256 `5634f736…`，vite 8.2.2 重建；**bundle 摘要随检出路径变化**——键必须取自实际发布仓库的构建产物，勿跨检出身拷贝）；
-- **v1.1.0 合并要点（2026-11-06）**：8 冲突（预判全中）。三项持久裁决：①**边界文案采上游统一短版**、本仓 v0.8.0 两层制退役（`inline-projection` 白名单并集收本仓 3 条历史文案）；②**§2.2④ 前情指纹机制整体退役**（上游 `fitReusedPrequel` 结构性覆盖，详见 §2.2④）；③四项记忆化重植于上游新结构（等价 144/144；新结构基准 n=192 **18.25×**、指数 n^1.60→n^1.02）。htmlFormatting 适配面见 §2.1（勿改清洗器：4 例弃用、3 例注释壳夹具、1 例结构性不可适配带理由 skip）。上游主题与细则审计详见 docs/merge-notes.md §6.1 v1.1.0 条。**全量 3193/3192+1skip 首次全绿**（v1.0.6 时代唯一上游原生红 `panel-navigation` 已随上游 v1.1.0 修复）；门禁1 43/43、门禁2 35/35、金样与 SDC 逐字节一致、SDC 侧 33/33。
-- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v4.1.3moon（2026-11-03 合入上游 v4.1.3，合并提交 `8c56433`；**其入口已切换 Rolldown bundle `gouhua-app.js`，改源码后须 `npm run build`**；v3.10.2 起构画数据**随聊天 `chat_metadata` 保存**，存量用户须在「存储管理 → 迁回聊天」一次性迁回）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 542/540+1 上游原生红（ledger/ui-refresh，单跑绿）+1skip；MK `tests/settings-api.test.mjs` 的 SDC 跨读已改上游 env-root 子测试结构（`QQJ_SEVEN_DAYS_CAL_ROOT` + 缺文件优雅 skip），本地保留 `'../utils/tag-names.js'` 重写行（SDC 每新增相对导入须同步补一行，实例见 `7ce9f32`）。
+- **工作分支**：`main`；**上游基线**：已合入 `upstream/main` v1.1.1（提交 `4084ed8`）。本次合并提交及父提交见 §5.1 与 git 历史；
+- **产物版本**：`manifest.json` 版本号 `1.1.1`（含 `author: "atonal519"`），缓存键 `20261107.243-e1f93110c0ba2595`（bundle 7,389,356 B、sha256 `e1f93110…`，vite 8.2.2 重建；**bundle 摘要随检出路径变化**——键必须取自实际发布仓库的构建产物，勿跨检出身拷贝）；
+- **v1.1.1 合并要点（2026-11-07）**：5 冲突（预判全中）。三项裁决：①`captureCoreBodyWitness` 上游 `canonicalByRaw`（查询帧共享清洗缓存）与本仓触发楼边界**同位相撞合成 6 参签名**（§2.2①）；②用户输入捕获外移新文件 `user-input-source.js`，本仓 extra-only 适配随迁（§3.2）；③`time-body` 上游前置 USER 材料并读与本仓清洗穿透/剥壳投影**正交叠加**。上游新特性照收：事项跟进 `following`、地点层级 `placeParentFactBindings`、`placeRecallText` 去重、查询帧 canonical 对照、校园地图×3。记忆化重植对 `4084ed8` 等价 144/144；基准 n=192 **17.65×**、n=384 21.75×、指数 n^1.76→n^1.26。测试适配（§2.1）：守卫测试 6 参签名；上游 2 例 canonical 查询帧新测试显式 `extraTags:'think'`（上游 keep='content' 缺省依赖类）。细则见 docs/merge-notes.md §6.1 v1.1.1 条。**全量 3260/3259+1skip EXIT=0 连续第二次全绿**；门禁1 43/43、门禁2 35/35、金样与 SDC 逐字节一致；RECALL_STRATEGY_VERSION v30→v32（合并前回执自动转历史，无迁移成本）。
+- **兄弟仓库同步**：`ST-SevenDaysCal` 已同步至 v4.1.4moon（2026-11-07 合入上游 v4.1.4，合并提交 `3fec748`；**其入口已切换 Rolldown bundle `gouhua-app.js`，改源码后须 `npm run build`**；v3.10.2 起构画数据**随聊天 `chat_metadata` 保存**，存量用户须在「存储管理 → 迁回聊天」一次性迁回）；两仓清洗器按「39 例逐字 + 1 例显式安全修正」口径与 18 条平衡嵌套用例逐字一致（§3.1），SDC 全量 545/543+1 上游原生红（ledger/ui-refresh，单跑绿）+1skip；MK `tests/settings-api.test.mjs` 的 SDC 跨读已改上游 env-root 子测试结构（`QQJ_SEVEN_DAYS_CAL_ROOT` + 缺文件优雅 skip），本地保留 `'../utils/tag-names.js'` 重写行（SDC 每新增相对导入须同步补一行，实例见 `7ce9f32`）。
 
 ### 5.1 合并历史索引（细节回查：`git log -p AGENTS.md` / `git show <合并提交>`；**每行 ≤120 字符**，见前言防回胀）
 
@@ -169,3 +169,4 @@
 | v1.0.3 | 11-03 | `ee55b28` | 9 冲突；settings/recall-runtime 并集、bootstrap 删诊断参数；键 `.208-b689a42fd1e8aeb9` | 3117 全绿 |
 | v1.0.6 | 11-04 | `010e65a` | 2 冲突（dist、manifest）；上游原生红 1（panel-navigation 文案 18→21，纯上游同红）；键 `.219-7a2aa56eb8fa52e9` | 3146/3145 |
 | v1.1.0 | 11-06 | `2f047bc` | 8 冲突；边界文案采上游短版（两层制退役）、§2.2④ 前情机制退役、记忆化重植 144/144（n=192 18.25×）、htmlFormatting 适配面（§2.1）；键 `.229-5634f7367c631b03` | 3193/3192+1skip 全绿 |
+| v1.1.1 | 11-07 | `c93a7df` | 5 冲突；见证签名 6 参合成（canonicalByRaw+触发楼边界）、用户输入捕获外移+extra-only 随迁、time-body 正交叠加；键 `.243-e1f93110c0ba2595` | 3260/3259+1skip 全绿 |
