@@ -15359,11 +15359,19 @@ test('地点候选算法异常局限地点，正常召回首轮保摘要且筛�
 
 test('共享父级算法整体故障时正常摘要分析及非地点召回继续，必需域仍走原验证', async t => {
   const { cp, mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
-  const { pathToFileURL } = await import('node:url');
-  const temporary = await mkdtemp('/tmp/qqj-place-parent-fault-');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { pathToFileURL, fileURLToPath } = await import('node:url');
+  // 上游 v1.1.4 新增故障注入测试在临时目录换装 place-parent.js 后整链复验；上游硬编码
+  // POSIX '/tmp/'（fs.mkdtemp 原样接受），Windows 上 ENOENT——纯上游树 3a06377 同红
+  // （§6.1 判定法）。按 §2.1③ 环境适配：只改路径构造为 os.tmpdir()，故障注入与断言意图不变。
+  const temporary = await mkdtemp(join(tmpdir(), 'qqj-place-parent-fault-'));
   t.after(() => rm(temporary, { recursive: true, force: true }));
   await cp(new URL('../src', import.meta.url), `${temporary}/src`, { recursive: true });
-  await symlink(new URL('../node_modules', import.meta.url).pathname, `${temporary}/node_modules`);
+  // 同一测试的 node_modules 链接：上游 `.pathname` 在 Windows 产出 `/D:/…` 畸形目标，
+  // 且目录 symlink 需特权（EPERM）。按 §2.1③ 改 fileURLToPath + junction（免特权、
+  // 跨卷可用；POSIX 上类型参数被忽略仍为目录符号链接），解析语义与上游一致。
+  await symlink(fileURLToPath(new URL('../node_modules', import.meta.url)), `${temporary}/node_modules`, 'junction');
   const parentUrl = new URL('../src/v3/place-parent.js', import.meta.url).href;
   await writeFile(`${temporary}/src/v3/place-parent.js`, `import { resolvePlaceParentBatch as original } from '${parentUrl}';
 let armed = false;
