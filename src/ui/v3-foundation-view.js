@@ -929,10 +929,11 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
       return { status: 'error', error };
     }
   }
-  const floorActionResult = (label, floorId, kind = 'extract') => (state, beforeState) => {
-    const floor = state?.floors?.find(item => item.floorId === floorId);
-    const beforeFloor = beforeState?.floors?.find(item => item.floorId === floorId);
-    const targetFloor = floorCopy(state, floor ?? { floorId }, '目标楼');
+  const floorActionResult = (label, floorId, kind = 'extract') => (state, beforeState, result) => {
+    const actualFloorId = kind === 'extract' ? result?.extractionFloorId ?? floorId : floorId;
+    const floor = state?.floors?.find(item => item.floorId === actualFloorId);
+    const beforeFloor = beforeState?.floors?.find(item => item.floorId === actualFloorId);
+    const targetFloor = floorCopy(state, floor ?? { floorId: actualFloorId }, '目标楼');
     if (kind === 'cse') {
       const changed = Boolean(floor?.cse?.deltaId && floor.cse.deltaId !== beforeFloor?.cse?.deltaId);
       if (!changed || !['ready', 'noChange'].includes(floor?.cse?.status)) return `${label}未完成：${targetFloor} · ${errorMessage(state?.lastCseError) || errorMessage(floor?.cse?.error) || '人物状态尚未保存。'}`;
@@ -1239,12 +1240,21 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         edit.addEventListener('click', () => { const latest = foundationState ?? currentState; const names = new Map((latest.memoryEntities ?? []).flatMap(entity => [entity.entityId, ...(entity.memberEntityIds ?? [])].map(id => [id, entity.displayName]))); const canonicalByMember = new Map((latest.memoryEntities ?? []).flatMap(entity => (entity.memberEntityIds ?? [entity.entityId]).map(id => [id, entity.entityId]))); const normalizeKnownIds = values => [...new Set((values ?? []).map(id => canonicalByMember.get(id) ?? id))].sort(); const originalTimeText = floorTimeDisplay(memory, floor); const locations = (memory?.locations ?? []).map(item => ({ itemId: item.itemId, name: item.name ?? '' })); const participantNames = [...new Set((memory?.participants ?? []).map(item => canonicalByMember.get(item.entityId) ?? item.entityId))].map(id => names.get(id)).filter(Boolean); const exactAnchors = (memory?.exactAnchors ?? []).map(item => ({ anchorId: item.anchorId, carrier: item.carrier ?? '', exactText: item.exactText, knownEntityIds: normalizeKnownIds(item.knownEntityIds) })); const draft = { floorId: floor.floorId, canonicalFingerprint: floor.canonicalFingerprint, rawFingerprint: floor.rawFingerprint, summary: floor.summary, originalSummary: floor.summary, timeText: originalTimeText, originalTimeText, locations, originalLocations: locations.map(item => ({ ...item })), peopleText: participantNames.join('、'), originalParticipantNames: participantNames, exactAnchors, originalExactAnchors: structuredClone(exactAnchors), note: '', saving: false, saveError: '' }; void openMemoryEditor(floor, latest, key, draft); });
         const extract = element('button', 'qqj-memory-menu-action', '重新提取'); extract.type = 'button'; extract.disabled = workBusy(currentState) || typeof runtime.extractFloor !== 'function';
         trackMemoryRowWorkControl({ node: extract, disabled: current => workBusy(current) || typeof runtime.extractFloor !== 'function' });
-        extract.addEventListener('click', async () => { const latest = foundationState ?? currentState; const ranged = (floor.sourceFloorIds?.length ?? 0) > 1; if (!await Promise.resolve(confirmImpl({ title: ranged ? '重新提取整段压缩记忆' : '重新提取本楼摘要', body: `${ranged ? `${floorCopy(latest, floor)}将整体重新压缩。` : '将重新提取本楼摘要。'}已有的人物状态和其他楼不变；千事按字段保留人工修订，无法匹配时保留旧千事并提示。`, confirmText: '重新提取', cancelText: '取消' }))) { feedback = '已取消重新提取。'; render(foundationState); return; } void run('重新提取', () => runtime.extractFloor(floor.floorId), { resultCopy: floorActionResult('重新提取', floor.floorId) }); });
+        extract.addEventListener('click', async () => { const latest = foundationState ?? currentState; const ranged = (floor.sourceFloorIds?.length ?? 0) > 1;
+          let extractionTarget;
+          try { if (!ranged) extractionTarget = runtime.captureExtractionTarget?.(floor.floorId); }
+          catch (error) { void run('重新提取', () => Promise.reject(error)); return; }
+          if (!await Promise.resolve(confirmImpl({ title: ranged ? '重新提取整段压缩记忆' : '重新提取本楼摘要', body: `${ranged ? `${floorCopy(latest, floor)}将整体重新压缩。` : '将重新提取本楼摘要。'}已有的人物状态和其他楼不变；千事按字段保留人工修订，无法匹配时保留旧千事并提示。`, confirmText: '重新提取', cancelText: '取消' }))) { feedback = '已取消重新提取。'; render(foundationState); return; } void run('重新提取', () => extractionTarget ? runtime.extractFloor(floor.floorId, { extractionTarget }) : runtime.extractFloor(floor.floorId), { resultCopy: floorActionResult('重新提取', floor.floorId) }); });
         menuBody.append(edit, extract);
       } else {
         const extract = element('button', 'qqj-memory-menu-action', '提取摘要'); extract.type = 'button'; extract.disabled = workBusy(currentState) || typeof runtime.extractFloor !== 'function';
         trackMemoryRowWorkControl({ node: extract, disabled: current => workBusy(current) || typeof runtime.extractFloor !== 'function' });
-        extract.addEventListener('click', () => { void run('提取摘要', () => runtime.extractFloor(floor.floorId), { resultCopy: floorActionResult('提取摘要', floor.floorId) }); });
+        extract.addEventListener('click', () => {
+          let extractionTarget;
+          try { extractionTarget = runtime.captureExtractionTarget?.(floor.floorId); }
+          catch (error) { void run('提取摘要', () => Promise.reject(error)); return; }
+          void run('提取摘要', () => extractionTarget ? runtime.extractFloor(floor.floorId, { extractionTarget }) : runtime.extractFloor(floor.floorId), { resultCopy: floorActionResult('提取摘要', floor.floorId) });
+        });
         menuBody.append(extract);
       }
       actions.append(menuToggle, menuBody); body.append(actions);
@@ -1271,7 +1281,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     if (!active || page !== 'memories' || !recentItemsUi) return;
     const { toggle, body, status, organize, retryRead, reason, list, addItem, stoppedToggle, stop, batchEntry, batchControls, batchAll, batchProblems, batchActions, batchDelete, clockReminder } = recentItemsUi;
     const state = timeSnapshot ?? timeRuntime?.getState?.(), result = state?.last, tracked = state?.trackedItems, stopped = state?.stoppedItems, annual = state?.annualItems;
-    if(addItem)addItem.disabled=state?.canOrganize!==true||Boolean(recentItemDraft)||typeof timeRuntime?.createItem!=='function';
+    if(addItem)addItem.disabled=(state?.canEdit??state?.canOrganize)!==true||Boolean(recentItemDraft)||typeof timeRuntime?.createItem!=='function';
     const selectable = new Map(((showStoppedItems ? stopped : tracked) ?? []).map(item => [item.id, item]));
     if (state?.pendingDeletionCount > 0) selectedRecentItems.clear();
     for (const [id, key] of selectedRecentItems) if (selectable.get(id)?.observationKey !== key) selectedRecentItems.delete(id);
@@ -1301,7 +1311,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     batchEntry.textContent = recentBatchMode ? '取消批量' : '批量管理';
     batchEntry.disabled = recentItemDraft !== null || Boolean(recentItemsUi.pendingAction) || !Array.isArray(showStoppedItems ? stopped : tracked);
     batchControls.hidden = !recentBatchMode;
-    const batchBusy = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction);
+    const batchBusy = (state?.canEdit ?? state?.canOrganize) !== true || Boolean(recentItemsUi.pendingAction);
     batchAll.disabled = batchBusy || state?.pendingDeletionCount > 0 || !selectable.size;
     batchProblems.hidden = showStoppedItems;
     batchProblems.disabled = batchBusy || !(tracked ?? []).some(item => item.failureReason || item.assessmentReason || item.reviewStatus === 'unanswered');
@@ -1320,7 +1330,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
       || (failureNotice ? `事项更新未完成，可点击“${organize.textContent}”重试。` : '')
       || (state?.status === 'waiting' ? '记忆同步后读取近期事项。' : coverageCopy);
     if (recentItemDraft) {
-      for (const control of recentItemDraft.controls) control.disabled = recentItemDraft.saving || state?.canOrganize !== true;
+      for (const control of recentItemDraft.controls) control.disabled = recentItemDraft.saving || (state?.canEdit ?? state?.canOrganize) !== true;
       organize.disabled = true;
       return;
     }
@@ -1361,7 +1371,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const titleIssues = displayItems.map(item => item.issue);
     const visibleProjection = displayItems.map(({ title, description, keywords, results, times, readOnly, issue }) => ({ title, description, keywords, results, times, readOnly, issue }));
     const signature = JSON.stringify([displayItems.length ? visibleProjection : message, titleIssues, recentBatchMode, [...selectedRecentItems], state?.pendingDeletionCount ?? 0, (visibleItems ?? []).map(item => [item.id, item.observationKey]), (annual ?? []).map(item => [item.id, item.status, item.nextDate])]);
-    if (recentItemsUi.listSignature === signature) { for (const control of recentItemsUi.itemControls) control.disabled = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction) || showStoppedItems && state?.pendingDeletionCount > 0; return; }
+    if (recentItemsUi.listSignature === signature) { for (const control of recentItemsUi.itemControls) control.disabled = (state?.canEdit ?? state?.canOrganize) !== true || Boolean(recentItemsUi.pendingAction) || showStoppedItems && state?.pendingDeletionCount > 0; return; }
     recentItemsUi.listSignature = signature;
     list.replaceChildren();
     recentItemsUi.itemControls = [];
@@ -1394,7 +1404,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
       const menuToggle = element('summary', 'qqj-profile-menu-toggle', '⋮'); menuToggle.setAttribute('aria-label', `${item.label}事项操作`); menuToggle.setAttribute('title', '事项操作'); menuToggle.setAttribute('aria-haspopup', 'menu');
       const menuBody = element('div', 'qqj-profile-menu-pop'); menuBody.setAttribute('role', 'menu');
       const actionFeedback = element('p', 'settings-result error');
-      const addAction = (label, callback) => { const button = element('button', `qqj-profile-menu-action${label === '移除' ? ' danger' : ''}`, label); button.type = 'button'; button.setAttribute('role', 'menuitem'); button.disabled = state?.canOrganize !== true || Boolean(recentItemsUi.pendingAction); button.addEventListener('click', () => { if (button.disabled) return; actions.open = false; return callback(); }); menuBody.append(button); recentItemsUi.itemControls.push(button); };
+      const addAction = (label, callback) => { const button = element('button', `qqj-profile-menu-action${label === '移除' ? ' danger' : ''}`, label); button.type = 'button'; button.setAttribute('role', 'menuitem'); button.disabled = (state?.canEdit ?? state?.canOrganize) !== true || Boolean(recentItemsUi.pendingAction); button.addEventListener('click', () => { if (button.disabled) return; actions.open = false; return callback(); }); menuBody.append(button); recentItemsUi.itemControls.push(button); };
       if (typeof timeRuntime?.editItem === 'function' && !recentBatchMode) {
         addAction('编辑事项', () => startRecentEdit(item));
         if (item.status === 'active' && item.following !== false) for (const [label, value] of [['完成', 'completed'], ['暂停', 'paused'], ['移除', 'cancelled']]) addAction(label, () => changeRecentStatus(item, value, actionFeedback));
@@ -1407,7 +1417,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const ui = recentItemsUi, originalChatId = chatId, mine = epoch;
     const action = { completed: '完成', paused: '暂停', cancelled: '移除', active: '恢复追踪' }[status];
     const currentUi = () => active && page === 'memories' && recentItemsUi === ui && chatId === originalChatId && epoch === mine && runtime.getState()?.chatId === originalChatId;
-    const canSave = () => { const state = timeRuntime.getState(); return currentUi() && !recentItemDraft && state.canOrganize === true && [...(state.trackedItems ?? []), ...(state.stoppedItems ?? [])].some(value => value.id === item.id && value.observationKey === item.observationKey); };
+    const canSave = () => { const state = timeRuntime.getState(); return currentUi() && !recentItemDraft && (state.canEdit ?? state.canOrganize) === true && [...(state.trackedItems ?? []), ...(state.stoppedItems ?? [])].some(value => value.id === item.id && value.observationKey === item.observationKey); };
     if (ui.pendingAction || !canSave()) return;
     const pending = {}; ui.pendingAction = pending; actionFeedback.textContent = ''; updateRecentItems();
     try {
@@ -1423,7 +1433,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const currentUi = () => active && page === 'memories' && recentItemsUi === ui && chatId === originalChatId && epoch === mine && runtime.getState()?.chatId === originalChatId;
     const canSave = () => {
       const state = timeRuntime.getState(), current = new Map((state.trackedItems ?? []).map(item => [item.id, item]));
-      return currentUi() && recentBatchMode && !recentItemDraft && state.canOrganize === true && selected.length > 0
+      return currentUi() && recentBatchMode && !recentItemDraft && (state.canEdit ?? state.canOrganize) === true && selected.length > 0
         && selected.every(edit => current.get(edit.itemId)?.observationKey === edit.observationKey);
     };
     if (ui.pendingAction || typeof timeRuntime?.editItems !== 'function' || !canSave()) return;
@@ -1443,7 +1453,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const currentUi = () => active && page === 'memories' && recentItemsUi === ui && chatId === originalChatId && epoch === mine && runtime.getState()?.chatId === originalChatId;
     const canDelete = () => {
       const state = timeRuntime.getState(), current = new Map((state.stoppedItems ?? []).map(item => [item.id, item]));
-      return currentUi() && showStoppedItems && recentBatchMode && !recentItemDraft && state.canOrganize === true
+      return currentUi() && showStoppedItems && recentBatchMode && !recentItemDraft && (state.canEdit ?? state.canOrganize) === true
         && (state.pendingDeletionCount > 0 || selected.length > 0 && selected.every(item => current.get(item.itemId)?.observationKey === item.observationKey));
     };
     if (ui.pendingAction || typeof timeRuntime?.deleteItems !== 'function' || !canDelete()) return;

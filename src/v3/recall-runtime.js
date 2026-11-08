@@ -1,8 +1,10 @@
+import { filterPlaceMemory } from './place-workspace.js';
+import { readManualArtifactBlocks } from './recall-text.js';
 import { sha256 } from '../identity.js';
-import { rawWitnessShape, rawWitnessValid, summaryWitnessShape, summaryWitnessValid } from './vector-source.js';
+import { rawWitnessShape, rawWitnessValid, summaryCandidateText, summaryWitnessShape, summaryWitnessValid } from './vector-source.js';
 import { sanitizeSensitiveText, sanitizeTaskMetadata } from './safe-metadata.js';
-import { projectRecallSource, readRecallSource } from './recall-source.js';
-import { buildRecallQueryContext, buildRecallQueryFrame, formatRecallInjection, estimateRecallTokens, recallBudget, groupRecallPlaces } from './recall-selector.js';
+import { projectRecallSource, readRecallSource, isolateRecallAuxiliarySources } from './recall-source.js';
+import { buildRecallQueryContext, buildRecallQueryFrame, formatRecallInjection, estimateRecallTokens, recallBudget, groupRecallPlaces, historySelectionContext, placeRecallBlocks } from './recall-selector.js';
 import { selectRecallWithLlm } from './recall-llm-selector.js';
 import { selectAssistantMessage } from './foundation-domain.js';
 import { inspectMessageFloorAnchor } from './message-floor-anchor.js';
@@ -210,6 +212,8 @@ async function captureSelectedSourceGuards(receipt, source, snapshot) {
   const partition = migrationPartition(source);
   const guards = [];
   for (const floorId of expectedFloorIds) {
+    // Unbound manual summaries are checked against their saved memory revision.
+    if (source.readiness.unmatchedFloorIds?.includes(floorId)) continue;
     const ref = sourceRefs.get(floorId);
     if (partition.isFrozenFloor(floorId)) {
       // The frozen record is verified against the immutable reachable graph;
@@ -389,7 +393,7 @@ const removeQianshiProgress = (text, value, timeDependencies = null) => {
 const qianshiProgressCurrent = (saved, current) => !saved || Boolean(current && saved.fingerprint === current.fingerprint);
 
 // Re-render only the saved selection. A lost time estimate restores the saved CSE.
-function withoutStaleTime(receipt, source, projection) {
+function withoutStaleTime(receipt, source, projection, changeReason = 'optionalTimeChanged', { trimPlacesFirst = false } = {}) {
   const saved = receipt.timeDependencies;
   if (saved.mode !== 'selected' || !saved.renderPlan) return null;
   const same = (item, live) => live && item.itemId === live.itemId && item.text === live.text && item.sourceSignature === (live.sourceSignature ?? null);
@@ -399,9 +403,19 @@ function withoutStaleTime(receipt, source, projection) {
   const places = clone(receipt.selectedPlaces ?? []), groupedPlaces = ['continuity-v29', 'continuity-v30', 'continuity-v31', RECALL_STRATEGY_VERSION].includes(receipt.strategyVersion);
   const placeCount = () => groupedPlaces ? groupRecallPlaces(places).length : places.length;
   const originalPlaceCount = placeCount();
+  const dropLastPlace = () => {
+    const removed = groupedPlaces ? new Set(groupRecallPlaces(places).at(-1)) : new Set([places.at(-1)]);
+    for (let index = places.length - 1; index >= 0; index--) if (removed.has(places[index])) places.splice(index, 1);
+  };
   const locationReferences = clone(receipt.selectedLocationReferences ?? []);
   const limits = saved.renderPlan.limits;
   const entityById = new Map((source.entities ?? []).map(entity => [entity.entityId, entity]));
+  const frozenNames = new Map(saved.renderPlan.entityNames ?? []);
+  for (const item of floors.flatMap(floor => floor.items).filter(item => item.kind === 'manualArtifact')) {
+    for (const entityId of item.knownEntityIds ?? []) if (frozenNames.has(entityId)) {
+      entityById.set(entityId, { entityId, displayName: frozenNames.get(entityId), entityType: 'person' });
+    }
+  }
   let text, ordinaryText, dependencies, storylines;
   const render = () => {
     const active = new Set([...floors.flatMap(floor => floor.items), ...states, ...changes].map(value => value.storylineId));
@@ -415,21 +429,19 @@ function withoutStaleTime(receipt, source, projection) {
   let budgetDropped = 0;
   const trimmedHistoryFloors = new Set();
   while (ordinaryText.length > limits.maxCharacters || estimateRecallTokens(ordinaryText) > limits.estimatedTokenBudget) {
-    if (reminders.length) reminders.pop();
+    if (trimPlacesFirst && places.length) dropLastPlace();
+    else if (reminders.length) reminders.pop();
     else if (floors.length) { const floor = floors.at(-1); trimmedHistoryFloors.add(floor.floorId); floor.items.pop(); if (!floor.items.length) floors.pop(); }
     else if (changes.length) changes.pop();
     else if (states.length) states.pop();
     else if (locationReferences.length) locationReferences.pop();
-    else if (places.length) {
-      const removed = groupedPlaces ? new Set(groupRecallPlaces(places).at(-1)) : new Set([places.at(-1)]);
-      for (let index = places.length - 1; index >= 0; index--) if (removed.has(places[index])) places.splice(index, 1);
-    }
+    else if (places.length) dropLastPlace();
     else break;
     budgetDropped += 1;
     render();
   }
   render();
-  dependencies.renderPlan = { floors, limits };
+  dependencies.renderPlan = { ...saved.renderPlan, floors, limits };
   const history = floors.flatMap(floor => floor.items);
   const originalHistory = saved.renderPlan.floors.flatMap(floor => floor.items);
   const recentDropped = originalHistory.filter(item => item.recallSection === 'recent').length - history.filter(item => item.recallSection === 'recent').length;
@@ -448,7 +460,161 @@ function withoutStaleTime(receipt, source, projection) {
   return { ...receipt, selectedPlaces: places, selectedFloors: floors.map(receiptFloorRef), selectedStates: states, selectedLocationReferences: locationReferences,
     selectedCseChanges: changes, storylines, timeDependencies: dependencies, injectionText: text, completionStatus: text ? 'ready' : 'empty', stages,
     selectorDiagnostic: receipt.selectorDiagnostic ? { ...receipt.selectorDiagnostic, historyRetainedCount: history.length + placeCount(), stateRetainedCount: states.length + changes.length } : null,
-    skipReasons: [...new Set([...receipt.skipReasons, 'optionalTimeChanged'])] };
+    skipReasons: [...new Set([...receipt.skipReasons, ...(changeReason ? [changeReason] : [])])] };
+}
+
+function refreshFrozenManualSummaries(receipt, snapshot) {
+  const plan = receipt.timeDependencies?.renderPlan;
+  if (snapshot?.root?.chatId !== receipt.chatId || snapshot.root.narrativeGeneration !== receipt.narrativeGeneration) return receipt;
+  const memories = new Map();
+  for (const memory of snapshot.floorMemories ?? []) {
+    if (memory.recordStatus !== 'active' || memory.summary?.effectiveSource !== 'user') continue;
+    memories.set(memory.floorId, memories.has(memory.floorId) ? null : memory);
+  }
+  if (!plan) {
+    // Older signed receipts have no render plan. Update only their explicit
+    // narrative summary lines, retaining the rest of the frozen text verbatim.
+    const targets = new Map(receipt.selectedFloors.filter(floor => memories.get(floor.floorId)
+      && memories.get(floor.floorId).id !== floor.floorMemoryId).map(floor => [floor.assistantSeq, memories.get(floor.floorId)]));
+    const rawSequences = new Set(receipt.selectedFloors.filter(floor => floor.rawWitnesses?.length).map(floor => floor.assistantSeq));
+    if (!targets.size) return receipt;
+    const pattern = /^\[来源 AI #(\d+)(?:（[^\n]*）)?\]$|^- (?:AI #[^\n]+：|\[旧事\] )\[人工原文｜(\d+)字符\]$|^\[(?:剧情线[^\n]*|已保存人物状态依据)\]$|^- \[旧事\] \[叙事回顾\] (?:邻近背景：|同人物与主题：|来源关联：)?[^\n]*$/gmu;
+    let currentSeq = null, literalEnd = 0, end = 0, injectionText = '';
+    const changed = new Set();
+    for (const match of receipt.injectionText.matchAll(pattern)) {
+      if (match.index < literalEnd) continue;
+      if (match[2]) { literalEnd = match.index + match[0].length + 1 + Number(match[2]); continue; }
+      if (match[1]) { currentSeq = Number(match[1]); continue; }
+      if (!match[0].startsWith('- ')) { currentSeq = null; continue; }
+      const memory = targets.get(currentSeq);
+      if (!memory) continue;
+      if (rawSequences.has(currentSeq) && /^- \[旧事\] \[叙事回顾\] (?:邻近背景：|同人物与主题：|来源关联：)?\[历史原文；时间未标注\] /u.test(match[0])) continue;
+      const text = summaryCandidateText(memory.summary.userText ?? '');
+      injectionText += receipt.injectionText.slice(end, match.index) + (text ? `- [旧事] [叙事回顾] ${text}` : '');
+      end = match.index + match[0].length;
+      changed.add(memory.floorId);
+    }
+    if (!changed.size) return receipt;
+    injectionText += receipt.injectionText.slice(end);
+    return { ...receipt, injectionText, selectedFloors: receipt.selectedFloors.map(floor => changed.has(floor.floorId)
+      ? { ...floor, floorMemoryId: memories.get(floor.floorId).id, summaryWitnesses: [],
+        ...(floor.rawWitnesses?.length ? { rawWitnesses: floor.rawWitnesses.map(witness => ({ ...witness, floorMemoryId: memories.get(floor.floorId).id })) } : {}) } : floor),
+      stages: receipt.stages ? { ...receipt.stages, estimatedTokenCount: estimateRecallTokens(injectionText) } : null };
+  }
+  let changed = false;
+  const floors = plan.floors.flatMap(floor => {
+    const memory = memories.get(floor.floorId);
+    const summary = floor.items.find(item => item.kind === 'summary');
+    const text = memory ? summaryCandidateText(memory.summary.userText ?? '') : null;
+    if (!summary || !memory || summary.text === text) return [floor];
+    changed = true;
+    const items = floor.items.flatMap(item => item.kind === 'summary' ? text ? [{ ...item, text, floorMemoryId: memory.id }] : []
+      : [{ ...item, ...(item.rawWitness ? { rawWitness: { ...item.rawWitness, floorMemoryId: memory.id } } : {}) }]);
+    return items.length ? [{ ...floor, floorMemoryId: memory.id, items }] : [];
+  });
+  if (!changed) return receipt;
+  const updated = { ...receipt, timeDependencies: { ...receipt.timeDependencies, renderPlan: { ...plan, floors } } };
+  const source = { entities: (plan.entityNames ?? []).map(([entityId, displayName]) => ({ entityId, displayName })) };
+  const corrections = Object.fromEntries((receipt.timeDependencies.corrections ?? []).map(item => [item.key, item]));
+  return withoutStaleTime(updated, source, { corrections, reminders: receipt.timeDependencies.reminders ?? [] }, null) ?? receipt;
+}
+function refreshLegacyAuxiliaryText(receipt, places, peopleUnavailable, placesUnavailable) {
+  const protectedText = readManualArtifactBlocks(receipt.injectionText, { preserveHeaders: true });
+  if (!protectedText.valid) return receipt.injectionText;
+  const blocks = protectedText.blocks;
+  // The existing raw fragment formatter writes one narrative line. Keep its whole line literal.
+  let text = protectedText.text.replace(/^- (?:AI #[^\n]+：|\[旧事\] )[^\n]*\[历史原文；时间未标注\][^\n]*$/gmu, value => {
+    const token = `\u0000qqj-raw-${blocks.size}\u0000`; blocks.set(token, value); return token;
+  });
+  const grouped = ['continuity-v29', 'continuity-v30', 'continuity-v31', RECALL_STRATEGY_VERSION].includes(receipt.strategyVersion);
+  const oldBlocks = placeRecallBlocks(receipt.selectedPlaces ?? [], false, grouped, receipt.strategyVersion === RECALL_STRATEGY_VERSION);
+  const replacementText = placeRecallBlocks(places, false, grouped, receipt.strategyVersion === RECALL_STRATEGY_VERSION).join('\n');
+  const replacement = replacementText ? `\u0000qqj-place-${blocks.size}\u0000` : '';
+  if (replacement) blocks.set(replacement, replacementText);
+  let replaced = false;
+  for (const block of oldBlocks) {
+    const index = text.lastIndexOf(block);
+    if (index < 0) continue;
+    text = text.slice(0, index) + (replaced ? '' : replacement) + text.slice(index + block.length);
+    replaced = true;
+  }
+  if (peopleUnavailable) {
+    text = text.split('\n').filter(line => {
+      const history = /^- \[旧事\] (.*)$/u.exec(line);
+      if (!history) return true;
+      const body = history[1].replace(/^(?:邻近背景：|同人物与主题：|来源关联：)/u, '');
+      return body.startsWith('[叙事回顾] ') || body.startsWith('[人工原文｜') || /^(?:当前地点设施：|历史地点设施（场地未核对）：|历史地点描述（持续性未标）：)/u.test(body)
+        || body.includes('\u0000qqj-manual-') || body.includes('\u0000qqj-raw-');
+    }).join('\n');
+    const formatted = formatRecallInjection({ coverage: receipt.coverage, floors: [], states: receipt.selectedStates,
+      cseChanges: receipt.selectedCseChanges, storylines: receipt.storylines, entityById: new Map(),
+      timeProjection: { corrections: Object.fromEntries((receipt.timeDependencies?.corrections ?? []).map(item => [item.key, item])) } });
+    const stateLines = new Set(formatted.split('\n').filter(line => line.startsWith('- ')));
+    text = text.split('\n').filter(line => !stateLines.has(line)).join('\n');
+  }
+  if (placesUnavailable) text = text.split('\n').filter(line => !/^- \[旧事\] (?:邻近背景：|同人物与主题：|来源关联：)?(?:当前地点设施：|历史地点设施（场地未核对）：|历史地点描述（持续性未标）：)/u.test(line)).join('\n');
+  let group = '';
+  text = text.split('\n').filter(line => {
+    if (line === '[叙事回顾]' || line.startsWith('[叙事回顾（')) group = 'narrative';
+    else if (line === '[客观相关旧事]') group = 'objective';
+    else if (line === '[已表达/已共享信息]' || line.startsWith('[私有资料；知情：')) group = 'people';
+    else if (line.startsWith('[') && !line.startsWith('[人工原文｜')) group = '';
+    const row = /^- AI #[^\n]+?：(.*)$/u.exec(line);
+    if (!row || group === 'narrative' || row[1].startsWith('[人工原文｜')) return true;
+    const place = /(?:当前地点设施：|历史地点设施（场地未核对）：|历史地点描述（持续性未标）：)/u.test(row[1]);
+    return place ? !placesUnavailable : !peopleUnavailable || !['objective', 'people'].includes(group);
+  }).join('\n');
+  for (const [token, literal] of blocks) text = text.replace(token, () => literal);
+  return text;
+}
+function refreshAuxiliaryReceipt(receipt, source, queryContext) {
+  const oldPlaces = receipt.selectedPlaces ?? [], plan = receipt.timeDependencies?.renderPlan;
+  const peopleUnavailable = source.unavailableSources?.includes('people');
+  const placesUnavailable = source.unavailableSources?.includes('places');
+  const placeItemCurrent = (item, floorId) => {
+    if (!item.placeEntityId || !source.placeWorkspace) return true;
+    const field = item.kind === 'placeFeature' || item.kind === 'placeDescription' ? 'features'
+      : item.kind === 'spatialRelation' ? 'relations' : item.kind === 'placeScene' ? 'positions' : null;
+    if (!field) return true;
+    const projected = filterPlaceMemory({ floorId, spatialFacts: { [field]: [{ ...item,
+      sourceRefs: item.sourceRefs ?? [{ floorId: item.sourceFloorId ?? floorId }] }] } }, source.placeWorkspace);
+    return Boolean(projected.spatialFacts?.[field]?.length);
+  };
+  const scopedPlaceItems = plan?.floors.flatMap(floor => floor.items.filter(item => !placeItemCurrent(item, floor.floorId))) ?? [];
+  const scopedPlaceChanged = scopedPlaceItems.length > 0;
+  const placeIds = new Set([...oldPlaces, ...scopedPlaceItems].map(place => place.placeEntityId));
+  const facts = historySelectionContext(source, queryContext).facts.flatMap(item => item._placeMembers ?? [item]);
+  const places = placesUnavailable ? [] : facts.filter(item => placeIds.has(item.placeEntityId) && ['manualPlace', 'placeFoundation'].includes(item.kind)).map(item => {
+    const value = Object.fromEntries(Object.entries(item).filter(([key]) => !key.startsWith('_') && !['floorId', 'floorMemoryId', 'assistantSeq', 'branchScores', 'entityBranchScores', 'summaryScores', 'score'].includes(key)));
+    return value;
+  });
+  const meaning = rows => rows.map(({ kind, placeEntityId, itemId, itemIds, text, source, referencePlaceEntityIds }) => ({ kind, placeEntityId, itemId, itemIds, text, source, referencePlaceEntityIds }));
+  const placesChanged = JSON.stringify(meaning(oldPlaces)) !== JSON.stringify(meaning(places));
+  const selectedFloorIds = new Set(receipt.selectedFloors.map(floor => floor.floorId));
+  const legacyPlaceScopeUnconfirmed = !plan && (Object.values(source.placeWorkspace?.deletionsByEntityId ?? {}).some(scope =>
+    scope.coveredFloorIds?.some(id => selectedFloorIds.has(id)))
+    || Object.values(source.placeWorkspace?.placesByEntityId ?? {}).some(row =>
+      ['description', 'parentEntityId', 'relations', 'name'].some(field => Object.hasOwn(row, field)
+        && (!row.scopes?.[field] || row.scopes[field].coveredFloorIds?.some(id => selectedFloorIds.has(id))))));
+  if (!placesChanged && !peopleUnavailable && !placesUnavailable && !scopedPlaceChanged && !legacyPlaceScopeUnconfirmed) return receipt;
+  const updated = { ...receipt, selectedPlaces: places,
+    ...(places.length && receipt.placeWorkspaceDependency === undefined ? { placeWorkspaceDependency: `${receipt.chatId}:0` } : {}),
+    selectedStates: peopleUnavailable ? [] : receipt.selectedStates,
+    selectedCseChanges: peopleUnavailable ? [] : receipt.selectedCseChanges };
+  if (plan) {
+    const floors = plan.floors.flatMap(floor => {
+      const items = floor.items.filter(item => item.kind === 'manualArtifact' || item.rawWitness
+        || (!peopleUnavailable || item.kind === 'summary') && (!placesUnavailable || !item.placeEntityId)
+          && placeItemCurrent(item, floor.floorId));
+      return items.length ? [{ ...floor, items }] : [];
+    });
+    updated.timeDependencies = { ...receipt.timeDependencies, renderPlan: { ...plan, floors } };
+    const corrections = Object.fromEntries(receipt.timeDependencies.corrections.map(item => [item.key, item]));
+    return withoutStaleTime(updated, source, { corrections, reminders: receipt.timeDependencies.reminders }, null, { trimPlacesFirst: true }) ?? receipt;
+  }
+  updated.injectionText = refreshLegacyAuxiliaryText(receipt, places, peopleUnavailable, placesUnavailable || legacyPlaceScopeUnconfirmed);
+  updated.stages = receipt.stages ? { ...receipt.stages, estimatedTokenCount: estimateRecallTokens(updated.injectionText) } : null;
+  return updated;
 }
 const selectorDiagnosticSnapshot = value => {
   const api = sanitizeTaskMetadata(value);
@@ -555,7 +721,13 @@ function receiptShapeValid(receipt, { historical = false } = {}) {
   if (receipt?.schemaVersion >= 14 && !timeDependenciesValid(receipt.timeDependencies, { correctionLimit: receiptStateLimit })) return false;
   const plan = receipt?.timeDependencies?.renderPlan;
   if (plan && (!Array.isArray(plan.floors) || plan.floors.length > receiptFloorLimit
-    || !plan.floors.every(floor => Array.isArray(floor.items) && floor.items.every(item => item && boundedString(item.text, 4000)))
+    || (plan.entityNames !== undefined && (!Array.isArray(plan.entityNames) || plan.entityNames.length > 10000
+      || !plan.entityNames.every(value => Array.isArray(value) && value.length === 2 && value.every(text => boundedString(text, 500)))))
+    || !plan.floors.every(floor => Array.isArray(floor.items) && floor.items.every(item => item && (item.kind === 'manualArtifact'
+      ? boundedString(item.exactText, 32000) && boundedString(item.carrier, 500) && Array.isArray(item.knownEntityIds) && item.knownEntityIds.every(id => boundedString(id, 500))
+        && (item.knownEntityNames === undefined || Array.isArray(item.knownEntityNames) && item.knownEntityNames.length <= item.knownEntityIds.length
+          && item.knownEntityNames.every(pair => Array.isArray(pair) && pair.length === 2 && item.knownEntityIds.includes(pair[0]) && boundedString(pair[1], 500)))
+      : boundedString(item.text, 4000))))
     || !nonNegativeInteger(plan.limits?.maxCharacters) || plan.limits.maxCharacters > (expandedSelection ? 32000 : 20000)
     || !nonNegativeInteger(plan.limits?.estimatedTokenBudget) || plan.limits.estimatedTokenBudget > (expandedSelection ? 8000 : receipt.schemaVersion >= 15 ? 4000 : 5000)
     || (receipt.schemaVersion === 14 && (!nonNegativeInteger(plan.limits?.ordinaryMaxCharacters) || plan.limits.ordinaryMaxCharacters > 16000
@@ -706,7 +878,6 @@ async function persistedReceiptValid(receipt, { chatId, userIndex, userFingerpri
       || snapshot.chatId !== chatId
       || snapshot.userMessageIndex !== userIndex
       || snapshot.userContentFingerprint !== userFingerprint
-      || (snapshot.placeWorkspaceDependency ?? `${chatId}:0`) !== placeWorkspaceDependency
       || snapshot.receiptFingerprint !== await fingerprint(JSON.stringify(receiptMaterial(snapshot)))) return null;
     return snapshot;
   } catch {
@@ -1101,7 +1272,7 @@ function coveredBodyGuardsCurrent(guards, snapshot, sanitizerOptions) {
   });
 }
 
-export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask = null, processingPrompt = () => '', isEnabled = true, memoryStatus = () => null, prepareMemory = null, preparationTimeoutMs = DEFAULT_PREPARATION_TIMEOUT_MS, realtimeOrigin = () => false, recentBodyFloorLimit = () => 3, notifyUser = null, sourceReader = readRecallSource, selector = null, semanticProvider = null, queryBuilder = buildRecallQueryContext, fingerprint = hashText, sanitizerOptions = () => ({}), identityProjectionProvider = null, placeWorkspaceDependencyProvider = null, timeProjectionProvider = null, qianshiProgressProvider = null, qianshiDeletionProvider = null, now = () => new Date(), pluginVersion, logger = console } = {}) {
+export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask = null, processingPrompt = () => '', isEnabled = true, memoryStatus = () => null, manualMemorySnapshot = null, prepareMemory = null, preparationTimeoutMs = DEFAULT_PREPARATION_TIMEOUT_MS, realtimeOrigin = () => false, recentBodyFloorLimit = () => 3, notifyUser = null, sourceReader = readRecallSource, selector = null, semanticProvider = null, queryBuilder = buildRecallQueryContext, fingerprint = hashText, sanitizerOptions = () => ({}), identityProjectionProvider = null, placeWorkspaceDependencyProvider = null, timeProjectionProvider = null, qianshiProgressProvider = null, qianshiDeletionProvider = null, now = () => new Date(), pluginVersion, logger = console } = {}) {
   if (!store || typeof store.readReachable !== 'function') throw new TypeError('V3 recall store 无效');
   if (!hostAdapter || typeof hostAdapter.snapshot !== 'function') throw new TypeError('V3 recall host adapter 无效');
   if (typeof fingerprint !== 'function') throw new TypeError('V3 recall fingerprint 无效');
@@ -1118,6 +1289,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     : input => selectRecallWithLlm({ ...input, generateUtilityTask, processingPrompt, semanticProvider, signal: input.signal });
   const readinessReasons = source => {
     if (!source?.readiness || source.readiness.status === 'caughtUp') return [];
+    if (source.readiness.unmatchedFloorIds?.length && !source.readiness.summaryMissingFloorIds?.length) return [];
     if (source.readiness.status === 'unknown' && source.readiness.hostConfirmed !== true) return ['memoryNotReady', 'coverageUnconfirmed'];
     const pendingSummaryFloorIds = source.readiness.summaryMissingFloorIds
       ?? (source.readiness.summaryPendingFloorIds ?? []).filter(floorId => !source.floorMemories?.some(memory => memory.floorId === floorId));
@@ -1136,18 +1308,33 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     const code = source?.error?.code ?? (status === 'timeout' ? 'V3_RECALL_MEMORY_PREPARATION_TIMEOUT' : 'V3_RECALL_SOURCE_UNAVAILABLE');
     return Object.assign(new Error(detail || (status === 'timeout' ? '当前聊天记忆准备超时。' : '当前聊天记忆暂时无法读取。')), { code });
   };
+  async function readAuxiliaryProjection(onPartial = null) {
+    if (typeof identityProjectionProvider !== 'function') return null;
+    try {
+      const projection = await identityProjectionProvider(undefined, { allowUnavailable: true, onPartial });
+      return projection?.data ?? projection;
+    } catch { return { unavailableSources: ['people', 'places'] }; }
+  }
+  function applyAuxiliaryProjection(source, projection) {
+    if (!source || !projection) return source;
+    const projected = { ...source, identityProjection: projection,
+      ...(Object.hasOwn(projection, 'placeWorkspace') ? { placeWorkspace: projection.placeWorkspace } : {}) };
+    return isolateRecallAuxiliarySources(projected, projection);
+  }
   const matchesSourceRoot = (value, root) => root?.status === 'ready'
     && root.revision === value.rootRevision && root.data?.chatId === value.chatId
     && root.data?.narrativeGeneration === value.narrativeGeneration && root.data?.headCheckpointId === value.headCheckpointId;
   const sourceVersion = value => value && typeof value === 'object' ? { chatId: value.chatId ?? value.data?.chatId ?? null,
     narrativeGeneration: value.narrativeGeneration ?? value.data?.narrativeGeneration ?? null,
     revision: value.rootRevision ?? value.revision ?? null, headCheckpointId: value.headCheckpointId ?? value.data?.headCheckpointId ?? null } : null;
-  async function basePreparedSource(snapshot, sanitizerSnapshot, { fresh = false, operation = null, rootResult = null, sourceToVerify = null } = {}) {
+  async function basePreparedSource(snapshot, sanitizerSnapshot, { fresh = false, operation = null, rootResult = null, sourceToVerify = null, auxiliarySource = null } = {}) {
     const started = Date.now(), budgetMs = Math.max(1, Number(preparationTimeoutMs) || DEFAULT_PREPARATION_TIMEOUT_MS);
     const timing = { phase: sourceToVerify ? 'commit' : 'source', mode: fresh ? 'fresh' : 'cached', stage: 'identity', status: 'unavailable', totalMs: 0, budgetMs,
       identityMs: 0, rootMs: 0, prepareMs: 0, readMs: 0, projectionMs: 0 };
     const timeout = Symbol('memoryPreparationTimeout'), stale = Symbol('memoryPreparationStale');
-    let timer = null, closed = false, stepStarted = null, abortListener;
+    let timer = null, closed = false, stepStarted = null, abortListener, auxiliaryFallback = null;
+    let auxiliaryProjection = { unavailableSources: ['people', 'places'] };
+    const readAuxiliary = () => readAuxiliaryProjection(value => { if (!closed) auxiliaryProjection = value; });
     // 最终fresh核验只留来源版本与阶段，不复制材料；这份诊断不参与来源比较。
     const sourceVerification = sourceToVerify ? { phase: 'commit', mode: fresh ? 'fresh' : 'cached', step: 'root', sourceStatus: sourceToVerify.status,
       preparationStatus: null, rootStatus: null, rootVerified: null, selectedSource: sourceVersion(sourceToVerify), checkedRoot: null } : null;
@@ -1176,6 +1363,10 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       }
     };
     const run = async () => {
+      if (auxiliarySource) {
+        auxiliaryFallback = () => applyAuxiliaryProjection(auxiliarySource, auxiliaryProjection);
+        return applyAuxiliaryProjection(auxiliarySource, await step('identity', readAuxiliary));
+      }
       let latestRoot = rootResult;
       const canReadRoot = typeof store.readRoot === 'function';
       if (canReadRoot && (sourceToVerify || fresh && latestRoot === null && typeof prepareMemory === 'function')) {
@@ -1184,10 +1375,18 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         if (rootError) throw rootError;
       }
       if (sourceToVerify && matchesSourceRoot(sourceToVerify, latestRoot)) {
-        const currentPlaceDependency = typeof placeWorkspaceDependencyProvider === 'function' ? await placeWorkspaceDependencyProvider() : `${sourceToVerify.chatId}:0`;
-        if ((sourceToVerify.placeWorkspaceDependency ?? `${sourceToVerify.chatId}:0`) !== currentPlaceDependency) return Object.freeze({ status: 'stale', reason: 'placeChanged' });
+        auxiliaryFallback = () => applyAuxiliaryProjection(sourceToVerify, auxiliaryProjection);
+        const projection = await readAuxiliary();
         updateSourceVerification({ sourceStatus: sourceToVerify.status, rootVerified: true, step: 'root' });
-        return sourceToVerify;
+        if (projection && typeof prepareMemory === 'function') {
+          const prepared = await step('prepare', () => prepareMemory({ preferCached: true, rootResult: latestRoot, allowRefresh: false }));
+          if (prepared?.status === 'ready' && prepared.reachable?.root) {
+            const projected = await step('projection', () => projectRecallSource(prepared.reachable, now,
+              sourceToVerify.sourceReadAttempts, snapshot, sanitizerSnapshot, hasRealtimeOrigin(), projection));
+            return applyAuxiliaryProjection(Object.freeze({ ...projected, rootVerified: matchesSourceRoot(projected, latestRoot) }), projection);
+          }
+        }
+        return applyAuxiliaryProjection(sourceToVerify, projection);
       }
       let result, prepared;
       if (typeof prepareMemory === 'function') {
@@ -1196,7 +1395,15 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         // 已确认尚未建立记忆时，没有可投影的记录；不再触发依赖身份的存储读取。
         if (prepared?.status === 'uninitialized') return prepared;
       }
-      const identityProjection = typeof identityProjectionProvider === 'function' ? await step('identity', () => identityProjectionProvider()) : null;
+      if (prepared?.status === 'ready' && prepared.reachable?.root) {
+        auxiliaryFallback = async () => isolateRecallAuxiliarySources(await projectRecallSource(prepared.reachable, now,
+          Object.freeze({ reachableReads: 0, exitPoint: 'validatedSnapshot' }), snapshot, sanitizerSnapshot, hasRealtimeOrigin(),
+          auxiliaryProjection), auxiliaryProjection);
+      } else if (typeof identityProjectionProvider === 'function') {
+        const base = await step('read', () => sourceReader({ store, now, hostSnapshot: snapshot, sanitizerOptions: sanitizerSnapshot, realtimeOrigin: hasRealtimeOrigin() }));
+        if (base?.status === 'ready') auxiliaryFallback = () => applyAuxiliaryProjection(base, auxiliaryProjection);
+      }
+      const identityProjection = await step('identity', readAuxiliary);
       if (prepared) {
         if (prepared?.status === 'ready' && prepared.reachable?.root) {
           result = await step('projection', () => projectRecallSource(prepared.reachable, now, Object.freeze({ reachableReads: 0, exitPoint: 'validatedSnapshot' }), snapshot, sanitizerSnapshot, hasRealtimeOrigin(), identityProjection?.data ?? identityProjection));
@@ -1220,16 +1427,18 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         updateSourceVerification({ sourceStatus: result.status, rootStatus: afterPreparation?.status ?? 'unavailable', checkedRoot: sourceVersion(afterPreparation), rootVerified: true, step: 'root' });
       }
       if (sourceToVerify) updateSourceVerification({ sourceStatus: result?.status ?? 'unavailable', rootVerified: canReadRoot ? (matchesSourceRoot(result, latestRoot) ? true : false) : null });
-      return result;
+      return applyAuxiliaryProjection(result, identityProjection);
     };
     let result;
     try {
       // 全部准备等待共用期限；同步执行仍可能延后计时器。超时/取消后每个 await 边界阻止迟到分支启动后续读取。
       result = await Promise.race([Promise.resolve().then(run), new Promise(resolve => { timer = setTimeout(() => resolve(timeout), budgetMs); }),
         ...(operation ? [new Promise(resolve => { abortListener = () => resolve(stale); operation.controller.signal.addEventListener('abort', abortListener, { once: true }); })] : [])]);
+      if (result === timeout && timing.stage === 'identity' && auxiliaryFallback) result = await auxiliaryFallback();
       if (result === timeout || result === stale) result = Object.freeze({ status: result === timeout ? 'timeout' : 'stale', sourceReadAttempts: Object.freeze({ reachableReads: 0, exitPoint: result === timeout ? 'memoryPreparationTimeout' : 'stale' }) });
     } catch (error) {
-      result = error === timeout || error === stale
+      if (error === timeout && timing.stage === 'identity' && auxiliaryFallback) result = await auxiliaryFallback();
+      else result = error === timeout || error === stale
         ? Object.freeze({ status: error === timeout ? 'timeout' : 'stale', sourceReadAttempts: Object.freeze({ reachableReads: 0, exitPoint: error === timeout ? 'memoryPreparationTimeout' : 'stale' }) })
         : Object.freeze({ status: 'unavailable', error: Object.freeze({ code: clean(error?.code ?? error?.name ?? 'V3_RECALL_SOURCE_UNAVAILABLE', 120), message: clean(error?.message ?? '记忆准备失败。') }), sourceReadAttempts: Object.freeze({ reachableReads: 0, exitPoint: 'memoryPreparationFailed' }) });
     } finally {
@@ -1682,6 +1891,16 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       if (currentSource.narrativeGeneration !== source.narrativeGeneration) return { ok: false, reason: 'narrativeChanged' };
       currentSource = Object.freeze({ ...currentSource, bodyMatch: await attachCoreBodyMatch(currentSource, operation.coreBodyWitness, before, operation.sanitizerOptions, fingerprint, recentBodyFloorLimit(), operation.locationReferenceSnapshot) });
     }
+    const auxiliaryReceipt = refreshAuxiliaryReceipt(finalReceipt, currentSource, operation.queryContext);
+    if (auxiliaryReceipt !== finalReceipt) {
+      finalReceipt = auxiliaryReceipt;
+      injectionText = finalReceipt.injectionText;
+      selectedFloors = finalReceipt.selectedFloors;
+      selectedStates = finalReceipt.selectedStates;
+      selectedCseChanges = finalReceipt.selectedCseChanges;
+      selectedFloorsForValidation = finalReceipt.timeDependencies?.renderPlan?.floors ?? selectedFloorsForValidation;
+      timeDependencies = finalReceipt.timeDependencies;
+    }
     if (!timeDependenciesValid(timeDependencies)) { markVerificationFailure('timeDependencies', 'invalid'); return { ok: false, reason: 'selectedRefsChanged' }; }
     if (timeDependencies.mode === 'projection' || timeDependencies.corrections.length || timeDependencies.reminders.length) {
       liveTime = currentSource.timeProjection;
@@ -1690,7 +1909,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         catch (error) { liveTime = null; logger?.warn?.('[qianqianjie] optional time projection check failed', { code: error?.code ?? error?.name ?? 'QQJ_TIME_READ_FAILED' }); }
       }
       if (!timeDependenciesCurrent(timeDependencies, liveTime)) {
-        finalReceipt = withoutStaleTime(receipt, currentSource, liveTime);
+        finalReceipt = withoutStaleTime(finalReceipt, currentSource, liveTime);
         if (!finalReceipt) { markVerificationFailure('timeDependencies', 'changed'); return { ok: false, reason: 'selectedRefsChanged' }; }
         injectionText = finalReceipt.injectionText;
       }
@@ -1855,7 +2074,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
       timings.inputMs = Date.now() - inputStarted;
       let candidate = null, candidateOwner = null;
       advanceOperation(operation, 'receiptValidation');
-      const placeWorkspaceDependency = typeof placeWorkspaceDependencyProvider === 'function' ? await placeWorkspaceDependencyProvider() : `${operation.chatId}:0`;
+      const placeWorkspaceDependency = `${operation.chatId}:0`;
       for (const value of receiptCandidates(user)) {
         const owner = value === sessionReceipt?.receipt ? sessionReceipt.owner : null;
         const snapshot = await persistedReceiptValid(value, { chatId: operation.chatId, userIndex: user.index, userFingerprint, pluginVersion, placeWorkspaceDependency }, fingerprint);
@@ -1892,6 +2111,35 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
             if (liveRecallFrameKey(current) !== operation.liveFrameKey) return finishStale(operation, timings, 'narrativeChanged');
             return finishSkipped(operation, 'recentBodyOnly', timings);
           }
+        }
+      }
+      let manualReceiptChanged = false;
+      if (candidate && typeof identityProjectionProvider === 'function') {
+        const entityNames = new Map(candidate.timeDependencies?.renderPlan?.entityNames ?? []);
+        for (const place of candidate.selectedPlaces ?? []) if (!entityNames.has(place.placeEntityId)) {
+          entityNames.set(place.placeEntityId, place.text.split('：')[0]);
+        }
+        const placeIds = new Set([...(candidate.selectedPlaces ?? []).map(place => place.placeEntityId),
+          ...(candidate.timeDependencies?.renderPlan?.floors ?? []).flatMap(floor => floor.items.map(item => item.placeEntityId).filter(Boolean))]);
+        const auxiliarySource = { status: 'ready', chatId: candidate.chatId, narrativeGeneration: candidate.narrativeGeneration,
+          coverage: candidate.coverage, floorMemories: [], currentState: [], cseChanges: [],
+          entities: [...entityNames].map(([entityId, displayName]) => ({ entityId, displayName,
+            entityType: placeIds.has(entityId) ? 'place' : 'person', aliases: [] })),
+          placeWorkspace: null };
+        const fresh = await basePreparedSource(before, operation.sanitizerOptions, { operation, auxiliarySource });
+        if (fresh?.status === 'ready') {
+          const updated = refreshAuxiliaryReceipt(candidate, fresh, queryContext);
+          if (updated !== candidate) {
+            candidate = { ...updated, receiptFingerprint: await fingerprint(JSON.stringify(receiptMaterial(updated))) };
+            manualReceiptChanged = true;
+          }
+        }
+      }
+      if (candidate && typeof manualMemorySnapshot === 'function') {
+        const updated = refreshFrozenManualSummaries(candidate, manualMemorySnapshot());
+        if (updated !== candidate) {
+          candidate = { ...updated, receiptFingerprint: await fingerprint(JSON.stringify(receiptMaterial(updated))) };
+          manualReceiptChanged = true;
         }
       }
       if (candidate?.selectedFloors.some(value => value.rawWitnesses?.length || value.summaryWitnesses?.length)) {
@@ -1946,6 +2194,19 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         operation.phase = diagnostic.phase = 'commit'; advanceOperation(operation, 'commitVerification');
         const committed = commitFrozenReceiptIfCurrent({ operation, receipt: candidate, userIndex: user.index, hostGuard });
         if (!committed.ok) return stopForFinalSafety(committed.reason);
+        if (manualReceiptChanged) {
+          const owner = Object.freeze({ chatId: operation.chatId, hostChatId: operation.hostChatId, userMessage: committed.user.message, userText: operation.userText });
+          const receiptPersistence = typeof committed.snapshot.context?.saveChat === 'function' ? 'saving' : 'sessionOnly';
+          candidate = Object.freeze({ ...candidate, receiptPersistence });
+          sessionReceipt = Object.freeze({ userMessage: committed.user.message, owner, receipt: candidate });
+          candidateOwner = owner;
+          if (receiptPersistence === 'saving') {
+            const receiptStarted = Date.now();
+            void persistReceipt(committed.snapshot, committed.user, candidate, (step, errorCode) => updateReceiptSave(owner, receiptStarted, step, errorCode))
+              .then(persistence => finishReceiptPersistence(owner, persistence, Date.now() - receiptStarted, sessionReceipt?.owner === owner ? sessionReceipt.receiptSaveDiagnostic : null))
+              .catch(error => logger?.warn?.('[qianqianjie] manual recall receipt save failed', { code: error?.code ?? error?.name }));
+          }
+        }
         timings.commitMs = Date.now() - commitStarted;
         timings.totalMs = Date.now() - operation.started;
         // 保存可能在复用核验的 await 中完成；读取同一 owner 的最新保存状态，避免重新显示 saving。
@@ -2058,7 +2319,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         userMessageIndex: user.index,
         userContentFingerprint: userFingerprint,
         queryFingerprint,
-        ...(source.identityProjection?.placeWorkspaceRevision ? { placeWorkspaceDependency: source.placeWorkspaceDependency, selectedPlaces: clone(selection.manualPlaces ?? []) } : {}),
+        ...(source.identityProjection?.placeWorkspaceRevision || selection.manualPlaces?.length ? { placeWorkspaceDependency: source.placeWorkspaceDependency ?? `${source.chatId}:0`, selectedPlaces: clone(selection.manualPlaces ?? []) } : {}),
         locationReferenceDependency: JSON.stringify(operation.locationReferenceSnapshot),
         bodyMatchFingerprint: source.bodyMatch.fingerprint,
         strategyVersion: RECALL_STRATEGY_VERSION,
@@ -2112,8 +2373,10 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
         skipReasons: [...new Set([...(selection.skipReasons ?? []), ...partialReasons])],
         createdAt: nowIso(now),
       };
-      if (receiptBase.timeDependencies.mode === 'selected' && (receiptBase.timeDependencies.corrections.length || receiptBase.timeDependencies.reminders.length) && selection.limits) {
-        receiptBase.timeDependencies.renderPlan = { floors: selection.floors.map(({ floorId, floorMemoryId, assistantSeq, reasons, chronology, items }) => ({ floorId, floorMemoryId, assistantSeq, reasons: [...reasons], chronology: clone(chronology),
+      if (receiptBase.timeDependencies.mode === 'selected' && selection.limits && (typeof manualMemorySnapshot === 'function'
+        || selection.manualPlaces?.length || selection.floors.some(floor => floor.items.some(item => item.placeEntityId || item.kind === 'manualArtifact'))
+        || receiptBase.timeDependencies.corrections.length || receiptBase.timeDependencies.reminders.length)) {
+        receiptBase.timeDependencies.renderPlan = { entityNames: source.entities.map(entity => [entity.entityId, entity.displayName]), floors: selection.floors.map(({ floorId, floorMemoryId, assistantSeq, reasons, chronology, items }) => ({ floorId, floorMemoryId, assistantSeq, reasons: [...reasons], chronology: clone(chronology),
           items: items.map(({ rankScore, rankBranches, rankEntityBranches, ...item }) => clone(item)) })), limits: { maxCharacters: selection.limits.maxCharacters, estimatedTokenBudget: selection.limits.estimatedTokenBudget } };
       }
       receiptBase.completionStatus = receiptBase.injectionText ? 'ready' : 'empty';
