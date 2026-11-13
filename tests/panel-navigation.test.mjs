@@ -53,13 +53,13 @@ test('真实面板入口按千人/千结/千事/千窗/双丝网/设置映射视
   const host = new Node('host'); host.attachShadow = () => root;
   let firstElement = true;
   const documentEvents = {}, documentListeners = new Map();
-  const documentRef = { defaultView: { innerWidth: 390, matchMedia: () => ({ matches: true }) }, body: new Node('body'), createElement(tag) { if (firstElement) { firstElement = false; return host; } return new Node(tag); },
+  const documentRef = { defaultView: { innerWidth: 390, matchMedia: () => ({ matches: documentRef.defaultView.innerWidth <= 640 }) }, body: new Node('body'), createElement(tag) { if (firstElement) { firstElement = false; return host; } return new Node(tag); },
     addEventListener(name, listener, capture = false) {
       if (!documentListeners.has(name)) documentListeners.set(name, []);
       documentListeners.get(name).push({ listener, capture });
       documentEvents[name] = event => {
         let stopped = false;
-        const dispatched = { ...event, stopPropagation() { stopped = true; event.stopPropagation?.(); } };
+        const dispatched = { ...event, stopPropagation() { stopped = true; event.stopPropagation?.(); }, stopImmediatePropagation() { stopped = true; event.stopImmediatePropagation?.(); } };
         for (const entry of [...documentListeners.get(name)].sort((left, right) => Number(right.capture) - Number(left.capture))) {
           entry.listener(dispatched); if (stopped) break;
         }
@@ -193,32 +193,102 @@ test('真实面板入口按千人/千结/千事/千窗/双丝网/设置映射视
   assert.equal(dialogAppearances.at(-1)?.family, '测试字体', '独立编辑窗接收外观控制器解析出的字体');
   assert.equal(dialogAppearances.at(-1)?.fontCssUrl, 'https://example.invalid/font.css');
   assert.match(root.innerHTML, /\.body\{[^}]*touch-action:pan-y/);
+  assert.ok(root.innerHTML.includes('@media(min-width:641px){:host{pointer-events:none}}'));
+  assert.match(root.innerHTML, /\.panel\{[^}]*pointer-events:auto/);
   assert.ok(calls.some(([kind]) => kind === 'profiles-activate'));
-  const outsideEvent = inside => ({ target: host, composedPath: () => inside ? [close, panelNode, root, host] : [host] });
+  let preventedOutside = 0, stoppedOutside = 0;
+  const background = new Node('div');
+  const outsideEvent = inside => ({ button: 0, pointerId: 1, clientX: 5, clientY: 5, target: inside ? host : background, composedPath: () => inside ? [close, panelNode, root, host] : [background, documentRef], preventDefault() { preventedOutside += 1; }, stopImmediatePropagation() { stoppedOutside += 1; } });
   const pointerSequence = (downInside, upInside) => {
-    host.fire('pointerdown', outsideEvent(downInside));
-    host.fire('pointerup', outsideEvent(upInside));
-    host.fire('click', outsideEvent(false));
+    documentEvents['pointerdown']?.(outsideEvent(downInside));
+    documentEvents['pointerup']?.(outsideEvent(upInside));
+    documentEvents['click']?.(outsideEvent(false));
   };
   pointerSequence(true, false);
   assert.equal(panel.getState().open, true, '从面板内部拖到外侧不关闭');
   pointerSequence(false, true);
   assert.equal(panel.getState().open, true, '从外侧拖到面板内部不关闭');
-  host.fire('pointerdown', outsideEvent(false)); host.fire('pointercancel', {});
-  host.fire('pointerup', outsideEvent(false)); host.fire('click', outsideEvent(false));
+  documentEvents['pointerdown']?.(outsideEvent(false)); documentEvents.pointercancel?.({});
+  documentEvents['pointerup']?.(outsideEvent(false)); documentEvents['click']?.(outsideEvent(false));
   assert.equal(panel.getState().open, true, '取消的pointer手势不关闭');
-  host.fire('pointerdown', outsideEvent(true)); host.fire('pointerup', outsideEvent(true)); host.fire('click', outsideEvent(true));
+  documentEvents['pointerdown']?.(outsideEvent(true)); documentEvents['pointerup']?.(outsideEvent(true)); documentEvents['click']?.(outsideEvent(true));
   assert.equal(panel.getState().open, true, 'Shadow DOM重定向到host的内部点击保持打开');
+  documentEvents.pointerdown?.(outsideEvent(false));
+  documentEvents.pointermove?.({ pointerId: 1, clientX: 25, clientY: 5 });
+  documentEvents.pointerup?.(outsideEvent(false)); documentEvents.click?.(outsideEvent(false));
+  assert.equal(panel.getState().open, true, '外侧拖选移动超过5px不关闭');
+  assert.equal(documentListeners.has('wheel'), false, '原生滚轮不设转发或阻止监听');
+  documentRef.defaultView.getComputedStyle = () => ({ position: 'fixed' });
+  const foreignHost = new Node('foreign-host'), foreignRoot = { nodeType: 11, host: foreignHost };
+  for (const type of ['pointerdown', 'pointerup', 'click']) documentEvents[type]?.({ ...outsideEvent(false), composedPath: () => [foreignRoot, foreignHost, documentRef] });
+  assert.equal(panel.getState().open, true, '其它fixed Shadow窗口内部点击不被当前窗口抢先关闭');
+  for (const selector of ['button', 'input', 'textarea', 'a[href]', 'label', 'summary', '[role~="button"]', '[tabindex]:not([tabindex="-1"])', 'dialog', 'select', 'input[list]', '[role~="dialog"]', '[role~="alertdialog"]', '[role~="menu"]', '[role~="listbox"]', '[role~="combobox"]', '[aria-haspopup]', '[popover]']) {
+    const popup = selector === '[popover]' ? { popover: 'auto', matches: value => value === ':popover-open' }
+      : selector === '[aria-haspopup]' ? { getAttribute: name => name === 'aria-haspopup' ? 'menu' : null }
+        : { matches: selectors => selectors.split(',').map(value => value.trim()).includes(selector === 'input[list]' ? 'input' : selector) };
+    let blocked = false;
+    for (const type of ['pointerdown', 'pointerup', 'click']) documentEvents[type]?.({ ...outsideEvent(false),
+      composedPath: () => [{}, popup, documentRef], preventDefault: () => { blocked = true; } });
+    const protectedWindow = ['dialog', '[role~="dialog"]', '[role~="alertdialog"]', '[role~="menu"]', '[role~="listbox"]', '[role~="combobox"]', '[popover]'].includes(selector);
+    assert.equal(panel.getState().open, protectedWindow, `外侧宿主动作收起，独立窗口保持所属层 ${selector}`);
+    if (!protectedWindow) await panel.show();
+    assert.equal(blocked, false, `外来弹窗点击送回原控件 ${selector}`);
+    documentEvents.keydown({ key: 'Escape', composedPath: () => [{}, popup, documentRef] });
+    assert.equal(panel.getState().open, true, `外来弹窗Escape保留千千结 ${selector}`);
+    dialogActive = true;
+    documentEvents.keydown({ key: 'Escape', composedPath: () => [{}, popup, documentRef] });
+    assert.equal(dialogActive, true, '外来弹窗Escape不取消我方已打开的子窗');
+    dialogActive = false;
+  }
+
   dialogActive = true; pointerSequence(false, false);
   assert.equal(panel.getState().open, true, '子弹窗活跃时外侧事件不穿透关闭主面板');
   dialogActive = false;
+  for (const width of [1280, 641]) {
+    documentRef.defaultView.innerWidth = width;
+    pointerSequence(false, false);
+    assert.equal(panel.getState().open, true, '桌面宿主纯点击不关闭主浮窗');
+    assert.equal(preventedOutside, 0, '桌面宿主click不被消费');
+    assert.equal(stoppedOutside, 0);
+  }
+  documentRef.defaultView.innerWidth = 390;
+  documentEvents.pointerdown(outsideEvent(false));
+  documentRef.defaultView.innerWidth = 641;
+  documentEvents.pointerup(outsideEvent(false)); documentEvents.click(outsideEvent(false));
+  assert.equal(panel.getState().open, true, '手机按下后切桌面不关闭');
+  documentEvents.pointerdown(outsideEvent(false));
+  documentRef.defaultView.innerWidth = 390;
+  documentEvents.pointerup(outsideEvent(false)); documentEvents.click(outsideEvent(false));
+  assert.equal(panel.getState().open, true, '桌面按下后切手机不续用旧手势');
+  documentRef.defaultView.innerWidth = 640;
   const outsideTrigger = new Node('button');
   await panel.show(outsideTrigger);
   const outsideDeactivations = calls.filter(([kind]) => kind === 'profiles-deactivate').length;
+  const hostInput = { matches: selectors => selectors.split(',').includes('input') };
+  for (const type of ['pointerdown', 'pointerup', 'click']) documentEvents[type]({ ...outsideEvent(false), composedPath: () => [hostInput, documentRef] });
+  assert.equal(panel.getState().open, false, '手机宿主input首击应收起主窗');
+  assert.notEqual(outsideTrigger.focused, true, '外侧关闭不把输入焦点拉回FAB');
+  assert.equal(preventedOutside, 0);
+  await panel.show(outsideTrigger);
   pointerSequence(false, false);
-  assert.equal(panel.getState().open, false, '面板外空白两端点击沿close关闭');
-  assert.equal(outsideTrigger.focused, true);
-  assert.equal(calls.filter(([kind]) => kind === 'profiles-deactivate').length, outsideDeactivations + 1, '外侧关闭执行原视图清理');
+  assert.equal(panel.getState().open, false, '文档外侧两端点击沿close关闭');
+  assert.equal(preventedOutside, 0, '外侧关闭保留宿主默认动作');
+  assert.equal(stoppedOutside, 0, '外侧关闭保留宿主click传播');
+  pointerSequence(false, false);
+  assert.equal(preventedOutside, 0, '隐藏面板放行宿主click');
+  assert.notEqual(outsideTrigger.focused, true);
+  assert.equal(calls.filter(([kind]) => kind === 'profiles-deactivate').length, outsideDeactivations + 2, '两次外侧关闭均执行原视图清理');
+  documentRef.defaultView.innerWidth = 390;
+  await panel.show(); pointerSequence(false, false);
+  assert.equal(panel.getState().open, false, '390手机纯外侧点击仍关闭');
+  assert.equal(preventedOutside, 0); assert.equal(stoppedOutside, 0);
+  await panel.show(outsideTrigger);
+  panelNode.getBoundingClientRect = () => ({ left: 10, top: 20, width: 370, height: 764 });
+  for (const type of ['pointerdown', 'pointerup']) documentEvents[type]({ ...outsideEvent(true), clientX: 4, clientY: 400 });
+  documentEvents.click({ ...outsideEvent(true), clientX: 12, clientY: 400 });
+  assert.equal(panel.getState().open, false, '浏览器将窄边触控重定向入窗也按物理两端关闭');
+  assert.equal(preventedOutside, 1); assert.equal(stoppedOutside, 1, '重定向的窗内click不激活隐藏动作');
+  delete panelNode.getBoundingClientRect;
   await panel.show();
   body.scrollTop = 31;
   settingsTab.fire('click');
@@ -384,6 +454,7 @@ test('真实面板入口按千人/千结/千事/千窗/双丝网/设置映射视
   const hideToggle = memoryControls.find(node => node.id === 'qqj-settings-auto-hide');
   assert.equal(hideToggle.children[0].textContent, '自动隐藏');
   assert.equal(hideToggle.children.at(-1).tag, 'input', '自动隐藏也应文字左/开关右');
+  assert.match(panelCss, /\.qqj-settings-management \.qqj-view-heading>p:not\(\.qqj-page-health\)\{display:none\}/u, '嵌入管理页仅隐藏说明，读取状态保持可见');
   assert.match(panelCss, /#qqj-settings-time,#qqj-settings-auto-hide,#qqj-settings-core-cache\{justify-content:space-between\}/u);
   const memoryHints = memoryControls.filter(node => node.className === 'settings-hint');
   assert.match(memoryHints[0]?.textContent ?? '', /身体状态、周期与期限.*AI 正文.*摘要 API.*当前楼.*近期事项/u);
@@ -489,6 +560,7 @@ test('真实面板入口按千人/千结/千事/千窗/双丝网/设置映射视
   assert.match(panelCss, /\.qqj-person-summary>\.v3-memory-status,\.qqj-section-summary>\.v3-memory-status\{[^}]*white-space:normal;overflow-wrap:anywhere/,
     'summary 状态胶囊应在窄宽度下完整换行显示');
   assert.doesNotMatch(panelCss, /@media\(max-width:640px\)[^}]*\.icon-btn\{width:30px/, '手机端不应再次缩小三枚顶部按钮的实际图形或点击框');
+  for (const selector of ['topbar', 'panel-resize-handle']) assert.match(panelCss, new RegExp(`\\.${selector}\\{[^}]*touch-action:none`), '触控拖动和缩放仅手柄接管手势');
   assert.match(panelCss, /@media\(max-width:640px\)\{\.panel>\.panel-resize-handle\{display:none\}\}/, '手机把手隐藏规则须覆盖通用 display:grid，避免生成多余底部行');
   assert.doesNotMatch(panelCss, /\.panel:has\(\.qqj-manual-save-bar\)\{background:var\(--panel\)\}/, '编辑页底部不应再绘制整条保存栏背景');
   assert.doesNotMatch(panelCss, /linear-gradient\(to top,var\(--panel\)/, '不得重新引入底部高度拼接接缝');
@@ -602,6 +674,11 @@ test('真实面板入口按千人/千结/千事/千窗/双丝网/设置映射视
   assert.equal(panel.getState().activeTab, 'profiles');
   const profileDeactivationsBeforeClose = calls.filter(([kind]) => kind === 'profiles-deactivate').length;
 
+  for (const flags of [{ defaultPrevented: true }, { isComposing: true }]) {
+    documentEvents.keydown({ key: 'Escape', ...flags });
+    assert.equal(panel.getState().open, true, '已消费或组字中的Escape不关闭主面板');
+  }
+
   dialogActive = true;
   documentEvents.keydown({ key: 'Escape', preventDefault() {} });
   assert.equal(dialogCancels, 1); assert.equal(panel.getState().open, true, 'Esc 应先关顶层自绘弹窗，不连带关闭面板');
@@ -702,7 +779,7 @@ test('主面板手机仅随可视视口变化，聊天区不影响尺寸且恢�
 test('390和320手机仅留视口边距，聊天和输入变化不调整面板', () => {
   for (const width of [390, 320]) {
     const f = panelGeometryFixture({ width, height: 844, chat: { left: 10, top: 50, width: width - 20, height: 700 } });
-    assert.deepEqual(mobilePanelRect(width, 844), { left: 10, right: 10, width: width - 20, top: 40, height: 764, bottom: 40 });
+    assert.deepEqual(mobilePanelRect(width, 844), { left: 10, right: 10, width: width - 20, top: 20, height: 764, bottom: 60 });
     const bounds = Object.fromEntries(f.variables);
     f.setChat({ left: 10, top: 300, width: 100, height: 50 });
     f.nodes.form_sheld = { getBoundingClientRect: () => ({ top: 350, height: 400 }) };
@@ -712,8 +789,8 @@ test('390和320手机仅留视口边距，聊天和输入变化不调整面板',
     assert.equal(f.writes.length, 0);
     f.viewport.innerHeight = 400; f.viewport.fire('resize');
     assert.equal(f.variables.get('--qqj-panel-bounds-height'), '400px');
-    assert.deepEqual(mobilePanelRect(width, 400, 10, 5), { left: 10, right: 10, width: width - 20, top: 40, height: 320, bottom: 40 });
-    assert.deepEqual(mobilePanelRect(width, 400, 30, 25), { left: 10, right: 10, width: width - 20, top: 40, height: 320, bottom: 40 });
+    assert.deepEqual(mobilePanelRect(width, 400, 10, 5), { left: 10, right: 10, width: width - 20, top: 20, height: 320, bottom: 60 });
+    assert.deepEqual(mobilePanelRect(width, 400, 30, 25), { left: 10, right: 10, width: width - 20, top: 30, height: 320, bottom: 50 });
     assert.deepEqual(mobilePanelRect(width, 400, 50, 45), { left: 10, right: 10, width: width - 20, top: 50, height: 305, bottom: 45 });
     f.controller.destroy();
   }
@@ -722,7 +799,7 @@ test('390和320手机仅留视口边距，聊天和输入变化不调整面板',
 test('桌面默认固定360×600，聊天区变化不移动窗口或中断拖动', () => {
   assert.equal(desktopPanelSize(1200, 700).height, 600);
   const f = panelGeometryFixture({ height: 700 });
-  assert.deepEqual(f.panel.getBoundingClientRect(), { left: 820, top: 80, width: 360, height: 600 });
+  assert.deepEqual(f.panel.getBoundingClientRect(), { left: 820, top: 70, width: 360, height: 600 });
   const original = f.panel.getBoundingClientRect();
   f.setChat({ left: 500, top: 300, width: 200, height: 100 });
   f.resizeChat();
@@ -740,7 +817,7 @@ test('桌面默认固定360×600，聊天区变化不移动窗口或中断拖动
 
 test('桌面四向拖动及缩放可越过聊天区，浏览器缩小时仅临时clamp', () => {
   const f = panelGeometryFixture({ width: 1400, height: 1000, chat: { left: 500, top: 300, width: 400, height: 400 } });
-  for (const [x, y, left, top] of [[-2000, 0, 10, 80], [4000, 0, 1030, 80], [0, -2000, 1030, 10], [0, 4000, 1030, 390]]) {
+  for (const [x, y, left, top] of [[-2000, 0, 10, 70], [4000, 0, 1030, 70], [0, -2000, 1030, 10], [0, 4000, 1030, 390]]) {
     f.dragHandle.fire('pointerdown', { pointerId: 1, clientX: 0, clientY: 0 });
     f.dragHandle.fire('pointermove', { pointerId: 1, clientX: x, clientY: y });
     f.dragHandle.fire('pointerup', { pointerId: 1 });
@@ -765,5 +842,91 @@ test('桌面四向拖动及缩放可越过聊天区，浏览器缩小时仅临�
   f.viewport.innerWidth = 1400; f.viewport.innerHeight = 1000; f.viewport.fire('resize');
   assert.deepEqual(f.panel.getBoundingClientRect(), { left: 10, top: 10, width: 1010, height: 750 });
   assert.equal(f.writes.length, writes, '自动clamp不覆盖手动尺寸');
+  f.controller.destroy();
+});
+
+
+test('手机再上抬10px受安全区约束，桌面默认与已存拖动位置沿原几何', async () => {
+  assert.deepEqual(mobilePanelRect(390, 844, 44, 0), { left: 10, right: 10, width: 370, top: 44, height: 760, bottom: 40 });
+  assert.deepEqual(mobilePanelRect(390, 844, 35, 25), { left: 10, right: 10, width: 370, top: 35, height: 764, bottom: 45 });
+  assert.deepEqual(mobilePanelRect(390, 844, 50, 45), { left: 10, right: 10, width: 370, top: 50, height: 749, bottom: 45 });
+  const fresh = panelGeometryFixture();
+  for (let count = 0; count < 3; count += 1) { fresh.controller.restore(); assert.equal(fresh.panel.getBoundingClientRect().top, 70); }
+  assert.equal(fresh.writes.length, 0); fresh.controller.destroy();
+  const saved = panelGeometryFixture({ saved: { [PANEL_POSITION_KEY]: { left: 250, top: 155 } } });
+  for (let count = 0; count < 3; count += 1) { saved.controller.restore(); assert.equal(saved.panel.getBoundingClientRect().top, 155); }
+  assert.equal(saved.writes.length, 0); saved.controller.destroy();
+  const source = await readFile(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('top:calc(var(--qqj-panel-bounds-top,0px) + max(20px,env(safe-area-inset-top,0px)))'));
+});
+
+
+test('主宿主补偿文档包含块原点，滚动后仍保持原视口坐标', () => {
+  const f = panelGeometryFixture();
+  let origin = { left: -40, top: -500 };
+  const host = { style: {}, getBoundingClientRect() {
+    const values = this.style.transform?.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/);
+    return { left: origin.left + Number(values?.[1] ?? 0), top: origin.top + Number(values?.[2] ?? 0) };
+  } };
+  f.panel.getRootNode = () => ({ host });
+  f.controller.restore();
+  assert.deepEqual(host.getBoundingClientRect(), { left: 0, top: 0 });
+  assert.deepEqual(f.panel.getBoundingClientRect(), { left: 820, top: 70, width: 360, height: 600 });
+  origin = { left: -90, top: -750 };
+  f.viewport.fire('scroll');
+  assert.deepEqual(host.getBoundingClientRect(), { left: 0, top: 0 });
+  assert.equal(f.writes.length, 0);
+  origin = { left: 0, top: 0 };
+  f.viewport.innerWidth = 390;
+  f.viewport.visualViewport = { offsetLeft: 0, offsetTop: 260, width: 390, height: 350 };
+  f.viewport.fire('resize');
+  assert.equal(host.style.transform, '', '手机内部输入聚焦后保留原视口 fixed 层');
+  assert.equal(f.variables.get('--qqj-panel-bounds-top'), '260px');
+  assert.equal(f.variables.get('--qqj-panel-bounds-height'), '350px');
+  origin = { left: -90, top: -750 };
+  f.viewport.innerWidth = 1200;
+  f.viewport.visualViewport = { offsetLeft: 0, offsetTop: 0, width: 1200, height: 900 };
+  f.viewport.fire('resize');
+  assert.deepEqual(host.getBoundingClientRect(), { left: 0, top: 0 }, '恢复桌面继续补偿文档原点');
+  f.viewport.innerWidth = 390; f.viewport.fire('resize');
+  assert.deepEqual(host.getBoundingClientRect(), { left: 0, top: 0 }, '手机仍补偿真实主题文档偏移');
+  origin = { left: 0, top: 0 }; f.viewport.fire('resize');
+  assert.equal(host.style.transform, '', '断点切回手机零原点清掉桌面补偿');
+  f.controller.destroy();
+  origin = { left: -100, top: -900 }; f.viewport.fire('scroll');
+  assert.notDeepEqual(host.getBoundingClientRect(), { left: 0, top: 0 }, '销毁配对解除文档滚动监听');
+});
+
+test('手机内部文本编辑保主窗几何，失焦旋转与主动定位沿原更新', () => {
+  const f = panelGeometryFixture({ width: 390, height: 844, visual: { offsetLeft: 0, offsetTop: 0, width: 390, height: 844 } });
+  const root = { activeElement: null, host: { style: {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) } };
+  f.panel.getRootNode = () => root; f.panel.contains = node => node === root.activeElement;
+  f.controller.restore();
+  const before = Object.fromEntries(f.variables);
+  for (const control of [{ tagName: 'TEXTAREA' }, { tagName: 'INPUT', type: 'text' }, { tagName: 'INPUT', type: 'password' }, { isContentEditable: true }]) {
+    root.activeElement = control;
+    Object.assign(f.viewport.visualViewport, { offsetTop: 260, height: 350 });
+    f.viewport.fire('resize', { type: 'resize' }); f.viewport.visualViewport.fire('scroll', { type: 'scroll' });
+    assert.deepEqual(Object.fromEntries(f.variables), before);
+    assert.equal(root.host.style.transform, '');
+  }
+  root.activeElement = null; f.viewport.fire('resize', { type: 'resize' });
+  assert.equal(f.variables.get('--qqj-panel-bounds-height'), '350px');
+  for (const control of [...['checkbox', 'radio', 'range', 'button', 'color', 'file'].map(type => ({ tagName: 'INPUT', type })),
+    { tagName: 'TEXTAREA', readOnly: true }, { tagName: 'INPUT', type: 'text', readOnly: true }, { tagName: 'SELECT' }]) {
+    root.activeElement = control; f.viewport.visualViewport.height++;
+    f.viewport.visualViewport.fire('resize', { type: 'resize' });
+    assert.equal(f.variables.get('--qqj-panel-bounds-height'), `${f.viewport.visualViewport.height}px`, JSON.stringify(control));
+  }
+  f.panel.contains = () => false; root.activeElement = { tagName: 'TEXTAREA' }; f.viewport.visualViewport.height = 390;
+  f.viewport.fire('resize', { type: 'resize' }); assert.equal(f.variables.get('--qqj-panel-bounds-height'), '390px', '外部host文本框不暂停');
+  f.panel.contains = node => node === root.activeElement;
+  root.activeElement = { tagName: 'TEXTAREA' }; f.viewport.visualViewport.height = 400;
+  f.viewport.fire('orientationchange', { type: 'orientationchange' });
+  assert.equal(f.variables.get('--qqj-panel-bounds-height'), '400px');
+  f.viewport.visualViewport.height = 450; f.controller.restore();
+  assert.equal(f.variables.get('--qqj-panel-bounds-height'), '450px');
+  f.viewport.innerWidth = 1200; f.viewport.visualViewport.width = 1200; f.viewport.visualViewport.height = 600;
+  f.viewport.fire('resize', { type: 'resize' }); assert.equal(f.variables.get('--qqj-panel-bounds-height'), '600px');
   f.controller.destroy();
 });

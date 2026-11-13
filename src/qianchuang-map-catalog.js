@@ -20,7 +20,7 @@ function geometryValid(asset, kind) {
 }
 function descriptorValid(asset, kind) {
   return asset && /^[a-z0-9][a-z0-9-]*$/u.test(asset.id) && /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.svg$/u.test(asset.file)
-    && typeof asset.label === 'string' && asset.label.trim() && Number.isFinite(asset.width) && asset.width > 0 && Number.isFinite(asset.height) && asset.height > 0
+    && typeof asset.label === 'string' && asset.label.trim() && Number.isFinite(asset.width) && asset.width > 0 && Number.isFinite(asset.height) && asset.height === asset.width
     && /^[a-f0-9]{64}$/u.test(asset.sha256) && (kind === 'city' || asset.family !== 'town' && validQianchuangMapStyle(asset.family) && validQianchuangMapLayout(asset.layout, asset.family));
 }
 function metadataFor(row, kind, bundled) {
@@ -114,14 +114,15 @@ export function createQianchuangMapCatalog({ genericAssets, cityAssets, fetchImp
   return Object.freeze({ prepare, load });
 }
 
-let current = null;
+let current = null, catalogRevision = 0;
 const listeners = new Set();
 export function startQianchuangMapCatalog(options) {
   if (current) return current;
   current = createQianchuangMapCatalog(options);
-  void current.prepare().then(() => { for (const listener of listeners) listener(); });
+  void current.prepare().then(() => { catalogRevision += 1; for (const listener of listeners) listener(); });
   return current;
 }
+export function qianchuangMapCatalogRevision() { return catalogRevision; }
 export function subscribeQianchuangMapCatalog(listener) { listeners.add(listener); return () => listeners.delete(listener); }
 // 本地测试隔离：单进程 --test-isolation=none 下多个测试文件共用模块级单例 current，
 // 需要显式复位以免上一个文件留下的实例污染本文件（仅测试使用，生产不调用）。

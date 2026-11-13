@@ -10,7 +10,8 @@ const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, v
 const viewportSize = (width, height) => ({ width: Math.max(0, Number(width) || 0), height: Math.max(0, Number(height) || 0) });
 
 export function mobilePanelRect(width, height, safeTop = 0, safeBottom = 0) {
-  const top = Math.max(40, safeTop), bottom = Math.max(40, safeBottom);
+  const verticalMargins = Math.max(40, safeTop) + Math.max(40, safeBottom);
+  const top = Math.max(20, safeTop), bottom = verticalMargins - top;
   return { left: 10, width: Math.max(0, width - 20), right: 10, top, height: Math.max(0, height - top - bottom), bottom };
 }
 
@@ -41,7 +42,7 @@ export function desktopPanelPosition(width, height, panelWidth, panelHeight, sav
   const minimumTop = Math.min(PANEL_SAFETY_MARGIN, availableY);
   const maximumTop = Math.max(minimumTop, availableY - PANEL_SAFETY_MARGIN);
   const defaultLeft = clamp(availableX - 20, minimumLeft, maximumLeft);
-  const defaultTop = clamp(80, minimumTop, maximumTop);
+  const defaultTop = clamp(70, minimumTop, maximumTop);
   return {
     left: clamp(finite(saved?.left) ? Number(saved.left) : defaultLeft, minimumLeft, maximumLeft),
     top: clamp(finite(saved?.top) ? Number(saved.top) : defaultTop, minimumTop, maximumTop),
@@ -188,9 +189,19 @@ export function createPanelGeometryController({ panel, dragHandle, resizeHandle,
   const restore = () => {
     finish();
     if (!panel) return;
+    const desktop = isDesktop();
+    const host = panel.getRootNode?.().host;
+    if (host) {
+      // 手机零原点保留原 fixed 层级，非零原点沿既有补偿。
+      host.style.transform = desktop ? 'translate(0px, 0px)' : '';
+      const origin = host.getBoundingClientRect();
+      if (desktop || origin.left !== 0 || origin.top !== 0) {
+        host.style.transform = `translate(${-origin.left}px, ${-origin.top}px)`;
+      }
+    }
     const view = dimensions();
     for (const property of ['left', 'top', 'width', 'height']) panel.style.setProperty(`--qqj-panel-bounds-${property}`, `${view[property]}px`);
-    if (!isDesktop()) {
+    if (!desktop) {
       for (const property of ['left', 'top', 'right', 'bottom', 'width', 'height', 'maxWidth', 'maxHeight', 'transform', 'willChange']) panel.style[property] = '';
       return;
     }
@@ -203,11 +214,17 @@ export function createPanelGeometryController({ panel, dragHandle, resizeHandle,
     panel.style.top = `${position.top}px`;
     panel.style.left = `${position.left}px`; panel.style.right = 'auto';
   };
-  const onViewportChange = () => restore();
+  const onViewportChange = event => {
+    const focused = panel?.getRootNode?.()?.activeElement;
+    const editing = focused?.isContentEditable || !focused?.readOnly && (focused?.tagName === 'TEXTAREA'
+      || focused?.tagName === 'INPUT' && ['text', 'search', 'url', 'tel', 'email', 'password', 'number'].includes(focused.type));
+    if (!isDesktop() && event?.type !== 'orientationchange' && panel?.contains?.(focused) && editing) return;
+    restore();
+  };
   const bindings = [
     [dragHandle, 'pointerdown', onDragDown], [dragHandle, 'pointermove', onDragMove], [dragHandle, 'pointerup', onPointerUp], [dragHandle, 'pointercancel', onPointerCancel], [dragHandle, 'lostpointercapture', onPointerCancel],
     [resizeHandle, 'pointerdown', onResizeDown], [resizeHandle, 'pointermove', onResizeMove], [resizeHandle, 'pointerup', onPointerUp], [resizeHandle, 'pointercancel', onPointerCancel], [resizeHandle, 'lostpointercapture', onPointerCancel],
-    [viewport, 'resize', onViewportChange], [viewport, 'orientationchange', onViewportChange],
+    [viewport, 'resize', onViewportChange], [viewport, 'scroll', onViewportChange], [viewport, 'orientationchange', onViewportChange],
     [viewport?.visualViewport, 'resize', onViewportChange], [viewport?.visualViewport, 'scroll', onViewportChange],
   ];
   for (const [target, name, listener] of bindings) target?.addEventListener?.(name, listener);

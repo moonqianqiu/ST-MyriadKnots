@@ -32,7 +32,7 @@ if (snapshot.status === 'ready') {
   const people = snapshot.people.items;
 }`;
 
-const shellCss = ':host{position:fixed;inset:0;z-index:4000;width:100dvw;height:100dvh;pointer-events:auto;background:transparent;text-shadow:none!important;isolation:isolate}:host([hidden]){display:none!important}.panel{position:fixed;top:80px;right:20px;width:360px;height:600px;max-width:calc(100dvw - 20px);max-height:calc(100dvh - 20px);display:grid;grid-template-rows:auto auto minmax(0,1fr) 24px;pointer-events:auto}.body{min-height:0;overflow-y:auto;scrollbar-gutter:stable;touch-action:pan-y}.tabs{overflow-x:auto;flex-wrap:nowrap}.tab{flex:0 0 auto}@media(max-width:640px){.panel{top:calc(var(--qqj-panel-bounds-top,0px) + max(40px,env(safe-area-inset-top,0px)));left:calc(var(--qqj-panel-bounds-left,0px) + var(--qqj-panel-bounds-width,100dvw)/2);right:auto;transform:translateX(-50%);width:max(0px,calc(var(--qqj-panel-bounds-width,100dvw) - 20px));max-width:calc(var(--qqj-panel-bounds-width,100dvw) - 20px);height:max(0px,calc(var(--qqj-panel-bounds-height,100dvh) - max(40px,env(safe-area-inset-top,0px)) - max(40px,env(safe-area-inset-bottom,0px))));max-height:none;grid-template-rows:auto auto minmax(0,1fr)}.panel-resize-handle{display:none}.tabs{scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}}';
+const shellCss = ':host{position:fixed;inset:0;z-index:4000;width:100dvw;height:100dvh;pointer-events:none;background:transparent;text-shadow:none!important;isolation:isolate}:host([hidden]){display:none!important}.panel{position:fixed;top:70px;right:20px;width:360px;height:600px;max-width:calc(100dvw - 20px);max-height:calc(100dvh - 20px);display:grid;grid-template-rows:auto auto minmax(0,1fr) 24px;pointer-events:auto}.body{min-height:0;overflow-y:auto;scrollbar-gutter:stable;touch-action:pan-y}.tabs{overflow-x:auto;flex-wrap:nowrap}.tab{flex:0 0 auto}@media(min-width:641px){:host{pointer-events:none}}@media(max-width:640px){.panel{top:calc(var(--qqj-panel-bounds-top,0px) + max(20px,env(safe-area-inset-top,0px)));left:calc(var(--qqj-panel-bounds-left,0px) + var(--qqj-panel-bounds-width,100dvw)/2);right:auto;transform:translateX(-50%);width:max(0px,calc(var(--qqj-panel-bounds-width,100dvw) - 20px));max-width:calc(var(--qqj-panel-bounds-width,100dvw) - 20px);height:max(0px,calc(var(--qqj-panel-bounds-height,100dvh) - max(40px,env(safe-area-inset-top,0px)) - max(40px,env(safe-area-inset-bottom,0px))));max-height:none;grid-template-rows:auto auto minmax(0,1fr)}.panel-resize-handle{display:none}.tabs{scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}}';
 
 export function createPanel({
   settings,
@@ -115,7 +115,7 @@ export function createPanel({
   const themeButton = root.querySelector('.theme-btn');
   const fabToggleButton = root.querySelector('.fab-toggle-btn');
   let swipeGesture = null;
-  let backdropDown = false, backdropUp = false;
+  let backdropGesture = null;
   let settingsManagementError = null;
   let documentationFallbackText = '', documentationCopyFeedback = '';
 
@@ -544,7 +544,7 @@ export function createPanel({
     return result;
   }
 
-  function close() {
+  function close({ restoreFocus = true } = {}) {
     memoryTransferView?.dispose(); memoryTransferView = null;
     rememberScroll();
     activationEpoch += 1;
@@ -559,13 +559,13 @@ export function createPanel({
     storageManagementView.deactivate();
     geometry.cancelGesture();
     swipeGesture = null;
-    backdropDown = false; backdropUp = false;
+    backdropGesture = null;
     dialog?.closeAll?.();
     host.hidden = true;
     host.setAttribute('aria-hidden', 'true');
     const previous = trigger;
     trigger = null;
-    previous?.focus?.();
+    if (restoreFocus) previous?.focus?.();
   }
 
   function openVectorSettings() {
@@ -619,15 +619,52 @@ export function createPanel({
   }, { passive: false });
   body?.addEventListener?.('touchcancel', () => { swipeGesture = null; }, { passive: true });
 
-  const isBackdrop = event => event.target === host && !(event.composedPath?.().includes(panel) ?? panel?.contains?.(event.target));
-  host.addEventListener('pointerdown', event => { backdropDown = isBackdrop(event); backdropUp = false; });
-  host.addEventListener('pointerup', event => { backdropUp = isBackdrop(event); });
-  host.addEventListener('pointercancel', () => { backdropDown = false; backdropUp = false; });
-  host.addEventListener('click', event => {
-    const outsideClick = isBackdrop(event) && backdropDown && backdropUp;
-    backdropDown = false; backdropUp = false;
-    if (outsideClick && !host.hidden && !dialog?.hasActive?.()) close();
-  });
+  const isForeignWindow = event => {
+    const path = event.composedPath?.();
+    if (path?.includes(panel)) return false;
+    return path?.some(node => node?.matches?.('button,input,textarea,select,a[href],label,summary,[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"]),[role~="button"],[role~="link"],[role~="checkbox"],[role~="radio"],[role~="switch"],[role~="textbox"],dialog,[role~="dialog"],[role~="alertdialog"],[role~="menu"],[role~="listbox"],[role~="combobox"]')
+      || ['true', 'menu', 'listbox', 'tree', 'grid', 'dialog'].includes(node?.getAttribute?.('aria-haspopup'))
+      || typeof node?.popover === 'string' && node.matches?.(':popover-open')
+      || node?.nodeType === 11 && node.host !== host
+      && documentRef.defaultView?.getComputedStyle?.(node.host)?.position === 'fixed');
+  };
+  const isBackdrop = event => {
+    const path = event.composedPath?.();
+    const foreignWindow = path?.some(node => node !== panel && (node?.matches?.('dialog,[role~="dialog"],[role~="alertdialog"],[role~="menu"],[role~="listbox"],[role~="combobox"]')
+      || typeof node?.popover === 'string' && node.matches?.(':popover-open'))
+      || node?.nodeType === 11 && node.host !== host
+      && documentRef.defaultView?.getComputedStyle?.(node.host)?.position === 'fixed');
+    const inside = path?.includes(panel) ?? panel?.contains?.(event.target);
+    const rect = inside ? panel?.getBoundingClientRect?.() : null;
+    const outsidePoint = rect && (event.clientX < rect.left || event.clientX > rect.left + rect.width
+      || event.clientY < rect.top || event.clientY > rect.top + rect.height);
+    return mobile() && !host.hidden && !dialog?.hasActive?.() && !foreignWindow && (!inside || outsidePoint);
+  };
+  const moveBackdrop = event => {
+    if (backdropGesture?.id === event.pointerId && Math.hypot(event.clientX - backdropGesture.x, event.clientY - backdropGesture.y) > 5) backdropGesture.moved = true;
+  };
+  documentRef.addEventListener?.('pointerdown', event => {
+    backdropGesture = event.button === 0 && event.isPrimary !== false && isBackdrop(event)
+      ? { id: event.pointerId, x: event.clientX, y: event.clientY, up: false, moved: false } : null;
+  }, true);
+  documentRef.addEventListener?.('pointermove', moveBackdrop, true);
+  documentRef.addEventListener?.('pointerup', event => {
+    if (backdropGesture?.id !== event.pointerId) { backdropGesture = null; return; }
+    moveBackdrop(event);
+    backdropGesture.up = isBackdrop(event);
+  }, true);
+  documentRef.addEventListener?.('pointercancel', () => { backdropGesture = null; }, true);
+  documentRef.addEventListener?.('click', event => {
+    const outsideClick = backdropGesture?.up && !backdropGesture.moved && mobile() && !host.hidden && !dialog?.hasActive?.();
+    backdropGesture = null;
+    if (outsideClick) {
+      if (event.composedPath?.().includes(panel)) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+      close({ restoreFocus: false });
+    }
+  }, true);
   root.querySelector('.close')?.addEventListener('click', close);
   themeButton?.addEventListener('click', () => {
     const current = settings.get().appearanceTheme ?? 'auto';
@@ -640,7 +677,12 @@ export function createPanel({
     settings.update({ fabShow: showFab }); syncHeader(appearance.getState()); onFabShowChange?.(showFab);
   });
   tabs.forEach(tab => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
-  documentRef.addEventListener?.('keydown', event => { if (event.key !== 'Escape' || host.hidden) return; if (dialog?.hasActive?.()) { dialog.cancelTop(); event.preventDefault?.(); return; } close(); });
+  documentRef.addEventListener?.('keydown', event => {
+    if (event.key !== 'Escape' || host.hidden || event.defaultPrevented || event.isComposing) return;
+    if (isForeignWindow(event)) return;
+    if (dialog?.hasActive?.()) { dialog.cancelTop(); event.preventDefault?.(); return; }
+    close();
+  });
 
   return Object.freeze({ setActivity,
     host,

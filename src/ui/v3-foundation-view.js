@@ -1,3 +1,4 @@
+import { sanitizeSensitiveText } from '../v3/safe-metadata.js';
 import { preparationContextDiagnostic } from '../v3/preparation-diagnostic.js';
 import { projectCseSubjectDiagnostic } from '../v3/cse-failure-diagnostic.js';
 import { safePrefixDifference } from '../v3/memory-prefix-diagnostic.js';
@@ -172,7 +173,7 @@ const DIAGNOSTIC_PHASE = new Set(['preparing', 'migrating', 'loading', 'inspecti
 const DIAGNOSTIC_KIND = new Set(['manual', 'auto', 'unknown']);
 const DIAGNOSTIC_REVIEW_REASON = new Set(['missingRoot', 'indexNeedsReseal', 'stableCountMismatch', 'candidateCountMismatch', 'locatorMismatch', 'markerMismatch', 'fingerprintMismatch']);
 const DIAGNOSTIC_MARKER_STATUS = new Set(['none', 'valid', 'foreign', 'invalid']);
-const DIAGNOSTIC_BINDING_ISSUE = new Set(['markerConflict', 'duplicateMarker', 'duplicateBinding', 'markerRejected']);
+const DIAGNOSTIC_BINDING_ISSUE = new Set(['markerConflict', 'duplicateMarker', 'duplicateBinding', 'markerRejected', 'ambiguousLocatorCanonical', 'ambiguousFingerprint', 'archiveFloorMissing']);
 const VECTOR_RUNTIME_STATUS = new Set(['idle', 'building', 'ready', 'error']);
 const VECTOR_BUILD_STATUS = new Set(['building', 'ready', 'failed', 'cancelled', 'skipped']);
 const VECTOR_BUILD_PHASE = new Set(['source', 'cache', 'embedding', 'verification', 'save', 'complete']);
@@ -440,14 +441,22 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
   };
   const pageFailure = state => {
     const session = sessionErrorCopy(); if (session) return { source: 'session', error: readDiagnosticState(sessionStateProvider)?.error, copy: session };
-    const candidates = page === 'memories' ? [['extractor', state.lastExtractorError], ['foundation', state.lastError]]
-      : page === 'people' ? [['shared', peopleSharedError(state)], ['cse', state.lastCseError], ['cseReplay', state.cseReplayDiagnostic]]
-        : [['sync', state.memorySyncError], ['extractor', state.lastExtractorError], ['foundation', state.lastError], ['cse', state.lastCseError], ['cseReplay', state.cseReplayDiagnostic]];
-    for (const [source, error] of candidates) { const copy = errorMessage(error); if (copy) return { source, error: source === 'shared' ? state.lastError ?? peopleState?.lastError ?? error : error, copy }; }
+    const candidates = page === 'memories' ? [['sync', state.memorySyncError], ['foundation', state.lastError], ['extractor', state.lastExtractorError]]
+      : page === 'people' ? [['sync', state.memorySyncError], ['shared', peopleSharedError(state)], ['cse', state.lastCseError], ['cseReplay', state.cseReplayDiagnostic]]
+        : [['sync', state.memorySyncError], ['foundation', state.lastError], ['extractor', state.lastExtractorError], ['cse', state.lastCseError], ['cseReplay', state.cseReplayDiagnostic]];
+    for (const [source, error] of candidates) {
+      const floorTaskTransportFailure = ['extractor', 'cse'].includes(source) && error?.floorId
+        && error.phase !== 'anchor' && ['BACKEND_NETWORK', 'BACKEND_TIMEOUT'].includes(error.code);
+      if (state.memorySnapshotStatus === 'ready' && state.memorySyncStatus === 'idle' && floorTaskTransportFailure) continue;
+      const copy = errorMessage(error);
+      if (copy) return { source, error: source === 'shared' ? state.lastError ?? peopleState?.lastError ?? error : error, copy };
+    }
     return null;
   };
   const errorCopy = state => pageFailure(state)?.copy ?? '';
   const replayErrorCopy = state => pageFailure(state)?.source === 'cseReplay' ? '' : errorMessage(state.cseReplayDiagnostic);
+  const cseWorkCopy = state => [state.csePendingCount > 0 ? `待分析 ${state.csePendingCount} 楼` : '',
+    state.cseFailedCount > 0 ? `待重试 ${state.cseFailedCount} 楼` : ''].filter(Boolean).join(' · ') || '待分析 0 楼';
   const healthCopy = (state, timeSnapshot = null, errorSlot = null) => {
     const ownsError = copy => { if (errorSlot) errorSlot.source = pageFailure(state)?.source; return copy; };
     if (state.pluginEnabled === false) return '千千结已关闭';
@@ -464,32 +473,34 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     if (page === 'memories') {
       if (state.activeMemoryWork?.kind === 'auto' && state.activeMemoryWork.phase === 'reconciling' && !state.activeExtraction) return `正在同步楼层 · 已记忆 ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼`;
       if (memoryBusy(state)) return `正在处理摘要 · ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼${state.activeAutoMemory?.cseBlocked ? ' · 人物状态待重试' : ''}`;
-      const error = errorCopy(state); if (error && state.lastExtractorError?.code === 'V3_MEMORY_PREFIX_CHANGED') return ownsError(error);
-      if (error) return ownsError(state.lastExtractorError?.phase === 'anchor'
-        ? `消息标识保存待重试 · ${error}`
-        : !state.lastExtractorError || state.lastExtractorError.floorId === null ? `记忆读取失败 · ${error}` : `摘要提取失败 · ${error}`);
+      const failure = pageFailure(state), error = failure?.copy;
+      if (error && failure.source === 'extractor' && state.lastExtractorError?.code === 'V3_MEMORY_PREFIX_CHANGED') return ownsError(error);
+      if (error) return ownsError(failure.source !== 'extractor' || state.lastExtractorError.floorId === null ? `记忆读取失败 · ${error}`
+        : state.lastExtractorError.phase === 'anchor' ? `消息标识保存待重试 · ${error}` : `摘要提取失败 · ${error}`);
       if (cseBusy(state)) return `摘要已保存 · ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼 · 正在分析人物状态`;
       if (state.activeMemoryWork?.phase === 'syncing') return `摘要已保存 · ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼 · 正在同步记忆状态`;
       const uninitialized = uninitializedCopy(state); if (uninitialized) return uninitialized;
       const waiting = waitingForConfirmation(state);
-      return `已记忆 ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼${state.unprocessedCount > 0 ? ` · 待摘要 ${state.unprocessedCount} 楼` : ''}${waiting ? ` · ${waiting} 楼待确认` : ''}${state.memorySyncStatus === 'syncing' ? ' · 后台同步中' : ''}`;
+      return `已记忆 ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼${state.unprocessedCount > 0 ? ` · 待摘要 ${state.unprocessedCount} 楼` : ''}${state.failedCount > 0 ? ` · 摘要待重试 ${state.failedCount} 楼` : ''}${waiting ? ` · ${waiting} 楼待登记` : ''}${state.memorySyncStatus === 'syncing' ? ' · 后台同步中' : ''}`;
     }
     if (page === 'people') {
       if (cseBusy(state)) return `正在分析人物状态 · 待分析 ${state.csePendingCount ?? 0} 楼`;
       const error = errorCopy(state); if (error) return ownsError(`人物状态需要处理 · ${error}`);
       const uninitialized = uninitializedCopy(state); if (uninitialized) return uninitialized;
       const complete = Math.max(0, (state.rememberedCount ?? 0) - (state.csePendingCount ?? 0) - (state.cseFailedCount ?? 0));
-      return `人物状态 ${complete}/${state.rememberedCount ?? 0} 楼 · 待分析 ${state.csePendingCount ?? 0} 楼${state.memorySyncStatus === 'syncing' ? ' · 后台同步中' : ''}`;
+      return `人物状态 ${complete}/${state.rememberedCount ?? 0} 楼 · ${cseWorkCopy(state)}${state.memorySyncStatus === 'syncing' ? ' · 后台同步中' : ''}`;
     }
     if (workBusy(state) || state.status === 'running') return `${workPhaseCopy(state)} · ${state.rebuildCompletedCount ?? state.rememberedCount ?? 0}/${state.rebuildTotalCount ?? state.stableCount ?? 0} 楼${state.activeAutoMemory?.cseBlocked ? ' · 人物状态待重试' : ''}`;
-    const error = errorCopy(state); if (error) return ownsError(state.lastExtractorError?.code === 'V3_MEMORY_PREFIX_CHANGED' ? error : `需要处理 · ${error}`);
+    const failure = pageFailure(state), error = failure?.copy; if (error) return ownsError(failure.source === 'extractor' && state.lastExtractorError?.code === 'V3_MEMORY_PREFIX_CHANGED' ? error : `需要处理 · ${error}`);
     const uninitialized = uninitializedCopy(state); if (uninitialized) return '';
-    return `已记忆 ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼 · 人物状态 ${state.cseReady ? '已跟上' : `待分析 ${state.csePendingCount ?? 0} 楼`}${time?.status === 'completed' ? ` · 时间推演完成 ${time.last?.items ?? 0} 项，未纳入 ${time.last?.omitted ?? 0} 项` : ''}`;
+    return `已记忆 ${state.rememberedCount ?? 0}/${state.stableCount ?? 0} 楼${state.failedCount > 0 ? ` · 摘要待重试 ${state.failedCount} 楼` : ''} · 人物状态 ${state.cseReady ? '已跟上' : cseWorkCopy(state)}${time?.status === 'completed' ? ` · 时间推演完成 ${time.last?.items ?? 0} 项，未纳入 ${time.last?.omitted ?? 0} 项` : ''}`;
   };
   const healthClass = state => {
     if (errorCopy(state)) return 'qqj-page-health error';
     const checking = state.pluginEnabled === false || state.memorySnapshotStatus === 'syncing'
       || workBusy(state) || state.status === 'running'
+      || (page !== 'people' && (state.failedCount > 0 || state.unprocessedCount > 0))
+      || (page !== 'memories' && (state.csePendingCount > 0 || state.cseFailedCount > 0))
       || (page === 'memories' && waitingForConfirmation(state) > 0)
       || !['ready', 'uninitialized'].includes(effectiveStatus(state));
     return `qqj-page-health ${checking ? 'checking' : 'healthy'}`;
@@ -516,7 +527,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     stableCount: state?.stableCount ?? null, rememberedCount: state?.rememberedCount ?? null,
     unprocessedCount: state?.unprocessedCount ?? null, failedCount: state?.failedCount ?? null,
     pendingAssistantSeq: state?.pending?.assistantSeq ?? null, pendingMessageIndex: state?.pending?.messageIndex ?? null,
-    unregisteredCandidates: state?.unregisteredCandidates, consecutiveAssistantConfirmation: state?.consecutiveAssistantConfirmation,
+    unregisteredCandidates: state?.unregisteredCandidates, consecutiveAssistantConfirmation: state?.consecutiveAssistantConfirmation, bindingIssues: state?.bindingIssues,
     lastExtractorError: state?.lastExtractorError,
     lastCseError: state?.lastCseError ? `${state.lastCseError.floorId ?? ''}|${state.lastCseError.code ?? ''}|${state.lastCseError.message ?? ''}|${state.lastCseError.lastFailedAt ?? ''}` : '',
     lastError: state?.lastError, lastAutoMemory: state?.lastAutoMemory });
@@ -541,7 +552,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     if (!floor) return;
     const userEdited = floor.summarySource === 'user' && floor.status === 'ready';
     view.card.className = `qqj-memory-card status-${floor.status}`;
-    view.statusNode.textContent = running ? workPhaseCopy(state) : userEdited ? '人工修订' : statusCopy(floor.status);
+    view.statusNode.textContent = running ? workPhaseCopy(state) : floor.sourceUnavailable ? '来源待核' : userEdited ? '人工修订' : statusCopy(floor.status);
     view.statusNode.className = `v3-memory-status${userEdited ? ' is-user' : ''}`;
   };
   const updateMemoryFloorStatuses = state => {
@@ -556,6 +567,9 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
   const managementBusy = state => Boolean(workBusy(state) || managementState?.workBusy || ['deleting', 'failed'].includes(managementState?.status));
   const reviewCopy = state => {
     const reason = state?.reviewReason;
+    if (state?.memorySnapshotStatus === 'ready' && (state.bindingIssues?.length || state.floors?.some(floor => floor.sourceUnavailable))) {
+      return '异常楼已跳过，原记录保留。其余已确认楼可继续摘要。可在本页查看对应楼，或复制状态诊断。';
+    }
     const copy = ({ stableCountMismatch: '当前消息楼与已存记忆尚未同步。', markerMismatch: '有消息的记忆标记无法对应。', candidateCountMismatch: '有已存记忆楼尚未对应当前消息。', locatorMismatch: '有已存记忆楼的位置尚未对应。', fingerprintMismatch: '有消息与已存记录的正文版本依据不一致。', memoryExclusionChanged: '无需记录的楼标记尚未同步。', indexNeedsReseal: '记忆索引尚待同步。', missingRoot: '当前记忆记录尚未就绪。' })[reason?.code] || '当前记忆的对应关系尚未确认。';
     return copy + (managementBusy(state) || pluginActivity.busy ? '当前任务仍在进行，请等待结束后再刷新状态。'
       : '请点击“刷新状态”。');
@@ -570,8 +584,6 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     return feedback === statusCopy('running') ? '' : feedback;
   };
   const errorAlreadyInHealth = state => {
-    // The settings host hides the standalone management heading; its visible status row owns the error.
-    if (page === 'management' && String(container?.className ?? '').split(/\s+/u).includes('qqj-settings-management')) return false;
     const owner = {}; healthCopy(state, null, owner);
     return Boolean(owner.source && owner.source === pageFailure(state)?.source);
   };
@@ -717,6 +729,9 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         history: history ? {
           status: enumDiagnostic(history.status, new Set(['idle', 'running', 'completed', 'partial', 'stopped', 'failed'])),
           request: requestDiagnostic(history.request),
+          failure: history.failure ? { ...errorDiagnostic(history.failure),
+            detail: typeof history.failure.detail === 'string' ? sanitizeSensitiveText(history.failure.detail).slice(0, 500) : null,
+            stage: enumDiagnostic(history.failure.stage, new Set(['preparing', 'history', 'followup', 'validating', 'saving'])) } : null,
           mode: enumDiagnostic(history.mode, new Set(['history', 'rejudge'])),
           committing: booleanDiagnostic(history.committing),
           commitStatus: enumDiagnostic(history.commitStatus, new Set(['notAttempted', 'attempted', 'saved', 'unknown', 'conflict'])),
@@ -794,6 +809,9 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         chatIdPresent: presenceDiagnostic(memory, 'chatId'),
         headCheckpointPresent: presenceDiagnostic(memory, 'headCheckpointId'),
         reviewReason: reviewReasonDiagnostic(memory?.reviewReason, memoryKnown),
+        bindingIssues: (memory?.bindingIssues ?? []).map(issue => ({ code: enumDiagnostic(issue.code, DIAGNOSTIC_BINDING_ISSUE),
+          messageIndex: countDiagnostic(issue.messageIndex), assistantSeq: countDiagnostic(issue.assistantSeq),
+          markerStatus: enumDiagnostic(issue.markerStatus, DIAGNOSTIC_MARKER_STATUS) })),
         activeRun: memoryKnown ? operationDiagnostic(memory.activeRun) : { present: 'unknown', phase: 'unknown' },
         lastError: errorDiagnostic(memory?.lastError, memoryKnown),
       },
@@ -1075,7 +1093,15 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         ...(draft.peopleText !== draft.originalParticipantNames.join('、') ? { participantNames: splitPeople(draft.peopleText) } : {}),
         exactAnchors: draft.exactAnchors, revisionNote: draft.note };
       if (unchangedDraft(draft, payload)) { saved = true; drafts.delete(key); return true; }
-      const task = typeof runtime.editMemory === 'function' ? () => runtime.editMemory(floor.floorId, payload) : () => runtime.editSummary(floor.floorId, payload.summary, payload.revisionNote);
+      const changes = {
+        ...(String(payload.summary ?? '').trim() !== String(draft.originalSummary ?? '').trim() ? { summary: payload.summary } : {}),
+        ...(payload.timeChanged ? { timeText: payload.timeText, originalTimeText: payload.originalTimeText, timeChanged: true } : {}),
+        ...(!sameList(comparableLocations(payload.locations), comparableLocations(draft.originalLocations)) ? { locations: payload.locations } : {}),
+        ...(Object.hasOwn(payload, 'participantNames') ? { participantNames: payload.participantNames } : {}),
+        ...(!sameList(payload.exactAnchors, draft.originalExactAnchors) ? { exactAnchors: payload.exactAnchors } : {}),
+        ...(payload.revisionNote ? { revisionNote: payload.revisionNote } : {}),
+      };
+      const task = typeof runtime.editMemory === 'function' ? () => runtime.editMemory(floor.floorId, changes) : () => runtime.editSummary(floor.floorId, payload.summary, payload.revisionNote);
       let failure = null;
       await run('保存本楼记忆', task, { after: nextState => {
         if (drafts.get(key) === draft) drafts.delete(key);
@@ -1175,7 +1201,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const memory = floor.memory;
     const times = floorTimeDisplay(memory, floor) || '时间未明确';
     const timeNode = element('span', 'qqj-floor-time', times); timeNode.setAttribute('title', times);
-    const floorStatus = floor.frozen ? '来源归档 · 只读' : floor.summarySource === 'user' && floor.status === 'ready' ? '人工修订' : statusCopy(floor.status);
+    const floorStatus = floor.frozen ? '来源归档 · 只读' : floor.sourceUnavailable ? '来源待核' : floor.summarySource === 'user' && floor.status === 'ready' ? '人工修订' : statusCopy(floor.status);
     const statusNode = element('span', `v3-memory-status${floor.summarySource === 'user' && floor.status === 'ready' ? ' is-user' : ''}`, floorStatus);
     const chevron = element('span', 'qqj-memory-chevron', '›'); chevron.setAttribute('aria-hidden', 'true');
     const numberNode = element('strong', 'qqj-floor-number', title);
@@ -1192,6 +1218,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
         const sourceName = typeof floor.sourceOrigin?.sourceHostChatId === 'string' ? floor.sourceOrigin.sourceHostChatId : '';
         body.append(element('p', 'settings-hint qqj-memory-source', `来源：${sourceName || '未记录'}；来源聊天的已保存资料在此只读展示。`));
       }
+      if (floor.sourceUnavailable) body.append(element('p', 'settings-hint', '本楼来源暂无法确认，自动任务已跳过，原记录保留。其余已确认楼可继续处理。'));
       if (memory) {
         const locations = (memory.locations ?? []).map((item, index) => locationLabelsByFloor.get(floor.floorId)?.[index] ?? item.name).filter(Boolean).join('、') || '未提取';
         const names = new Map((currentState.memoryEntities ?? []).flatMap(entity => [entity.entityId, ...(entity.memberEntityIds ?? [])].map(id => [id, entity.displayName])));
@@ -1619,16 +1646,17 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const hasWaitingTail = waiting.some(candidate => candidate.reason === 'waitingNextUser');
     const confirmationScope = state.consecutiveAssistantConfirmation;
     const confirmationCandidates = Array.isArray(confirmationScope?.candidates) ? confirmationScope.candidates : [];
+    const requiredConfirmationCandidates = confirmationCandidates.filter(candidate => candidate.confirmationRequired === true);
     if (consecutive.length && confirmationCandidates.length && typeof runtime.confirmConsecutiveAssistants === 'function') {
       const action = element('div', 'qqj-inline-panel');
-      action.append(element('p', 'settings-hint', `本次确认 ${confirmationCandidates.length} 个连续 AI 回复，按顺序分别摘要。${hasWaitingTail ? '最新 AI 楼仍等待下一条用户消息，不在本次范围内。' : ''}`));
+      const registrationCopy = `本次登记范围共 ${confirmationCandidates.length} 楼，确认后继续补齐当前聊天的历史摘要和人物状态。${hasWaitingTail ? '最新 AI 楼等待下一条用户消息。' : ''}`;
+      action.append(element('p', 'settings-hint', `有 ${requiredConfirmationCandidates.length} 个 AI 楼需要确认。${registrationCopy}`));
       const confirm = element('button', 'secondary-action', '确认连续 AI 并分别记录'); confirm.type = 'button'; confirm.disabled = workBusy(state);
       memoryWorkControls.push({ node: confirm, disabled: current => workBusy(current) });
       confirm.addEventListener('click', async () => {
-        const first = confirmationCandidates[0].messageIndex, last = confirmationCandidates.at(-1).messageIndex;
-        const range = first === last ? `第 ${first} 楼` : `第 ${first}–${last} 楼`;
+        const indexes = requiredConfirmationCandidates.map(candidate => candidate.messageIndex).join('、');
         const accepted = await Promise.resolve(confirmImpl({ title: '确认连续 AI 回复',
-          body: `${range}，共 ${confirmationCandidates.length} 个 AI 回复，将按顺序分别摘要；正文不删除或合并。${hasWaitingTail ? '最新 AI 楼等待下一条用户消息，不在本次范围内。' : ''}`, confirmText: '确认并分别记录', cancelText: '取消' }));
+          body: `第 ${indexes} 楼需要确认，共 ${requiredConfirmationCandidates.length} 楼。${registrationCopy}`, confirmText: '确认并分别记录', cancelText: '取消' }));
         if (!accepted) { feedback = '已取消连续 AI 确认。'; render(foundationState); return; }
         void run('确认连续 AI', () => runtime.confirmConsecutiveAssistants(confirmationScope));
       });
@@ -2357,7 +2385,9 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     const body = element('div', 'qqj-management-drawer-body'), details = element('dl', 'v3-foundation-grid');
     if (feedback.includes('历史召回回执已独立处理')) details.append(row('最近读取结果', feedback));
     const rebuildCopy = ({ rebuilding: '正在重建', paused: '已暂停', waitingRealtime: '等待新楼', failed: '失败', caughtUp: '已追平', pendingRebuild: '等待开始', notReady: '覆盖待确认' })[state.rebuildStatus] ?? '尚未判断';
-    details.append(row('当前聊天编号', state.chatId), row('记忆状态', statusCopy(effectiveStatus(state))), row('待核对原因', reviewReasonCopy(state.reviewReason)), row('自动维护新楼', state.autoMemoryEnabled ? '已开启 · 每楼更新' : '已关闭'), row('历史重建', `${rebuildCopy} · ${state.rebuildCompletedCount ?? 0}/${state.rebuildTotalCount ?? state.stableCount ?? 0}`), row('CSE 待分析 / 失败', `${state.csePendingCount ?? 0} / ${state.cseFailedCount ?? 0}`), row('当前记忆快照', state.headCheckpointId), row('最近记忆错误', errorMessage(state.lastExtractorError) || errorMessage(state.lastError) || '无'), row('最近自动任务错误', errorMessage(state.lastAutomationError) || '无'), row('最近 CSE 错误', errorMessage(state.lastCseError) || '无')); body.append(details);
+    details.append(row('当前聊天编号', state.chatId), row('记忆状态', statusCopy(effectiveStatus(state))), row('待核对原因', reviewReasonCopy(state.reviewReason)), row('自动维护新楼', state.autoMemoryEnabled ? '已开启 · 每楼更新' : '已关闭'), row('历史重建', `${rebuildCopy} · ${state.rebuildCompletedCount ?? 0}/${state.rebuildTotalCount ?? state.stableCount ?? 0}`), row('CSE 待分析 / 失败', `${state.csePendingCount ?? 0} / ${state.cseFailedCount ?? 0}`), row('当前记忆快照', state.headCheckpointId), row('最近记忆错误', errorMessage(state.lastExtractorError) || errorMessage(state.lastError) || '无'), row('最近自动任务错误', errorMessage(state.lastAutomationError) || '无'), row('最近 CSE 错误', errorMessage(state.lastCseError) || '无'));
+    for (const issue of state.bindingIssues ?? []) details.append(row('来源待核', reviewReasonCopy({ ...issue, code: 'markerMismatch', bindingIssue: issue.code })));
+    body.append(details);
     const stateDiagnosticAction = element('div', 'qqj-ui-diagnostic-action');
     const copyState = element('button', 'secondary-action', '复制状态诊断'); copyState.type = 'button';
     copyState.addEventListener('click', () => { void copyStateDiagnostic(); });
@@ -2403,8 +2433,11 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     if (taskState) state = { ...state, ...taskState };
     const pageNode = element('section', 'qqj-page qqj-management-page'); pageNode.append(heading('记忆管理', '管理当前聊天的现有记忆任务。', state));
     const cseResume = ['paused', 'failed'].includes(state.cseRebuildStatus);
+    const onlyCseGap = state.rememberedCount > 0 && state.rememberedCount === state.stableCount
+      && !(state.failedCount > 0) && !(state.unprocessedCount > 0) && (state.csePendingCount > 0 || state.cseFailedCount > 0);
     if (cseResume) pageNode.append(element('p', 'qqj-management-notice', `人物状态重构${state.cseRebuildStatus === 'paused' ? '已暂停' : '未完成'}，请点击“继续人物状态重构”。`));
-    else if (['pendingRebuild', 'paused', 'failed', 'partial'].includes(state.rebuildStatus) || (state.rebuildStatus === 'waitingRealtime' && state.rebuildHasActionableWork)) pageNode.append(element('p', 'qqj-management-notice', '记忆尚未完整。“补齐缺失”会保留已有结果，只处理摘要或人物状态缺口；刷新页面不会自动续跑旧档。'));
+    else if ((!onlyCseGap || ['paused', 'failed'].includes(state.rebuildStatus))
+      && (['pendingRebuild', 'paused', 'failed', 'partial'].includes(state.rebuildStatus) || (state.rebuildStatus === 'waitingRealtime' && state.rebuildHasActionableWork))) pageNode.append(element('p', 'qqj-management-notice', '记忆尚未完整。“补齐缺失”会保留已有结果，只处理摘要或人物状态缺口；刷新页面不会自动续跑旧档。'));
     const deleting = managementState?.status === 'deleting', deletePending = managementState?.status === 'failed';
     const actions = element('div', 'v3-foundation-actions qqj-management-actions'), busy = managementBusy(state);
     const refresh = element('button', 'secondary-action', '刷新状态'); refresh.type = 'button'; refresh.disabled = busy;
@@ -2621,7 +2654,7 @@ export function createV3FoundationView({ runtime, recallRuntime = null, vectorRu
     }
     const prepare = page === 'management' || typeof runtime.prepareCurrent !== 'function'
       ? runtime.refreshStatus({ preferCached: page !== 'management' })
-      : runtime.prepareCurrent({ preferCached: true }).then(() => runtime.getState());
+      : runtime.prepareCurrent({ preferCached: true });
     const [foundationOutcome, receiptOutcome] = await Promise.allSettled([prepare, recallRuntime?.restorePersistedReceipt?.()]);
     if (!active || mine !== epoch) return { status: 'stale' };
     const peopleOutcome = page === 'people' && peopleRuntime?.refresh

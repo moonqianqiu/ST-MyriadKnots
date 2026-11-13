@@ -2,6 +2,7 @@ import { sha256 } from './identity.js';
 import { sanitizeMemoryContent, extraOnlySanitizerOptions } from './memory-content-sanitizer.js';
 import { scanWorldInfo } from './world-info-scanner.js';
 import { selectAssistantMessage } from './v3/foundation-domain.js';
+import { selectedUserInput } from './v3/user-input-source.js';
 
 export const CSE_SECONDARY_LOGIC = Object.freeze({ AND_ANY: 0, NOT_ALL: 1, NOT_ANY: 2, AND_ALL: 3 });
 
@@ -72,13 +73,6 @@ export function selectCseWorldInfoEntries({ entries = [], scanText = '', default
   return Object.freeze(entries.map(entry => Object.freeze({ entry, decision: selectionForEntry(entry, scanText, defaults, macros) })));
 }
 
-function selectedUserText(message) {
-  if (!message || message.is_user !== true || (message.is_system === true && message.extra?.type)) return '';
-  if (!Array.isArray(message.swipes)) return typeof message.mes === 'string' ? message.mes : '';
-  const index = Number.isSafeInteger(message.swipe_id) ? message.swipe_id : 0;
-  return typeof message.swipes[index] === 'string' ? message.swipes[index] : '';
-}
-
 async function targetWindow(snapshot, floor, sanitizerOptions, sourceSnapshot = null) {
   const targetIndex = floor?.hostLocator?.messageIndex;
   if (!Number.isSafeInteger(targetIndex)) return null;
@@ -94,7 +88,7 @@ async function targetWindow(snapshot, floor, sanitizerOptions, sourceSnapshot = 
     const canonical = index === targetIndex && Boolean(sourceSnapshot);
     rows.push({ messageIndex: index, role: 'assistant', raw: canonical ? sourceSnapshot.canonicalContent : selected.rawContent, canonical,
       rawFingerprint: index === targetIndex && sourceSnapshot ? sourceSnapshot.rawFingerprint : null });
-    const userRaw = selectedUserText(snapshot.chat?.[index - 1]);
+    const userRaw = selectedUserInput(snapshot.chat?.[index - 1])?.content;
     if (userRaw) rows.push({ messageIndex: index - 1, role: 'user', raw: userRaw });
     assistantCount += 1;
   }

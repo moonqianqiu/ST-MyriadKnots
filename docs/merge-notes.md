@@ -156,6 +156,14 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 
 上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。**该 after 回调须先比 `nextState?.chatId === state.chatId`（保存发起时的聊天）才执行清理联动**（2026-10-24）：否则 A 保存期间切到 B，A 的完成回调会误删并保存 B 的回执。
 
+## 9. v1.1.7~v1.1.16 合并（2026-11-13）
+
+上游 `e9055d1`，合并范围 v1.1.7~v1.1.16。预判的 5 个冲突均命中：`dist/qqj-app.js` 重建；manifest 版本取 1.1.16 并重建缓存键；`src/v3/user-input-source.js` 保留上游 `selectUserStabilityAnchor` 与本地 `extraOnlySanitizerOptions`；`tests/v3-foundation-view.test.mjs` 并存本地回执保存回归与上游异步激活回归，并按上游更新“待登记”断言。
+
+上游更新涵盖独立记忆管线、地点地图/来源选择、召回与地基修复、面板移动端输入几何，以及人物/向量索引和诊断能力；本地 §3.4 的 `recall-runtime` 与四项 recall-selector 记忆化继续保留。Vite 8.2.2 构建产物 6,596,867 B，SHA-256 `6c17d3371ed900c4ac6d24819c8d776d837d8b13cd1634fd75c5b877ca906cf7`。缓存键取当日未用序号 `20261113.299`，完整键 `20261113.299-6c17d3371ed900c4`。
+
+验证：构建通过；金样 43/43、生产入口与装配 35/35。合并树全量 3695 项：3677 通过、17 失败、1 跳过；纯上游全量 3644 项：3622 通过、22 失败。合并树失败全部包含于纯上游失败集合（无新增红项），本地原生修复使 5 项上游红转绿；失败细节为上游行为/断言不一致，未改写业务行为。
+
 ## 8. 维护约定
 
 - 新的逐版本合并要点写入 §6.1；新的冲突实录与上游原生红代修实例写入 §6.2 / §5；新的 UI 迁移写法写入 §7。
