@@ -164,6 +164,28 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 
 验证：构建通过；金样 43/43、生产入口与装配 35/35。合并树全量 3695 项：3677 通过、17 失败、1 跳过；纯上游全量 3644 项：3622 通过、22 失败。合并树失败全部包含于纯上游失败集合（无新增红项），本地原生修复使 5 项上游红转绿；失败细节为上游行为/断言不一致，未改写业务行为。
 
+## 10. v1.2.0 合并（2026-11-14）
+
+上游 `5407522`（单发布提交，v1.1.16→v1.2.0）。`git merge-tree --write-tree main upstream/main` 预判 6 处冲突，实际合并**全部命中且无额外冲突**：`dist/qqj-app.js`、`manifest.json`、`src/ui/inline-projection.js`、`src/v3/time-body.js`、`tests/qianchuang-view.test.mjs`、`tests/v3-cse.test.mjs`。
+
+**分包构建（v1.2.0 最大结构变化）**：上游新增 `tools/build.mjs`，把 `qianchuang-map-assets` 与四个 `qianchuang-*` UI 模块拆成 `dist/qianchuang-static-<hash>.js`；`vite.config.js` 改 `emptyOutDir:false` + `codeSplitting.groups`；`package.json` build 改 `node tools/build.mjs`。构建器逐文件比较字节、未变产物保 mtime/inode，稳定素材先于入口写入，失败不提前替换旧入口。本地无相关源码定制，构建出的分块与上游同名同 SHA（`qianchuang-static-yL4fQlU6.js`，2,136,068 B，`5f2c60c1…`），主入口 3,202,379 B（`010f29e1…`）。**注意**：入口测试 `modules.size === 2`、主入口相对导入只能指向该分块；`emptyOutDir:false` 会保留历史 dist 文件，重建前应清理旧 `qianchuang-static-*.js` 以免夹带。
+
+**逐冲突裁决**：
+- `dist/qqj-app.js`：删除冲突产物与旧分块后 `npm run build` 重建，不手工解。
+- `manifest.json`：版本取 `1.2.0`；缓存键取 `20261114.333-010f29e1abf45db6`——上游 11-14 已用 `.332`，按全局递增取未用更大值 `.333`（`git log --all -S '20261114.'` 复核）。
+- `src/ui/inline-projection.js`：本地「冻结回执全历史可投影」白名单并集 + 上游 v1.2.0 新增 `RECALL_COMPACT_KNOWLEDGE_GUIDANCE` 与无前缀短版字面量 → 8 条并集；上游其余解析改动（共享组 `表达者/接收者/内容`、`[已表达信息及接收范围]`、`qianshi` 边界段跳过）照收。
+- `src/v3/time-body.js`：保留本地 `controlSource`+剥壳投影+5 参 `sanitizerOptions` 签名，嫁接上游「`timestamp.text` 存在即采用（incomplete 也保留部分日期/钟点）」判定；上游其余 `ambiguous && !clock.text`、`clock.meta.date` 基准处理自动合并。
+- `tests/qianchuang-view.test.mjs`：import 并集（上游 `projectQianchuangSnapshot` + 本地 `resetQianchuangMapCatalogForTest`）。
+- `tests/v3-cse.test.mjs`：`runtimeHarness` 签名并集（上游 `identityProjectionProvider` × 本地 `sanitizerOptions`），运行时注入保留本地 `() => sanitizerOptions`（默认 `{ keepTags: '' }`），不取上游 `{ keepTags: 'content' }`。
+
+**上游主题**：人工内容优先与故障续做（单楼/人物/地点/时间分链隔离、向量索引复用分片、千事收尾）、双丝网（旧情境+新经历归纳）、地点初始化/整理分离与当前位置、地图底图统一与素材许可、时间读取/身份准备/分支历法继承、大档批量读写与核心缓存、`readContext` 公开参数（`focusQuery`/`participantNames`/`maxSummaries`/`summaryCharacters`/`recentSummaries`）。召回侧新增：`RECALL_KNOWLEDGE_GUIDANCE`/`RECALL_COMPACT_KNOWLEDGE_GUIDANCE`、冻结回执按活文本刷新知识边界、人工 CSE/时间冻结刷新、千事删除状态不可用时 `sessionOnly` 临时注入、`receiptMaterial` 重签点扩展——本地 §3.4 的见证 6 参/invalidate 三参/密封点重签与四项记忆化+recordsByValue+sameMaterial 均无行级交叠，自动合并后逐项 grep 在位。
+
+**验证**（审计工作树，真实主仓路径另复核）：
+- 门禁 1：清洗器金样 43/43；门禁 2：`production-entry-load`+`v3-wiring` **45/45**（上游由 35 扩至 45，含分包构建四例）。
+- 全量 4114 项：4109 通过、3 失败、2 skip。3 红均为环境/偶发：`tauri-backend` 两例 `ENOTEMPTY` 清理竞态（重跑换例复现，AGENTS §4 已知偶发）、`共享父级算法整体故障` 的 node_modules junction 在审计工作树跨挂载点不可遍历（主仓同例单跑通过，纯环境）。
+- 等价对 `5407522` **144/144 逐字节一致**；审计工具 sibling 清单已补 `recall-text.js`（否则 `RECALL_KNOWLEDGE_GUIDANCE` 导入在 scratch 目录 MODULE_NOT_FOUND）。
+- `settings-api`/`settings-modules`/`shared-body-wrappers`/`inline-renderer` 158/159 +1 skip 全绿；本地资产清单（§3.1/§3.4/§2.2）逐项 grep 在位。
+
 ## 8. 维护约定
 
 - 新的逐版本合并要点写入 §6.1；新的冲突实录与上游原生红代修实例写入 §6.2 / §5；新的 UI 迁移写法写入 §7。

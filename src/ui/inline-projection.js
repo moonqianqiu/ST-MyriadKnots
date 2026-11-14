@@ -1,4 +1,4 @@
-import { readManualArtifactBlocks } from '../v3/recall-text.js';
+import { readManualArtifactBlocks, RECALL_KNOWLEDGE_GUIDANCE, RECALL_COMPACT_KNOWLEDGE_GUIDANCE } from '../v3/recall-text.js';
 import { selectAssistantMessage } from '../v3/foundation-domain.js';
 import { publicErrorMessage } from '../public-error.js';
 import { recallReceiptSelectionLimits, renderedQianshiProgressText, RECALL_STRATEGY_VERSION } from '../v3/recall-runtime.js';
@@ -18,8 +18,11 @@ const LEGACY_RECALL_PRIVACY = '任何 private 内容仅属于标明的主体，�
 // 冻结回执是持久协议：文案迭代不能使旧版合法回执失去结构化投影。
 // v1.1.0 起白名单并集：上游 LEGACY 长版 + 上游 v1.1.0 统一短版（均经 recall-selector 导入），
 // 另收本仓 fork 期三条历史文案（PREVIOUS 常量与两条字面量），本仓旧回执投影不受文案切换影响。
+// v1.2.0 上游新增 RECALL_COMPACT_KNOWLEDGE_GUIDANCE 与无前缀短版字面量，一并并入白名单。
 const PREVIOUS_CSE_RECALL_BOUNDARY = '作者资料不代表人物知情；private限标明主体，authorial供作者参考；observable/expressed/shared依正文证据，不扩大受众；toward仅指态度对象。';
 const RECALL_BOUNDARY_LINES = new Set([
+  RECALL_COMPACT_KNOWLEDGE_GUIDANCE,
+  '人物状态记录：主体、态度对象、可见性。',
   LEGACY_RECALL_PRIVACY,
   LEGACY_CSE_RECALL_KNOWLEDGE_BOUNDARY,
   CSE_RECALL_KNOWLEDGE_BOUNDARY,
@@ -110,7 +113,8 @@ function historyMaterial(item, { group = '', fullText = item.text, sourcePrefix 
   const owner = privateHeader?.[1] ?? privateHeader?.[2] ?? privateSection?.[1] ?? privateSection?.[2];
   const privateText = privateHeader ? text.slice(privateHeader[0].length) : text;
   const directed = /^[^：\n]+ → [^：\n]+：/u.exec(privateText);
-  const body = (directed ? privateText.slice(directed[0].length) : privateText).replace(HISTORY_RELATION_PREFIX, '');
+  const shared = ['shared', 'objective'].includes(group) ? /^表达者：[^。\n]+。接收者：[^。\n]+。内容：/u.exec(privateText) : null;
+  const body = (shared ? privateText.slice(shared[0].length) : directed ? privateText.slice(directed[0].length) : privateText).replace(HISTORY_RELATION_PREFIX, '');
   const prefixIndex = [...COMMITMENT_PREFIXES, ...DIRECT_COMMITMENT_PREFIXES].findIndex(prefix => body.startsWith(prefix) && body.length > prefix.length);
   if (prefixIndex >= 0) {
     const prefix = [...COMMITMENT_PREFIXES, ...DIRECT_COMMITMENT_PREFIXES][prefixIndex];
@@ -257,7 +261,7 @@ function qianshiObjectItems(text) {
   const sections = text ? text.split(/\n\n/u) : [];
   const scope = sections.find(value => /^本轮千事资料来源截至：AI #\d+。$/u.test(value)) ?? '';
   return sections.flatMap((section, sectionIndex) => {
-    if (section === scope) return [];
+    if (section === scope || section === RECALL_KNOWLEDGE_GUIDANCE) return [];
     const lines = section.split('\n');
     const hasHeading = /^\[[^\n]+\]$/u.test(lines[0]);
     const heading = hasHeading ? lines.shift() : '';
@@ -309,7 +313,7 @@ function parseRecallHistory(injectionText, selectedFloors, manualBlocks = null) 
     if (line === RECENT_HEADING) { group = ''; section = 'recent'; sawHistory = true; continue; }
     if (line === '[客观相关旧事]') { group = 'objective'; continue; }
     if (line === '[叙事回顾]' || line.startsWith('[叙事回顾（')) { group = 'narrative'; continue; }
-    if (line === '[已表达/已共享信息]') { group = 'shared'; boundary = line; continue; }
+    if (line === '[已表达/已共享信息]' || line === '[已表达信息及接收范围]') { group = 'shared'; boundary = line; continue; }
     if (/^\[[^\[\]\n]+ 的私有认知（仅可用于 [^\[\]\n]+）\]$/u.test(line) || /^\[私有资料；知情：[^\]\n]+\]$/u.test(line)) { group = 'private'; boundary = line; continue; }
     if (['states', 'changes', 'progressions'].includes(group) && line.startsWith('- ')) continue;
     if (!group) return null;
@@ -389,7 +393,7 @@ function parseStorylineHistory(injectionText, selectedFloors, selectedChanges, s
     const item = text ? Object.freeze({ assistantSeq: currentSequence, text: manualArtifactText(text, manualBlocks), section, ...(manualBlocks?.has(text) ? { manualArtifact: true } : {}) })
       : parseHistoryBullet(line, allowedSequences, 'objective', section, manualBlocks);
     if (!item || item.assistantSeq !== currentSequence || !historySequences.has(currentSequence) && !auxiliaryRecallHistory(item)) return null;
-    items.push(Object.freeze({ ...historyMaterial(item), storylineId: currentLine.storylineId }));
+    items.push(Object.freeze({ ...historyMaterial(item, { group: 'objective' }), storylineId: currentLine.storylineId }));
   }
   if (storylines.length && seenLines.size !== storylines.length) return null;
   return Object.freeze(items);

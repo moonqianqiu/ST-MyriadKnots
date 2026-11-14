@@ -88,7 +88,8 @@ function unwrapTagShellsForTime(source) {
 function currentBodyClock(rawContent, canonicalContent, referenceTags, sanitizerOptions = {}, calendar = null) {
   const source = controlSource(rawContent, sanitizerOptions);
   const timestamp = resolveStoryClock(source, referenceTags, calendar);
-  if (timestamp && timestamp.status !== 'incomplete') return timestamp;
+  // v1.2.0 上游：时间戳即便 incomplete，只要已有可读文本就先采用（局部日期/钟点不因缺一端丢弃）。
+  if (timestamp && (timestamp.text || timestamp.status !== 'incomplete')) return timestamp;
   const statusSource = stripMemoryTagBlocks(source, 'content');
   const status = inferCanonicalCurrentTime(statusSource, { allowOpeningFallback: false });
   if (status?.kind === 'ambiguous') return Object.freeze({ status: 'ambiguous', source: 'status', signature: status.signature ?? 'ambiguous-status-time' });
@@ -142,12 +143,12 @@ export async function readRecentBodyStoryTimes(host, { reachable = null, sanitiz
     const clock = currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, sanitizerOptions, calendar);
     const summaryTime = !clock && floorId ? mainlineTimeText(memoryByFloor.get(floorId)) : '';
     if (!clock && !summaryTime) continue;
-    if (clock?.status === 'ambiguous') {
+    if (clock?.status === 'ambiguous' && !clock.text) {
       previous = null;
       reliable.push({ messageIndex, floorId: floorId ?? null, observationTime: projectTime(''), ambiguous: true });
       continue;
     }
-    const observationTime = projectTime((clock?.text ?? summaryTime).split(/\s*(?:→|->|⟶)\s*/u).at(-1), previous, { calendar });
+    const observationTime = projectTime((clock?.text ?? summaryTime).split(/\s*(?:→|->|⟶)\s*/u).at(-1), clock?.meta && !clock.meta.date ? null : previous, { calendar });
     if (!observationTime.date && !Number.isInteger(observationTime.minute)) continue;
     previous = observationTime;
     reliable.push({ messageIndex, floorId: floorId ?? null, observationTime });
@@ -224,16 +225,16 @@ export async function readTimeBody(reachable, host, { sanitizerOptions = {}, sto
     const sourceClock = calendar ? currentBodyClock(candidate.rawContent, candidate.canonicalContent, storyClockReferenceTags, sanitizerOptions) : clock;
     const sourceRaw = sourceClock?.text ?? '';
     const manual = manualTime(match?.floor.id);
-    const ambiguous = !manual && clock?.status === 'ambiguous';
+    const ambiguous = !manual && clock?.status === 'ambiguous' && !clock.text;
     const summaryRaw = !manual && !ambiguous && !clock?.text ? mainlineTimeText(memoryByFloor.get(match?.floor.id)) : '';
     const raw = clock?.text ?? summaryRaw;
     const sourceTimeRaw = sourceRaw || summaryRaw;
     const time = manual ? manualTimes.get(match?.floor.id) ?? projectTime('')
       : ambiguous ? projectTime('')
-        : raw ? projectTime(raw.split(/\s*(?:→|->|⟶)\s*/u).at(-1), previous, { calendar }) : projectTime('');
+        : raw ? projectTime(raw.split(/\s*(?:→|->|⟶)\s*/u).at(-1), clock?.meta && !clock.meta.date ? null : previous, { calendar }) : projectTime('');
     const sourceTime = manual ? manualSourceTimes.get(match?.floor.id) ?? projectTimeSource('')
-      : sourceClock?.status === 'ambiguous' ? projectTimeSource('')
-        : sourceTimeRaw ? projectTimeSource(sourceTimeRaw.split(/\s*(?:→|->|⟶)\s*/u).at(-1), previousSource) : projectTimeSource('');
+      : sourceClock?.status === 'ambiguous' && !sourceClock.text ? projectTimeSource('')
+        : sourceTimeRaw ? projectTimeSource(sourceTimeRaw.split(/\s*(?:→|->|⟶)\s*/u).at(-1), sourceClock?.meta && !sourceClock.meta.date ? null : previousSource) : projectTimeSource('');
     previousHistory = time; previousHistorySource = sourceTime;
     if (visible) { previousVisible = time; previousVisibleSource = sourceTime; }
     const timeSourceFingerprint = await timeFingerprint(manual ? [sourceTime.date, sourceTime.clock, sourceTime.date ? null : sourceTime.raw]
