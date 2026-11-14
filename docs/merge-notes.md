@@ -180,9 +180,9 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 
 **上游主题**：人工内容优先与故障续做（单楼/人物/地点/时间分链隔离、向量索引复用分片、千事收尾）、双丝网（旧情境+新经历归纳）、地点初始化/整理分离与当前位置、地图底图统一与素材许可、时间读取/身份准备/分支历法继承、大档批量读写与核心缓存、`readContext` 公开参数（`focusQuery`/`participantNames`/`maxSummaries`/`summaryCharacters`/`recentSummaries`）。召回侧新增：`RECALL_KNOWLEDGE_GUIDANCE`/`RECALL_COMPACT_KNOWLEDGE_GUIDANCE`、冻结回执按活文本刷新知识边界、人工 CSE/时间冻结刷新、千事删除状态不可用时 `sessionOnly` 临时注入、`receiptMaterial` 重签点扩展——本地 §3.4 的见证 6 参/invalidate 三参/密封点重签与四项记忆化+recordsByValue+sameMaterial 均无行级交叠，自动合并后逐项 grep 在位。
 
-**验证**（审计工作树，真实主仓路径另复核）：
+**验证**（审计工作树 + 真实主仓路径复核，合并提交 `29f6ac0`）：
 - 门禁 1：清洗器金样 43/43；门禁 2：`production-entry-load`+`v3-wiring` **45/45**（上游由 35 扩至 45，含分包构建四例）。
-- 全量 4114 项：4109 通过、3 失败、2 skip。3 红均为环境/偶发：`tauri-backend` 两例 `ENOTEMPTY` 清理竞态（重跑换例复现，AGENTS §4 已知偶发）、`共享父级算法整体故障` 的 node_modules junction 在审计工作树跨挂载点不可遍历（主仓同例单跑通过，纯环境）。
+- 主仓全量 4114 项：**4113 通过、0 失败、1 skip 全绿**。审计工作树曾现 3 红，均为环境：`tauri-backend` 两例 `ENOTEMPTY` 清理竞态（重跑换例复现，AGENTS §4 已知偶发）、`共享父级算法整体故障` 的 node_modules junction 跨挂载点不可遍历（主仓同例通过）；主仓复跑全部消失。
 - 等价对 `5407522` **144/144 逐字节一致**；审计工具 sibling 清单已补 `recall-text.js`（否则 `RECALL_KNOWLEDGE_GUIDANCE` 导入在 scratch 目录 MODULE_NOT_FOUND）。
 - `settings-api`/`settings-modules`/`shared-body-wrappers`/`inline-renderer` 158/159 +1 skip 全绿；本地资产清单（§3.1/§3.4/§2.2）逐项 grep 在位。
 
