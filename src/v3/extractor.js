@@ -7,7 +7,7 @@ import { parseJsonWithSafeTrailingCommas, parseJsonWithSymbolRepair, repairJsonW
 import { deterministicUuid } from './foundation-domain.js';
 import { EXACT_ANCHOR_LIMIT, FLOOR_MEMORY_ITEM_LIMIT, collectFloorMemoryEntityIds, validateEntityRecord, validateFloorMemory } from './memory-schema.js';
 import { expandPlacePaths, placeCurrentFactBindings, completePlaceCurrentPatch, PLACE_CURRENT_GUIDANCE, PLACE_LOCATION_GUIDANCE, isPlaceTagSource, placeParentSourceIntent } from './place-foundation.js';
-import { locatePlaceQuote } from './place-evidence.js';
+import { locatePlaceQuote, isNarrativeSpan, narrativeOccurrences, locationTagRanges } from './place-evidence.js';
 import { resolvePlaceParentBatch } from './place-parent.js';
 import {QIANCHUANG_MAP_STYLES} from '../qianchuang-display-hints.js';
 import { copyFloorVariableReference } from './floor-variable-reference.js';
@@ -264,10 +264,13 @@ function occurrenceAt(content, quote, targetOffset) {
   throw extractorError('V3_EXTRACTOR_EVIDENCE_SPAN_INVALID');
 }
 function segmentOccurrences(content, canonical, segment, path) {
+  const tagBlocks = locationTagRanges(canonical.text);
   const found = [];
   let offset = -1;
   while ((offset = canonical.text.indexOf(segment, offset + 1)) !== -1) {
     if (found.length >= EVIDENCE_OCCURRENCE_LIMIT) throw extractorError('V3_EXTRACTOR_EVIDENCE_CHAIN_LIMIT', path);
+    // 闭合地点标签块整体是元数据而非正文（M0 保留标签时与上游剥除后的语义对齐），不计入证据定位
+    if (tagBlocks.some(([from, to]) => offset >= from && offset + segment.length <= to)) continue;
     const first = canonical.offsets[offset];
     const last = canonical.offsets[offset + segment.length - 1];
     if (!first || !last) throw extractorError('V3_EXTRACTOR_EVIDENCE_SPAN_INVALID', path);
@@ -481,7 +484,7 @@ function sourceContentFor({ floor, envelope, value, path }) {
     const segments = Array.isArray(value?.quoteSegments) ? value.quoteSegments : [value?.exactText].filter(Boolean);
     matching = matching.filter(binding => {
       const content = sourceFor(binding);
-      return typeof content === 'string' && content && segments.length > 0 && segments.every(segment => content.includes(segment));
+      return typeof content === 'string' && content && segments.length > 0 && segments.every(segment => narrativeOccurrences(content, segment).length > 0);
     });
   }
   if (matching.length !== 1) throw extractorError('V3_EXTRACTOR_EVIDENCE_SOURCE_INVALID', `${path}.sourceFloorKey`);
@@ -1412,10 +1415,10 @@ function semanticSource(item, quote, floor, envelope, allowPlaceOmission = false
   const snapshotIndex=field(item,['sourceSnapshotIndex']);
   if (floorKey && !sources.some(source => source.floorKey === floorKey)) return unresolved('unknownSourceFloorKey');
   const candidates=sources.filter(source => (!floorKey || source.floorKey === floorKey) && (!hintedType || source.sourceType === hintedType) && (!Number.isSafeInteger(snapshotIndex)||source.sourceSnapshotIndex===snapshotIndex));
-  const matches=candidates.filter(source=>source.content.includes(quote));
+  const matches=candidates.filter(source=>narrativeOccurrences(source.content,quote).length>0);
   if(matches.length)return matches.length===1?matches[0]:unresolved('ambiguousSourceQuote');
   if(!allowPlaceOmission||!floorKey||!hintedType)return unresolved('sourceQuoteUnlocated');
-  const recovered=candidates.flatMap(source=>{const segments=locatePlaceQuote(source.content,quote,{allowOmission:true});return segments?[{...source,quoteSegments:segments.map(segment=>segment.quote)}]:[];});
+  const recovered=candidates.flatMap(source=>{const segments=locatePlaceQuote(source.content,quote,{allowOmission:true});return segments&&segments.every(segment=>isNarrativeSpan(source.content,segment.start,segment.end))?[{...source,quoteSegments:segments.map(segment=>segment.quote)}]:[];});
   return recovered.length===1?recovered[0]:unresolved(recovered.length>1?'ambiguousSourceQuote':'sourceQuoteUnlocated');
 }
 

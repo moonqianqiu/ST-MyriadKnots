@@ -18772,6 +18772,58 @@ test('地点标签source不能冒充正文证据，即使同句正文存在也�
  assert.equal(result.memory.summary.aiText,'健康摘要。');assert.equal(result.memory.spatialFacts?.positions?.length??0,0);
 });
 
+test('默认M0保留地点标签时，标签内部文本不能冒充正文证据确认位置，正文叙述仍可定位',async()=>{
+ const tag='甲馆·客房';
+ const build=async(canonical,quote)=>{
+  const floor={id:'11111111-1111-4111-8111-111111111111',chatId:CHAT,narrativeGeneration:GENERATION,assistantSeq:1,content:{canonicalContent:canonical}};
+  const envelope=await createExtractorEnvelope({batchId:'33333333-3333-4333-8333-333333333333',chatId:CHAT,narrativeGeneration:GENERATION,floor,locationReference:[tag],userIdentity:{displayName:'林岚',aliases:['你','林岚']}});
+  const ev={source:'canonicalContent',sourceFloorKey:'floor-1',exactQuote:quote};
+  return normalizeExtractorResponse({response:{summary:'剧情摘要。',people:[{name:'林岚',role:'user',presence:'present'}],spatialFacts:{places:[{key:'place-mention-1',name:tag,identity:'new',...ev}],containments:[],positions:[{subject:'林岚',placeKey:'place-mention-1',status:'confirmed',...ev}]}},envelope,floor,now:NOW,expectedScope:envelope.scope});
+ };
+ const rejected=await build(`<location>${tag}</location>你离开客房，来到码头。`,tag);
+ assert.equal(rejected.memory.summary.aiText,'剧情摘要。','健康摘要不受坏引文影响');
+ assert.equal(rejected.memory.spatialFacts?.positions?.length??0,0,'标签引文不能确认篇末位置');
+ assert.ok(rejected.isolated.some(row=>row.field==='spatialFacts.positions'&&row.index===0));
+ const accepted=await build(`<location>${tag}</location>你在甲馆·客房推开窗。`,'你在甲馆·客房推开窗。');
+ assert.equal(accepted.memory.spatialFacts?.positions?.length??0,1,'标签外真实叙述仍可确认位置');
+ const whole=await build(`<location>${tag}</location>你离开客房，来到码头。`,`<location>${tag}</location>你离开客房，来到码头。`);
+ assert.equal(whole.memory.spatialFacts?.positions?.length??0,1,'跨标签边界的整楼引文不受影响');
+});
+
+test('默认M0生产链路：标签通道仍建地点身份，标签引文不确认位置，正文叙述可确认',async t=>{
+ for(const scenario of ['tag-only','narrative'])await t.test(scenario,async()=>{
+  const tag='甲馆·客房';
+  const tail=scenario==='tag-only'?'你离开客房，来到码头。':'你在甲馆·客房推开窗，眺望庭院。';
+  const h=harness({withPlaces:true,modernAnchors:true,readOnlyLifecycle:true,
+   initialChat:[user('继续'),assistant(`<location>${tag}</location>${tail}`),user('稳定')],
+   utility:options=>{
+    const p=JSON.parse(options.taskMessages[0].content).payload;
+    assert.ok(p.canonicalContent.includes(`<location>${tag}</location>`),'默认M0正文保留标签');
+    assert.deepEqual(p.locationReference,[tag],'标签仍沿locationReference通道提供');
+    const quote=scenario==='tag-only'?tag:'你在甲馆·客房推开窗';
+    const ev={source:'canonicalContent',sourceFloorKey:p.sourceFloorKey,exactQuote:quote};
+    const path=[{name:'甲馆',mapLevel:'scope'},{name:'客房',mapRole:'interior',...(scenario==='narrative'?{placeKey:'place-mention-1'}:{})}];
+    return{jsonData:{summary:tail,people:[{name:'林岚',role:'user',presence:'present'}],spatialFacts:{places:[{key:'place-mention-1',name:scenario==='narrative'?'客房':tag,identity:'new',...ev}],containments:[],positions:[{subject:'林岚',placeKey:'place-mention-1',status:'confirmed',...ev}]},placePaths:[{path,source:'locationReference',sourceFloorKey:p.sourceFloorKey,sourceSnapshotIndex:0,exactQuote:tag}]}};
+  }});
+  await h.foundationRuntime.reconcile('m0-tag-evidence');await h.runtime.start();
+  await h.runtime.extractFloor(h.runtime.getState().floors[0].floorId,{analyzeState:false});
+  const snapshot=h.runtime.getQianchuangSnapshot();
+  const room=snapshot.places.find(p=>p.displayName==='客房'),hall=snapshot.places.find(p=>p.displayName==='甲馆');
+  assert.ok(room,'locationReference通道仍建立地点身份');assert.ok(hall);
+  assert.equal(room.parentEntityId,hall.entityId,'标签路径层级仍保存');
+  if(scenario==='tag-only'){
+   assert.equal(snapshot.userPosition.status,'unknown','标签引文不能确认篇末位置');
+   assert.equal(snapshot.userPosition.placeEntityId,null);
+  }else{
+   assert.equal(snapshot.userPosition.status,'confirmed');
+   assert.equal(snapshot.userPosition.placeEntityId,room.entityId,'正文叙述确认篇末位置');
+  }
+  const saved=await h.store.readReachable({mode:'runtime'});
+  assert.deepEqual(saved.floorMemories[0].sourceLocationReference,[tag]);
+  assert.equal((saved.floorMemories[0].spatialFacts?.positions?.length??0)>0,scenario==='narrative');
+ });
+});
+
 
 test('单地点标签基础来源也沿原整理取材，不要求先有父边或正文位置',async()=>{
  const tag='河湾镇',body='你眺望远处。';

@@ -174,3 +174,31 @@ test('旧地点整理承接每楼已存标签独立来源，聚合缺成员及�
   const changed={...memory,sourceFloorSnapshots:snapshots};const next=await placeEvidence.collectPlaceOrganizationSources({...args,memoriesByFloor:new Map([['f1',changed],['f2',changed]])});assert.equal(next.some(row=>row.sourceType==='locationReference'&&row.floorId==='f1'),false);
  }
 });
+
+test('默认M0保留的闭合地点标签块是元数据，不冒充正文证据（AGENTS §3.1）', () => {
+  const content = '<location>甲馆·客房</location>你推开甲馆·客房的窗。';
+  const spanEnd = content.indexOf('</location>') + '</location>'.length;
+  const inTag = content.indexOf('甲馆·客房'), inProse = content.lastIndexOf('甲馆·客房');
+  assert.deepEqual(placeEvidence.locationTagRanges(content), [[0, spanEnd]], '闭合标签块整体（含标记）为元数据区间');
+  assert.deepEqual(placeEvidence.narrativeOccurrences(content, '甲馆·客房'), [inProse], '标签内命中被过滤，正文命中保留');
+  assert.equal(placeEvidence.isNarrativeSpan(content, inTag, inTag + 5), false, '整体落在标签块内的引文不可作证据');
+  assert.equal(placeEvidence.isNarrativeSpan(content, spanEnd, spanEnd + 5), true, '正文同文命中不受影响');
+  assert.equal(placeEvidence.isNarrativeSpan(content, 0, content.length), true, '跨标签边界的整楼引文仍可定位');
+  assert.equal(placeEvidence.isNarrativeSpan(content, 10, spanEnd + 2), true, '部分重叠含叙事字节仍可定位');
+
+  const cased = '<LOCATION lang="zh">大厅</Location>大厅在外部。';
+  const proseAt = cased.indexOf('大厅', cased.indexOf('</Location>'));
+  assert.deepEqual(placeEvidence.locationTagRanges(cased), [[0, cased.indexOf('</Location>') + '</Location>'.length]], '大小写与属性不敏感');
+  assert.deepEqual(placeEvidence.narrativeOccurrences(cased, '大厅'), [proseAt]);
+
+  const nested = '<location>a<location>b</location>c</location>';
+  assert.deepEqual(placeEvidence.narrativeOccurrences(nested, 'b'), [], '嵌套内层仍属外层元数据');
+  assert.deepEqual(placeEvidence.narrativeOccurrences(nested, 'a'), [], '外层标签块内（含标记文字）整段是元数据');
+  assert.deepEqual(placeEvidence.narrativeOccurrences(nested, 'c'), [], '内层闭标与外层闭标之间仍属外层块');
+  assert.deepEqual(placeEvidence.narrativeOccurrences('<location>未闭合正文', '未闭合'), [10], '未闭合块不算元数据，与readLocationReference只认闭合块一致');
+  assert.deepEqual(placeEvidence.narrativeOccurrences('<location/>正文', '正文'), [11], '自闭合无内部');
+  assert.deepEqual(placeEvidence.narrativeOccurrences('在房里，房外有井。', '房').length, 2, '无标签时全量命中');
+  assert.equal(placeEvidence.isNarrativeSpan('abc', -1, 2), false);
+  assert.deepEqual(placeEvidence.narrativeOccurrences('', 'x'), []);
+  assert.ok(locatePlaceQuote('<location>甲</location>', '甲'), 'locatePlaceQuote保持纯定位，叙事闸门在证据调用点');
+});

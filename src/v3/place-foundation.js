@@ -5,7 +5,7 @@ import { validateEntityRecord } from './memory-schema.js';
 import { isUuid } from '../identity.js';
 import { normalizePlaceFacilities, validQianchuangMapStyle, validQianchuangMapLayout, normalizeQianchuangMapLayout, normalizeQianchuangMapStyle } from '../qianchuang-display-hints.js';
 import {selectQianchuangMapAsset} from '../qianchuang-map-assets.js';
-import { locatePlaceQuote } from './place-evidence.js';
+import { locatePlaceQuote, isNarrativeSpan } from './place-evidence.js';
 import { resolvePlaceParentBatch } from './place-parent.js';
 const label=value=>String(value??'').normalize('NFKC').trim().toLocaleLowerCase();
 const copy=value=>structuredClone(value);
@@ -46,11 +46,13 @@ function pathEvidence(entry, scope) {
       : binding.sourceType === 'locationReference' ? [] : [{ ...binding, sourceType: binding.sourceType ?? 'assistant' }]);
     const candidates = choices.filter(binding => ref.source === 'storedPlaceEvidence' ? binding.evidenceKey === ref.sourceKey
       : (!ref.sourceFloorKey || binding.floorKey === ref.sourceFloorKey) && (!Number.isSafeInteger(ref.sourceSnapshotIndex) || binding.sourceSnapshotIndex === ref.sourceSnapshotIndex));
+    const selfQuoted = ref.source === 'storedPlaceEvidence' && !Object.hasOwn(ref, 'exactQuote');
     const match = allowOmission => candidates.flatMap(binding => {
       if(binding.requiresExactQuote&&(typeof ref.exactQuote!=='string'||!ref.exactQuote.trim()||ref.exactQuote.length>2000))return [];
-      const segments=locatePlaceQuote(binding.canonicalContent,ref.source === 'storedPlaceEvidence' && !Object.hasOwn(ref,'exactQuote') ? binding.canonicalContent : ref.exactQuote,{allowWhitespace:true,allowOmission});
+      const segments=locatePlaceQuote(binding.canonicalContent,selfQuoted?binding.canonicalContent:ref.exactQuote,{allowWhitespace:true,allowOmission});
       if(binding.requiresExactQuote&&segments?.some(segment=>segment.quote.length>2000))return [];
-      return segments?[{binding,segments}]:[];
+      // 模型自填引文不得整体落在闭合地点标签内部（M0 保留标签时同上游剥除后的语义）；整行自证来源除外
+      return segments&&(selfQuoted||segments.every(segment=>isNarrativeSpan(binding.canonicalContent,segment.start,segment.end)))?[{binding,segments}]:[];
     });
     const strict = match(false), matches = strict.length ? strict : (ref.sourceFloorKey || ref.source === 'storedPlaceEvidence' && ref.sourceKey) ? match(true) : [];
     if (matches.length !== 1) return [null];

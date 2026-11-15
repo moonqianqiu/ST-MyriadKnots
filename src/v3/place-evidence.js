@@ -6,6 +6,44 @@ export function validatePlaceSource(source) {
  return source;
 }
 
+// M0 缺省直通（AGENTS §3.1）把 <location> 标签逐字保留在 canonicalContent 中；闭合地点标签块
+//（标记连同内部）是场景元数据而非正文叙事（location-reference.js 只认闭合块），上游缺省清洗
+// 剥除标签后正文根本不含该文本，故标签块不能作为正文证据被引用。只过滤匹配、不改写内容：
+// 存储的 quotedText/occurrence 仍与 canonical 逐字对齐；引文跨越标签边界（含真实叙事字节）
+// 仍可定位，仅整体落在闭合标签块内才拒绝。分词正则与 memory-content-sanitizer.js 的 TAG_PATTERN 一致。
+const NARRATIVE_TAG_TOKEN_RX = /<(\/?)\s*([\p{L}][\p{L}\p{N}_-]*~?)(?:\s[^>]*)?(\/?)>/giu;
+
+export function locationTagRanges(content) {
+ if (typeof content !== 'string' || !content) return [];
+ const ranges = [], open = [];
+ for (const match of content.matchAll(NARRATIVE_TAG_TOKEN_RX)) {
+  const [, closing, name, selfClosing] = match;
+  if (name.toLocaleLowerCase('en-US') !== 'location') continue;
+  if (closing) { if (open.length) ranges.push([open.pop().start, match.index + match[0].length]); continue; }
+  if (selfClosing) continue;
+  open.push({ start: match.index });
+ }
+ return ranges; // 末尾未闭合块不算元数据：与 readLocationReference「只认闭合块」一致
+}
+
+const insideLocationTag = (ranges, start, end) => ranges.some(([from, to]) => start >= from && end <= to);
+
+export function isNarrativeSpan(content, start, end) {
+ if (typeof content !== 'string' || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end > content.length || start >= end) return false;
+ return !insideLocationTag(locationTagRanges(content), start, end);
+}
+
+export function narrativeOccurrences(content, quote) {
+ if (typeof content !== 'string' || typeof quote !== 'string' || !quote) return [];
+ const ranges = locationTagRanges(content);
+ const found = [];
+ let offset = -1;
+ while ((offset = content.indexOf(quote, offset + 1)) !== -1) {
+  if (!insideLocationTag(ranges, offset, offset + quote.length)) found.push(offset);
+ }
+ return found;
+}
+
 export function locatePlaceQuote(content, quote, { allowWhitespace = false, allowOmission = false } = {}) {
   if (typeof content !== 'string' || typeof quote !== 'string' || !quote.trim()) return null;
   const offset = content.indexOf(quote);
