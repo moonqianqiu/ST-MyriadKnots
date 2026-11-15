@@ -35,7 +35,8 @@
 | 召回选材性能取证 / v0.8.0 修复取证 | `docs/fork/audit-recall-budget-loop-2026-10.md` / `docs/fork/audit-v0.8.0-test-failures-remediation.md` |
 | 用户可见的用法与排障 | `README.md` / `docs/troubleshooting.md`（上游产权文件，fork 增补句见 merge-notes） |
 
-**docs/ 产权规则**：`docs/fork/` 下全部为本仓本地文档（含两个专项取证）；其余 `docs/**`（含 `docs/superpowers/`、`docs/history/`）均为**上游产权文件**——随上游更新，勿改名、勿搬动、勿按本地习惯改写。
+**docs/ 分布与产权**：`docs/fork/` 下全部为本仓本地文档（契约/流程/实录/取证，见上表）；其余 `docs/**` 为**上游产权文件**——随上游更新，勿改名、勿搬动、勿按本地习惯改写：
+`public-api.md`（readContext 公开读取接口）、`qianshi-backend.md`（千事后端接口合同）、`qianchuang-assets.md`（千窗底图素材与许可，代码引用 ×25）、`real-city-basemaps.md`（现实城市底图素材）、`tauritavern.md`（TauriTavern 原生存储适配说明）、`troubleshooting.md`（用户排障手册，fork 有增补句）、`updates-0.8.0.md`（0.8.0 历史发布说明）、`history/`（v0.8.0 前版本记录）、`superpowers/`（上游 Superpowers agent 工作流的实施计划/设计规格产物）。
 
 ## 门禁
 
