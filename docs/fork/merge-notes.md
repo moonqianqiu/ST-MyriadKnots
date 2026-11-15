@@ -1,14 +1,40 @@
 # 合并上游实录与教训（Moon 定制版）
 
-> **用途**：`AGENTS.md` §2/§3 只保留**当前契约、锚点与红线**；本文存放被外置的**合并实录与教训全文**（早期逐版本行与索引、正交性论证、损坏与陷阱实例、上游自带红测试代修史、版本要点、冲突实录、UI 迁移实录）。
+> **产权**：本文件为 fork 本地文档（上游无此文件），存放于 `docs/fork/`。
+> **用途**：本文＝**合并实录与教训的唯一存放处**（卷首版本索引表、早期实录、正交性论证、损坏与陷阱实例、上游自带红测试代修史、UI 迁移实录、逐版本要点）。当前契约见 [`fork-contracts.md`](./fork-contracts.md)；合并流程与判定法见 [`merge-playbook.md`](./merge-playbook.md)；门禁与当前状态见根 [`AGENTS.md`](../../AGENTS.md)。
 > **何时读**：怀疑本地增强与上游机制相互干扰时（§2）；排查「合并后单侧绿、运行时 `ReferenceError`」类损坏时（§3）；遇到上游自动改写调用点或改名时（§4）；需要判断某条红测试是上游缺陷还是本地回归时（§5）。
-> **日常合并流程本身不必读本文**——流程与门禁见 AGENTS.md §1.4 与 §4。
+> **日常合并流程本身不必读本文**——流程见 merge-playbook.md，门禁见根 AGENTS.md。
+> **旧编号解析**：正文（尤其历史叙事）残留的 `AGENTS §N` / `§2.2` 式旧编号一律按 [`fork-contracts.md`](./fork-contracts.md) 卷首对照表解析——§1.3/§1.4→merge-playbook §1/§2，§2.1→merge-playbook §3，§2.2→fork-contracts 一，§2.3→fork-contracts 二，§3.x→fork-contracts §3.x，§4→merge-playbook §4，§5.1→本文卷首索引表。
+
+## 0. 合并索引总表（原 AGENTS.md §5.1，全历史一览；每行 ≤120 字符）
+
+> v0.5.0~v0.7.15 明细见 §1；v0.8.0~v1.1.6 细节见 §6；v1.1.7 起逐版本节在 §9 之后。
+
+| 上游版本 | 日期 | 合并提交 | 冲突与裁决要点 | 当期全量 |
+| :--- | :--- | :--- | :--- | :--- |
+| v0.8.0 | 10-20 | `bd44158` | 14 冲突；编辑器迁移+三处 invalidate 保位；删 legacyIndexPuts；键 `.126-58d4b7dcebff9b7f` | 1882/1922 |
+| v0.8.1+v0.9.0+v0.9.1+v0.9.2 | 10-24 | `c6ace7c` | 20 冲突：清洗器三向分歧保本地（fork-contracts §3.1）、SANITIZER_VERSION 保 v2、共享容器 M0 三件套、extractor schema 拒绝/弱参考降级取上游、地点 beforeIndex/disabled 快路径上游同向取上游、prompts-settings 管线嫁接、wrappers 去重两仓同步、记忆化等价 144/144；键 `.129-658429a52fe9524a` | 2072/2076（4 上游原生红） |
+| v0.9.3 | 10-24 | `d8eac84` | 4 冲突全并集；人物/头像/时间上游直通；删 plugin-activity 本地 real define（上游自带 stub，双声明覆盖致人物→时间红）；键 `.130-9a9cb2f6e43e7773` | 2136/2144（8 上游原生红） |
+| v0.9.4 | 10-25 | `7864d36` | 2 冲突（dist 重建、manifest 版本+键 `.131-c0fa8f87adb58dee`）；引号解析修复直通 | 2142/2150（8 上游原生红） |
+| v0.9.5 | 10-25 | `91bdc07` | 5 冲突；settings.js 并集（M0+破限容器）、help-guide 收上游保本地、入口 mock 代修；键 `.132-e7b958b4d55fb18e` | 2166/2178（12 上游原生红） |
+| v0.9.6~v0.9.9 | 10-27 | `9538f05` | 4 冲突；入口夹具 M0 覆盖（反事实 7 红/7 绿）、time-body 参数并集、删 processingPrompt 代修；身份读文件优先（键不变）、分支继承改指纹匹配；键 `20261027.1-61c780ebc41c3a3c` | 2279/2296（17 上游原生红） |
+| v0.10.0+v0.10.1 | 10-30 | `4c455c6` | 6 冲突（细则 §6）；漂移合同 `76cabfa`；键 `20261030.134-9e539cc40fcb9c83` | 2635 全绿 |
+| v1.0.3 | 11-03 | `ee55b28` | 9 冲突；settings/recall-runtime 并集、bootstrap 删诊断参数；键 `.208-b689a42fd1e8aeb9` | 3117 全绿 |
+| v1.0.6 | 11-04 | `010e65a` | 2 冲突（dist、manifest）；上游原生红 1（panel-navigation 文案 18→21，纯上游同红）；键 `.219-7a2aa56eb8fa52e9` | 3146/3145 |
+| v1.1.0 | 11-06 | `2f047bc` | 8 冲突；边界文案采上游短版（两层制退役）、前情机制退役、记忆化重植 144/144（n=192 18.25×）、htmlFormatting 适配面；键 `.229-5634f7367c631b03` | 3193/3192+1skip 全绿 |
+| v1.1.1 | 11-07 | `c93a7df` | 5 冲突；见证签名 6 参合成（canonicalByRaw+触发楼边界）、用户输入捕获外移+extra-only 随迁、time-body 正交叠加；键 `.243-e1f93110c0ba2595` | 3260/3259+1skip 全绿 |
+| v1.1.2+v1.1.3 | 11-08 | `d0d5612` | 3 冲突（预判全中）：harness 并集（sanitizerOptions×manualMemorySnapshot）、manifest 1.1.3、bundle 重建；辅助来源解耦/单楼重提取/回执 entityNames 直通；键 `.251-70d1f0ecd3e8029e` | 3379/3378+1skip 全绿 |
+| v1.1.4~v1.1.6 | 11-09 | `3a06377` | 3 冲突（预判全中）：reset 按钮并集、manifest 1.1.6、bundle 重建；地点父级批量裁决/places 全链降级/placeMerges/视口面板直通；1 例环境适配（POSIX /tmp→os.tmpdir+junction，纯上游同红）；键 `.261-c328a623f21e5864` | 3485/3484+1skip 全绿 |
+| v1.1.7~v1.1.16 | 11-13 | `e9055d1` | 冲突并集；稳定锚+extra-only；键 `.299-6c17d3371ed900c4` | 3695/3677/17+1skip；上游22红 |
+| v1.2.0 | 11-14 | `29f6ac0` | 6 冲突：分包重建、manifest、inline 白名单并集、time-body 部分时间戳嫁接、qianchuang-view import、v3-cse harness；键 `.333-010f29e1abf45db6` | 4114/4113/0fail+1skip 全绿；等价 144/144 |
+| v1.2.1 | 11-15 | `f73017f` | 3 冲突：分包重建（分块同 SHA）、manifest 键 `.344`、README 整取上游+清洗说明迁 troubleshooting；health stub 退役、4 例 location 夹具 extraTags 适配 | 4167/4166/0fail+1skip 全绿；等价 144/144 |
+| v1.2.1+闸门（fork 修复） | 11-15 | `31dbeea`+`76c435a` | 非合并：地点标签证据闸门（M0 保留标签不冒充正文证据）+ parseTagTokenTree 全栈镜像精化；键 `.346-f08732aa6e8add6e` | 4173/4172/0fail+1skip；等价 144/144 |
 
 ---
 
 ## 1. 早期合并实录（v0.5.0 ~ v0.7.15）
 
-自 AGENTS.md §5.1 索引表外置：该表只保留近期版本，更早版本明细在此（不丢信息，仅改存放位置）。
+早期版本明细（不丢信息，仅改存放位置）。
 
 | 上游版本 | 日期 | 合并提交 | 冲突与裁决要点 | 当期全量 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -79,7 +105,7 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 | v0.7.14+v0.7.15 | `tests/production-dist-branch.test.mjs` 的 `fetchImpl` 只认 `/v1/records/qianqianjie/` 单条路由；v0.7.14 起记录读取强制先协商 `/v1/health`，探针 404 → 「聊天身份准备失败」（HTTP 404）→ 副本 binding 10s 超时 | 夹具补 `/v1/health` 桩：`{ ok: true, api: { current: 1, supported: [1] }, capabilities: { records: true, optimisticRevision: true } }`（不声明 `recordBatchRead`/`recordIdList`）→ 客户端走单条 GET 回退；断言与夹具内容一字未动 |
 ## 6. 合并要点与冲突实录归档（v0.8.0 ~ v1.1.6）
 
-> 由 `AGENTS.md` §5 / §2.1 外置：AGENTS 只保留**当下底数**与**最近一版**要点，历史版本要点与长实录全文在此。新增合并记录直接写本文（AGENTS 只追加 §5.1 一行）。
+> 由旧 AGENTS.md §5 / §2.1 外置；AGENTS 现仅保留当前状态块（原地更新，不留历史）。新增合并记录直接写本文新版本节 + 卷首索引表加行。
 
 ### 6.1 版本要点（v0.8.0 ~ v1.1.6）
 
@@ -156,6 +182,12 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 
 上游把本楼记忆编辑器从 `renderMemoryFloor()` 内联 `if (draft) {…}` 块抽为独立 `openMemoryEditor(floor, state, key, draft)` **弹窗**（`customImpl` + `qqj-editor-dialog` + 局部 `draw()` 重绘），并把卡片体改为惰性 `buildBody()`；**冲突块下游的公共代码引用上游新引入的 `currentState`**，故必须整体取上游结构。**「并集」在此类冲突上是错的**：`openMemoryEditor` 作为新函数会自动合入并 `drafts.set(key, draft)`，保留本地内联块会同时渲染两份编辑器，且缓存失效只挂在内联路径上 → 弹窗保存后静默不失效。正确做法是**迁移**：取上游结构，把 `recallRuntime?.invalidate?.('manualMemoryEdit', 'manualMemoryEdit', { clearPersisted: true })` 移植进 `openMemoryEditor` 的 `run(…).after` 回调。判据：先 `git grep` 特征串确认上游是「删除」还是「搬迁」，再查基线确认本地块是「新增定制」还是「保留旧行为」。**该 after 回调须先比 `nextState?.chatId === state.chatId`（保存发起时的聊天）才执行清理联动**（2026-10-24）：否则 A 保存期间切到 B，A 的完成回调会误删并保存 B 的回执。
 
+## 8. 维护约定
+
+- 新的逐版本合并详情写入本文件新版本节（§9 之后按版本追加）+ 卷首索引表加一行（≤120 字符）；冲突实录与上游原生红代修实例写入 §5 / §6.2；UI 迁移写法写入 §7。
+- 契约改动写 [`fork-contracts.md`](./fork-contracts.md) 对应条目（含「勿回植速查」表）；根 `AGENTS.md` 状态块只原地更新当前值，**禁止追加历史叙述**。
+- 正文中残留的旧 `AGENTS §N` 编号按 fork-contracts.md 卷首对照表解析；新写内容一律用新文档路径与节名，不再使用 AGENTS §N 写法。
+
 ## 9. v1.1.7~v1.1.16 合并（2026-11-13）
 
 上游 `e9055d1`，合并范围 v1.1.7~v1.1.16。预判的 5 个冲突均命中：`dist/qqj-app.js` 重建；manifest 版本取 1.1.16 并重建缓存键；`src/v3/user-input-source.js` 保留上游 `selectUserStabilityAnchor` 与本地 `extraOnlySanitizerOptions`；`tests/v3-foundation-view.test.mjs` 并存本地回执保存回归与上游异步激活回归，并按上游更新“待登记”断言。
@@ -208,7 +240,21 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 - 主仓全量 **4167 项：4166 通过、0 失败、1 skip 全绿**（v1.2.0 基线 4114 → 上游净增 53 项）。首轮曾现 `v3-extractor-memory` 2 子测红，即上述 4 例夹具适配的其中两例，适配后该文件 779/779。
 - 等价对 `50e6282` **144/144 逐字节一致**（`recall-audit` sibling 清单本轮无需扩充，上游未动召回侧）。
 
-## 8. 维护约定
+## 12. v1.2.1 后本仓修复与文档重整（2026-11-15，非合并）
 
-- 新的逐版本合并要点写入 §6.1；新的冲突实录与上游原生红代修实例写入 §6.2 / §5；新的 UI 迁移写法写入 §7。
-- `AGENTS.md` 仅保留契约、锚点、红线与索引；正文一旦膨胀即外置到本文。
+### 12.1 地点标签证据闸门（`31dbeea` + 边界精化 `76c435a`）
+
+用户实测报告的缺陷：默认 M0 下 `<location>甲馆·客房</location>你离开客房，来到码头。` 中模型只引标签内部文本即通过正文证据校验，人物位置被存成 confirmed（复现 positions=1）。根因：M0 直通保留标签于 canonical，而上游缺省清洗剥除——上游证据层从不需要面对这段文本；提示词澄清不可消除，须证据校验层兜住。
+
+修复（契约详见 fork-contracts 一、地点标签证据闸门）：`place-evidence.js` 新增 `locationTagRanges`/`isNarrativeSpan`/`narrativeOccurrences`，extractor 三处消费点（`segmentOccurrences`/`sourceContentFor`/`semanticSource`）+ place-foundation 正文行过滤；**引文整体落入闭合标签块（含标记）才拒绝**——跨界/整楼引文放行，`locationReference` 通道与世界书/角色卡来源不过滤，只过滤匹配不改写内容（存储 quotedText/occurrence 仍逐字对齐 canonical）。
+
+边界精化（用户复审报告触发）：11 形态探针对齐 `readMemoryTagBlocks`——带空格/属性"自闭合"（`<location />`，属性段吞斜杠）上游解析器本就按开标记处理（同源怪癖，故意保持同判，不单侧改自闭合语义）；真实失配仅截断类（`</wrapper>` 就近同名闭合丢弃内层 location 开标记后，原简易栈仍配对出区间→误拒叙事），`locationTagRanges` 升级为 `parseTagTokenTree` 全栈镜像后块级完全对齐。
+
+验证：place-evidence 17/17、v3-extractor-memory 783/783、门禁2 entry+dist-branch 48/48、全量 4173 例 4172 通过+1skip（多轮全量的唯一失败均为已载 tauri `ENOTEMPTY` 同类偶发，单跑即过）、等价 144/144；键 `.345-52a19e010be0698b` → `.346-f08732aa6e8add6e`（分块 SHA 不变）。
+
+### 12.2 发布说明补齐与文档重整
+
+- **迁移重置发布说明**（用户复审建议）：存量纯 `content` 的 keepTags（含主动配置，无法与旧默认回写区分）会被一次性重置为空——CHANGELOG 1.2.1「本仓说明」与 troubleshooting 清洗小节注明原因与重配路径；fork-contracts §3.3 四边界措辞澄清。
+- **记忆化容量策略关注点**（用户复审标记）：`compactMemo`/`preparedMaterialMemo` 两处模块级 Map 各限 20 万**条目数**、达限整体清空，长档驻留内存不稳——记 fork-contracts §3.5「容量策略注意点」，后续实测峰值堆内存再议按总字符/token 限额或 LRU（届时改动须先过等价门禁 144/144）。
+- **文档重整**（本节所述结构调整）：AGENTS.md 62KB 瘦身为 ~4KB 入口（红线/文档地图/门禁/当前状态），逐文件契约外移 fork-contracts.md、合并流程外移 merge-playbook.md，本文成为合并实录唯一存放处（卷首索引表承接旧 AGENTS §5.1，§8 归位至 §7 之后）；fork 本地文档归拢 `docs/fork/`（本文 + 两份 audit + 两份新文档），其余 `docs/**` 为上游产权（含 `docs/superpowers/`，勿搬动）。
+- **用户独立复审结论**：全量 4173 项 4172 通过 / 0 失败 / 1 skip 全绿一次；等价 144/144；持久回执清理核验拿到宿主聊天对象引用（非脱宿快照副本）；56 文件差异判定为有边界、可解释的 fork 定制，无已证实功能回归。
