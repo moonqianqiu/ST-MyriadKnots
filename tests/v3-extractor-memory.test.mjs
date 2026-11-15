@@ -2429,7 +2429,7 @@ test('实际顺序提取从前楼 locations 提供地点名参照，但不把泛
   const currentContent = '林岚在厨房里整理物品。';
   const h = harness({ initialChat: [user('先安排住处'), assistant(oldRawLocation), user('继续整理'), assistant(currentContent), user('确认完成'), assistant('会话继续。')],
     // 上游 v0.8.0 起本测试的原始消息带 <location> 标签，并期望 canonical 不含该标签；
-    // 上游依赖其清洗器缺省剥除，本仓 M0 合同保留标签（AGENTS §3.1 测试侧不得回退），
+    // 上游依赖其清洗器缺省剥除，本仓 M0 合同保留标签（fork-contracts §3.1 测试侧不得回退），
     // 故显式给出 extraTags 剥除，测试意图（原消息冻结标签进请求、canonical 不含标签）不变。
     sanitizerOptions: () => ({ extraTags: 'location' }),
     utility: options => {
@@ -2627,7 +2627,7 @@ test('真实高楼聚合提取只携带首个来源楼之前的地点绑定和�
     initialChat: Array.from({ length: 11 }, (_, index) => [assistant(index === 0 ? eastText : index === 10 ? laterBatchText : `高楼正文 ${index + 1}。`), user(`确认 ${index + 1}`)]).flat(),
     automation: { enabled: false, batchSize: 1 },
     // 同「地点名参照」例：上游 v0.8.0 新增的原始 <location> 标签需显式剥除，
-    // 本仓 M0 合同不会缺省剥除（AGENTS §3.1），否则 canonical 与 mock 分支失配。
+    // 本仓 M0 合同不会缺省剥除（fork-contracts §3.1），否则 canonical 与 mock 分支失配。
     sanitizerOptions: () => ({ extraTags: 'location' }),
     utility: options => {
       const request = JSON.parse(options.taskMessages[0].content);
@@ -18738,7 +18738,7 @@ test('地点标签贯通原摘要保存冷读、旧档整理与地图，篇末�
    return{jsonData:{summary:body,people:[{name:'林岚',role:'user',presence:'present'}],spatialFacts:{places:[{key:'place-mention-1',name:'房里',identity:'new',...ev},{key:'place-mention-2',name:'码头',identity:'new',...ev}],containments:[],positions:[{subject:'林岚',placeKey:'place-mention-2',status:'confirmed',...ev}]},...(mode==='ordinary'?{placePaths:[{path:path('东厢房',{placeKey:'place-mention-1'}),source:'locationReference',sourceFloorKey:p.sourceFloorKey,sourceSnapshotIndex:0,exactQuote:tag}]}:{})}};
   };
   // 上游 v1.2.1 原始消息带 <location> 标签并期望 canonical 不含标签（其清洗器缺省剥除）；
-  // 本仓 M0 合同保留标签（AGENTS §3.1），故显式 extraTags 剥除，与上游缺省行为逐字等价。
+  // 本仓 M0 合同保留标签（fork-contracts §3.1），故显式 extraTags 剥除，与上游缺省行为逐字等价。
   const h=harness({withPlaces:true,modernAnchors:true,readOnlyLifecycle:true,initialChat:[user('继续'),assistant(`<location>${tag}</location>${body}`),user('稳定')],sanitizerOptions: () => ({ extraTags: 'location' }),utility});
   await h.foundationRuntime.reconcile('location-source');await h.runtime.start();await h.runtime.extractFloor(h.runtime.getState().floors[0].floorId,{analyzeState:false});
   let snapshot=h.runtime.getQianchuangSnapshot(),room=snapshot.places.find(p=>p.displayName===(mode==='ordinary'?'东厢房':'房里'));assert.ok(room);assert.equal(snapshot.places.filter(p=>['房里','东厢房'].includes(p.displayName)).length,1,'泛称与具体路径复用一个叶ID');

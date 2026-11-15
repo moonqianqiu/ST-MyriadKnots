@@ -1,5 +1,5 @@
 // 本地 fork 专属守卫（上游无此文件）。
-// tests/v3-recall.test.mjs 按 AGENTS.md §2 与上游逐字相同，不允许加本地断言；
+// tests/v3-recall.test.mjs 按 fork-contracts 一（召回链路）与上游逐字相同，不允许加本地断言；
 // 因此本地对上游文件的三件套补丁（captureCoreBodyWitness 触发楼截断 / invalidate 持久收据联动 /
 // floor-binding locatorEquivalent）+ extra-only 清洗合同 + 时间参考标签探针，集中在此文件回归。
 import test from 'node:test';

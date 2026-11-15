@@ -6,7 +6,7 @@ export function validatePlaceSource(source) {
  return source;
 }
 
-// M0 缺省直通（AGENTS §3.1）把 <location> 标签逐字保留在 canonicalContent 中；闭合地点标签块
+// M0 缺省直通（fork-contracts §3.1）把 <location> 标签逐字保留在 canonicalContent 中；闭合地点标签块
 //（标记连同内部）是场景元数据而非正文叙事（location-reference.js 只认闭合块），上游缺省清洗
 // 剥除标签后正文根本不含该文本，故标签块不能作为正文证据被引用。只过滤匹配、不改写内容：
 // 存储的 quotedText/occurrence 仍与 canonical 逐字对齐；引文跨越标签边界（含真实叙事字节）

@@ -362,7 +362,7 @@ test('只双向共享 schedule-planner 预设池；千千结主配置与两边�
     const executable = source
       .replace("'../utils/shared-processing-prompt.js'", JSON.stringify(new URL('../utils/shared-processing-prompt.js', sourceUrl).href))
       .replace("'../utils/shared-body-wrappers.js'", JSON.stringify(new URL('../utils/shared-body-wrappers.js', sourceUrl).href))
-      // moon SDC 的 settings.js 另 import 本仓合同的 normalizeTagRules（AGENTS §2.1），data: 模块内
+      // moon SDC 的 settings.js 另 import 本仓合同的 normalizeTagRules（fork-contracts 二（受保护设置）），data: 模块内
       // 相对导入不可解析，同样重写为绝对 file URL（上游不知晓 moon 分叉，缺此行子测试直接抛错而非 skip）。
       .replace("'../utils/tag-names.js'", JSON.stringify(new URL('../utils/tag-names.js', sourceUrl).href))
       .replace("import { extension_settings } from '../../../../extensions.js';", 'const extension_settings = globalThis.__QQJ_SEVEN_TEST_SETTINGS__;')

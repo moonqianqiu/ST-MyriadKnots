@@ -513,7 +513,7 @@ test('剥壳投影排除名单行为守卫：名单内块（含 record 单数）
   // 名单与 src/v3/time-body.js TIME_EXCLUDED_TAGS 保持一致（有意重复：测试即合同）。
   // 守卫能力 = 本地名单缩水即红 + 锁 17 名端到端合同；上游扩集方向由下方 ⊆ 断言守护；
   // 上游收窄方向不可感（本地多剥是保守方向，可接受）。刮取断言与 extractor 该行格式
-  // 耦合是有意合同——上游重排则解析红，指引见 AGENTS.md §2.2 剥壳投影条目。
+  // 耦合是有意合同——上游重排则解析红，指引见 fork-contracts 一、time-body 剥壳投影条目。
   const EXCLUDED_NAMES = new Set(['chat_history', 'status_history', 'history', 'events', 'event',
     'timeline', 'records', 'record', 'details', 'think', 'thinking', 'snow', 'reasoning',
     'archive', 'log', 'due', 'deadline']);
@@ -522,7 +522,7 @@ test('剥壳投影排除名单行为守卫：名单内块（含 record 单数）
   // 不保留带 ? 的原串。
   const extractorSource = await readFile(new URL('../src/v3/extractor.js', import.meta.url), 'utf8');
   const literal = /const excluded = \/\^\(\?:([\s\S]+?)\)\$\/iu;/.exec(extractorSource);
-  assert.ok(literal, '未能在 src/v3/extractor.js 定位 excluded 正则字面量——上游重排了该行，核对 AGENTS.md §2.2 剥壳投影条目并更新解析');
+  assert.ok(literal, '未能在 src/v3/extractor.js 定位 excluded 正则字面量——上游重排了该行，核对 fork-contracts 一、time-body 剥壳投影条目并更新解析');
   for (const name of literal[1].split('|').flatMap(form => {
     const trimmed = form.trim();
     return trimmed.endsWith('?') ? [trimmed.slice(0, -2), trimmed.slice(0, -1)] : [trimmed];

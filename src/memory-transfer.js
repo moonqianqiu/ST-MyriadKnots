@@ -266,7 +266,7 @@ async function verifyConversation(graph, chat, sanitizerOptions) {
   const bindings = matchFloorCandidates(graph.floors, candidates);
   // 上游靠「清洗设置变化 → canonical 洗空 → 候选被丢弃」拦截导入导出两侧清洗配置漂移；
   // 本仓 M0 直通合同下 canonical 永不因配置洗空、raw 指纹与配置无关，该防线不存在
-  // （AGENTS §3.1）。改为显式合同：每个楼层绑定须 canonical 一致，或清洗配置指纹一致
+  // （fork-contracts §3.1）。改为显式合同：每个楼层绑定须 canonical 一致，或清洗配置指纹一致
   // （配置无关的等价变更放行），否则与上游同文报错，要求两边先对齐清洗设置。
   const drift = graph.floors.findIndex((floor, index) => {
     const match = bindings.floorMatches.get(index);

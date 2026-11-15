@@ -99,7 +99,7 @@ async function readyFoundationRecords(hostGlobalName, host, manualAliases = fals
     let summaryCalls = 0;
     memory = createV3MemoryRuntime({ foundationRuntime: runtime, store, hostAdapter, isEnabled: () => true,
       automationSettings: () => ({ enabled: false, batchSize: 1 }),
-      // 本仓 M2 合同（AGENTS §3.1）在 keep='content' 时只剥出 <content> 块内文本，而本夹具楼层是
+      // 本仓 M2 合同（fork-contracts §3.1）在 keep='content' 时只剥出 <content> 块内文本，而本夹具楼层是
       // 无标签正文（含分支源的『主说话。主回应。主离开。』）→ canonical 为空、人物不注册、摘要每楼
       // 重试三次；上游 sanitizeStoryBody 的宽松 keep 恰好保留未标签正文，故上游写 keepTags:'content'
       // 等价。此处改回本仓 M0 直通：对无标签正文两侧 canonical 逐字相同，只换配置不求值差异。

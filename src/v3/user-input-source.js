@@ -20,7 +20,7 @@ export function capturePrecedingUserInputFromSnapshot(snapshot, floor, options) 
   const targetIndex = floor?.hostLocator?.messageIndex;
   if (!Number.isSafeInteger(targetIndex) || !selectAssistantMessage(snapshot.chat?.[targetIndex])) return null;
   const messages = [];
-  // 本仓移植（v1.1.1 合并）：非 AI 正文来源按 extra-only 隔离清洗（AGENTS §3.2）——上游 v1.1.1
+  // 本仓移植（v1.1.1 合并）：非 AI 正文来源按 extra-only 隔离清洗（fork-contracts §3.2）——上游 v1.1.1
   // 把本函数自 memory-runtime.js 外移成文件，本仓「用户输入不得被 M2/M3 洗空」适配随迁至此。
   const userSanitizerOptions = extraOnlySanitizerOptions(options);
   for (let messageIndex = targetIndex - 1; messageIndex >= 0; messageIndex -= 1) {

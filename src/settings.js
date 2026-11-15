@@ -191,7 +191,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
   if (!extensionSettings || typeof extensionSettings !== 'object') throw new Error('千千结设置存储不可用');
   // 共享破限容器照上游在 store 创建期一次性初始化（迁移旧局部自定义值并落一次 save）。
   // 注意 bodyWrappers 容器不在此初始化：其回退值 'content' 会在本地默认回填前吃进容器丢 M0，
-  // 初始化点保留在 get() 内默认回填之后（AGENTS §2.3）。
+  // 初始化点保留在 get() 内默认回填之后（fork-contracts 二（正交区））。
   initializeSharedProcessingPrompt(extensionSettings, save);
   const get = () => {
     const settings = extensionSettings[SETTINGS_ID] ??= { ...DEFAULT_SETTINGS, apiExcludeParams: [], apiPresets: [] };
@@ -595,7 +595,7 @@ export function createSettingsStore({ extensionSettings, save = () => {}, now, r
     update,
     processingPrompt: () => getSharedProcessingPrompt(extensionSettings),
     // 经 get() 先行物化本地默认（幂等）：任何读取/写入路径都不得在默认回填前初始化共享容器，
-    // 否则全新安装会落到上游回退值 'content' 而丢失 M0（AGENTS §2.3）。
+    // 否则全新安装会落到上游回退值 'content' 而丢失 M0（fork-contracts 二（正交区））。
     wrappers: () => { get(); return getSharedBodyWrappers(extensionSettings); },
     updateWrappers: patch => { get(); writeWrappers(patch); notify(); },
     localConfig,

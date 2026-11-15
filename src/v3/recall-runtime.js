@@ -1228,7 +1228,7 @@ export async function captureCoreBodyWitness(coreChat, sanitizerOptions, fingerp
   const selected = [];
   // The same N that guides optional auto-hide defines recall's raw-body base,
   // even when auto-hide is off; it never changes which messages the host sends.
-  // 本地：startIndex 以触发用户楼为界向前采集（AGENTS.md §3.4），防重生成尾部残留污染指纹。
+  // 本地：startIndex 以触发用户楼为界向前采集（fork-contracts §3.4），防重生成尾部残留污染指纹。
   const startIndex = (triggerIndex >= 0 ? triggerIndex : chat.length) - 1;
   for (let index = startIndex; index >= 0 && selected.length < normalizeAutoHideKeepAiCount(maximumFloors); index -= 1) {
     const message = chat[index];
@@ -2224,7 +2224,7 @@ export function createV3RecallRuntime({ store, hostAdapter, generateUtilityTask 
     if (selectedSourceGuards === null) { markVerificationFailure('sourceBodyGuard', 'changed'); return { ok: false, reason: 'selectedRefsChanged' }; }
     const coveredBodyGuards = await captureCoveredBodyGuards(source, currentSource, before, bodyGuardSanitizer, fingerprint);
     if (coveredBodyGuards === null) { markVerificationFailure('coveredBodyGuard', 'changed'); return { ok: false, reason: 'narrativeChanged' }; }
-    // 本地增强（密封点活版本重对齐，AGENTS.md §3.4 ②）：上游 v0.6.8 以无条件 fresh 重读取代本地
+    // 本地增强（密封点活版本重对齐，fork-contracts §3.4 ②）：上游 v0.6.8 以无条件 fresh 重读取代本地
     // sameRoot 条件块，`currentSource !== source` 即其等价判定；root 推进时收据改盖活档案头的
     // Checkpoint/Revision/正文指纹并重签，保证落盘收据天然自洽（重新生成秒级复用的前提）。
     if (currentSource !== source && currentSource?.status === 'ready') {

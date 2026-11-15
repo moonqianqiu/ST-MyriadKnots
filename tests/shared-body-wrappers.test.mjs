@@ -4,7 +4,7 @@ import { normalizeMemoryTagList, sanitizeMemoryContent } from '../src/memory-con
 import { createSettingsStore } from '../src/settings.js';
 
 // 上游 v0.9.x 本文件按 sanitizeStoryBody 语义书写（缺省 keep='content'、命名对大小写不
-// 敏感、M1 rescue-only、块外正文保留）；本仓入口是四模式清洗器（AGENTS §3.1，与 SDC
+// 敏感、M1 rescue-only、块外正文保留）；本仓入口是四模式清洗器（fork-contracts §3.1，与 SDC
 // 跨仓金样锁定），期望已按本仓合同适配——分歧点与 SDC「tag-sanitizer.test.mjs」同源。
 test('共用正文保XML内层，明确字面清洗块整块删除且保留优先', () => {
   for (const [raw, options, expected] of [
@@ -44,7 +44,7 @@ test('首次共享归并在默认补齐前读own字段，后续空值和删项�
   assert.deepEqual(settings.wrappers(), { keepTags: 'content', extraTags: '' });
   assert.equal(ext['schedule-planner'].apiPresets[0].id, 'keep-api');
   // 本仓 M0 合同：全新安装的共享容器继承本地默认 keepTags=''（上游回退 'content'，
-  // AGENTS §3.3；get() 默认回填先于共享容器初始化，见 src/settings.js）。
+  // fork-contracts §3.3；get() 默认回填先于共享容器初始化，见 src/settings.js）。
   const empty = createSettingsStore({ extensionSettings: {}, save() {} });
   assert.deepEqual(empty.wrappers(), { keepTags: '', extraTags: '' });
 });

@@ -3005,7 +3005,7 @@ test('已保存楼的人工地点清除优先于当前原消息标签回退', as
   source.bodyMatchRefs = [{ floorId: 'floor-2', floorMemoryId: memory.floorMemoryId, assistantSeq: 2,
     hostLocator: { messageIndex: 1, swipeId: null, selectedSwipeIndex: null }, rawFingerprint: await fingerprintText(raw),
     // 上游 v0.8.0 新增本测试时期望 canonical 已剥掉 <location>（依赖其清洗器缺省行为）；
-    // 本仓 M0 合同保留该标签（AGENTS §3.1 测试侧不得回退），故期望 canonical 即原文。
+    // 本仓 M0 合同保留该标签（fork-contracts §3.1 测试侧不得回退），故期望 canonical 即原文。
     // 这样反而更强：原消息地点标签真实存活，被抑制 solely 因为人工清除，而非清洗器。
     canonicalFingerprint: await fingerprintText(raw) }];
   const harness = createRuntimeHarness({ sourceReader: async () => structuredClone(source),

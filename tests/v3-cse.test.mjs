@@ -570,7 +570,7 @@ test('baseline 一次冻结；摘要重提不自动改 CSE，显式重分析才�
   assert.ok(state.baselineId);
   const root = h.backend.records.get(`chat-${CHAT}/v3-root`).data;
   const saved = h.backend.records.get(`chat-${CHAT}/v3-baseline-${root.baselineId}`).data;
-  // 本仓合同（AGENTS §3.2）：世界书等非 AI 来源走 extra-only 清洗，上游夹具的 <content>
+  // 本仓合同（fork-contracts §3.2）：世界书等非 AI 来源走 extra-only 清洗，上游夹具的 <content>
   // 包裹按 M0 直通保留在 baseline（上游缺省 keep='content' 则会剥壳，此处按本仓语义适配）。
   assert.deepEqual(saved.worldInfoSources.map(item => item.content), ['<content>启用作者设定</content>']);
   assert.equal(saved.worldInfoSources.some(item => /禁用支线|不得进入基线/.test(item.content)), false);
@@ -674,7 +674,7 @@ test('显式 keep=content 时持久化 baseline 走 extra 清洗、每楼动态�
 
   const request = JSON.parse(h.calls.find(call => call.systemPrompt === CSE_SYSTEM_PROMPT).taskMessages[0].content);
   const worldInfo = request.payload.relevantBaseline.worldInfo;
-  // 每楼动态世界书已回归上游直通（AGENTS.md §3.2，2026-09-30 裁决）：仅宏替换 + clean，不做 extra 清洗；
+  // 每楼动态世界书已回归上游直通（fork-contracts §3.2，2026-09-30 裁决）：仅宏替换 + clean，不做 extra 清洗；
   // 与 baseline 持久化路径的 extra-only 语义有意不同，勿再合并两断言。
   assert.deepEqual(worldInfo.map(entry => entry.content), [`<content>${hidden}启用作者设定</content>`], '每楼动态世界书遵循上游直通，不剥离 extra 块');
   assert.doesNotMatch(JSON.stringify({ state: state.cseFloors, saved: saved.worldInfoSources }), /不应发送的内容|secret/);

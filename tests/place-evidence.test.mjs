@@ -176,7 +176,7 @@ test('旧地点整理承接每楼已存标签独立来源，聚合缺成员及�
  }
 });
 
-test('默认M0保留的闭合地点标签块是元数据，不冒充正文证据（AGENTS §3.1）', () => {
+test('默认M0保留的闭合地点标签块是元数据，不冒充正文证据（fork-contracts §3.1）', () => {
   const content = '<location>甲馆·客房</location>你推开甲馆·客房的窗。';
   const spanEnd = content.indexOf('</location>') + '</location>'.length;
   const inTag = content.indexOf('甲馆·客房'), inProse = content.lastIndexOf('甲馆·客房');
