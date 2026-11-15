@@ -7,8 +7,23 @@
 1. **清洗器缺省行为不得改动**：`src/memory-content-sanitizer.js` 四模式合同（M0 直通等）由 43 例金样 + SDC 跨仓对拍锁定；上游测试依赖其缺省剥 `<location>` 时改夹具，不改清洗器。逐文件契约见 [`docs/fork/fork-contracts.md`](docs/fork/fork-contracts.md)。
 2. **双声明陷阱**：上游已自带声明的本地代修必须删除本地侧（同测试同 specifier 后到覆盖）；上游原生红禁止为「让全量变绿」而改 `src/` 合同。
 3. **测试红先归因**：先查 [`docs/fork/merge-playbook.md`](docs/fork/merge-playbook.md) §4（已知偶发 + 纯上游树判定法），确认非上游原生红再动本地。
-4. **单一事实源（防复胖）**：合并事实只写 merge-notes；定制契约只写 fork-contracts；流程判定只写 merge-playbook；本文件状态块只更新当前值、不追加历史叙述。
+4. **单一事实源（防复胖）**：合并事实只写 merge-notes；定制契约只写 fork-contracts；流程判定只写 merge-playbook；本文件状态块只更新当前值、不追加历史叙述。下方资产清单是导航索引——增删资产须与 fork-contracts 同步。
 5. **源码变动必须重建 dist 并回填缓存键**（键规则与构建铁律见 merge-playbook §1）；未验证完整不 force push。
+
+## 本地核心定制资产清单（Fork 存在的价值——每次合并/维护逐项复核；细节见 fork-contracts 对应节）
+
+| 资产 | 核心文件 | 一句话不变式 |
+| :--- | :--- | :--- |
+| 四模式标签清洗器 | `src/memory-content-sanitizer.js` | 缺省 M0 直通；缺省行为一字不改（金样 43 例 + SDC 对拍） |
+| 非 AI 正文 extra-only 隔离 | 同上 `extraOnlySanitizerOptions` | 用户输入/世界书只走 extra 清洗，防整楼洗空 |
+| 设置面板校验与迁移 | `src/ui/settings/prompts-settings.js`、`src/settings.js` | 共享容器 M0 挂接顺序 + 两栏冲突拒绝落存 + keepTags 迁移四边界 |
+| 召回回执复用三件套 | `src/v3/recall-runtime.js` | 见证 6 参向前截断 / invalidate 三参 / 密封点活版本重对齐 |
+| 召回四项记忆化 | `src/v3/recall-selector.js` | 语义零改动；等价 144/144 不可破坏 |
+| 地点标签证据闸门 | `src/v3/place-evidence.js`（+extractor/place-foundation） | M0 保留的闭合 `<location>` 块不冒充正文证据 |
+| 故事钟时间投影 | `src/v3/time-body.js`、`src/v3/floor-binding.js` | 剥壳投影 + `locatorEquivalent` 绑定 |
+| UI invalidate 三联动 | v3-foundation-view / people-profiles-view / bootstrap | 三处失效联动 + 跨聊天 chatId 守卫 |
+| 记忆转移漂移拒绝 | `src/memory-transfer.js` | 清洗配置漂移显式拒绝（canonical/指纹一致才放行） |
+| 受保护共享容器 | `src/settings.js` | 初始化后置 + 本仓大小写敏感归一化写入（上游管线挂本地语义） |
 
 ## 文档地图
 
