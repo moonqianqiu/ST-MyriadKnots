@@ -186,6 +186,28 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 - 等价对 `5407522` **144/144 逐字节一致**；审计工具 sibling 清单已补 `recall-text.js`（否则 `RECALL_KNOWLEDGE_GUIDANCE` 导入在 scratch 目录 MODULE_NOT_FOUND）。
 - `settings-api`/`settings-modules`/`shared-body-wrappers`/`inline-renderer` 158/159 +1 skip 全绿；本地资产清单（§3.1/§3.4/§2.2）逐项 grep 在位。
 
+## 11. v1.2.1 合并（2026-11-15）
+
+上游 `50e6282`（单发布提交，v1.2.0→v1.2.1）。`git merge-tree --write-tree` 预判 3 处冲突，实际合并**全部命中且无额外冲突**：`dist/qqj-app.js`、`manifest.json`、`README.md`。**冲突面较 v1.2.0 大幅收窄**：本轮上游未触碰召回/清洗/时间链路（`inline-projection`、`time-body`、`recall-*`、`v3-cse` harness 零冲突）。
+
+**逐冲突裁决**：
+- `dist/qqj-app.js`：`node tools/build.mjs` 重建。静态素材分块上游未动，与本地逐字节同 SHA（`qianchuang-static-yL4fQlU6.js` 2,136,068 B `5f2c60c1…`）；主入口 3,209,547 B（`166bc8e6…`）。重建幂等复核 0 writes。
+- `manifest.json`：`version` 随上游自动合并为 `1.2.1`；缓存键取 `20261115.344-166bc8e6d0c9b3da`——上游 11-15 已用 `.343`，按全局递增取未用更大序号 `.344`。
+- `README.md`：整体取上游新版（版本历史迁出至 `docs/history/versions-before-0.8.0.md`，README 改文档导航+功能清单结构）。本仓 README 唯一本地行（0.3.0 清洗说明）随旧结构移除，其语义（清洗只作用于 AI 正文；用户输入与世界书条目不受保留标签影响）迁入 `docs/troubleshooting.md` 清洗小节补一句，fork 语义不丢失。
+
+**自动合并语义复核（12 个双方共改文件）**：`extractor.js` 上游改动在 import/schema/prompt-67/`semanticSource`/父链裁决区（≤1730 行），本地故事钟兜底顺序与 `record` 排除在 2000+ 行，无交叠；`v3-foundation-view.js` 上游仅调 `currentSituationLine` 子元素顺序，本地 chatId 守卫 invalidate 在别处；`production-entry-load.test.mjs` 上游改 ttStore 四路并发夹具+version 断言 1.2.1，本地 M0 注释/receiptFingerprint/define 真模块不同区域；`production-dist-branch.test.mjs` 上游 `await handler()`+bridge 断言 vs 本地 health stub——**触发 §2.1③ 代修退役**（见下）；`troubleshooting.md` 合并树保留本仓两栏清洗段。§3.4 三资产（见证 6 参/invalidate 三参/密封重签）与四记忆化+recordsByValue+sameMaterial 本轮上游零接触，合并后 grep 在位；`foundation-domain` SANITIZER_VERSION v2 与缺省 `keepTags:''` 不变。
+
+**§2.1③ 代修退役 1 例**：`production-dist-branch.test.mjs` 的 health stub（v0.7.14+v0.7.15 era 代修，见 §5 表）如今遮蔽上游自带路由（上游路由在 `/api/backends/` 检查之后、显式声明 `recordBatchRead:false`/`recordIdList:false`）→ 按契约删本地保上游，单测 3/3 复核。
+
+**§2.1 夹具适配 4 例**：上游四个新地点标签测试（`地点标签贯通原摘要保存冷读…`、`单地点标签基础来源…`、`泛称房里与标签具体厢房…`、`坏地点标签局部隔离后…`）的原始消息带 `<location>…</location>` 标签并依赖其清洗器缺省剥除；本仓 M0 合同保留标签 → harness 显式 `sanitizerOptions: () => ({ extraTags: 'location' })`（与上游缺省行为逐字等价，不动清洗器缺省行为；与同文件 2434/2631 既有适配同型）。未适配前症状：mock 内 `assert.equal(p.canonicalContent, body)` 抛错 → 提取失败 → 快照无地点（`assert.ok(room)` 红）。
+
+**上游主题**：TT 大档四路批写（`tauri-backend` `record-batch` PUT：≤64 条/1MiB、`WRITE_CONCURRENCY=4`、逐条版本校验、root 于全部引用记录保存后发布、取消后写入收拢；`backend-client` 删 `useTauri→null` 短路改走真批量协商）；核心缓存小批写事务（`PUBLISH_BATCH_SIZE=64`/1MiB、读路径 900ms/慢写 5s 双预算、删 `publishUnavailable` 全局熔断——单次发布失败不再永久禁用后续发布）；inspect 缓存复用放宽（`cache.root.chatId` 匹配即复用已校验资料并保留 `graphReviewReason` 待核原因，不再要求 `cacheMatchesCandidates`）；启动不再以临时零楼数重置自动清理基线（`storage-management` 等 snapshot ready）；CHAT_CHANGED fire-and-forget（宿主不再被后台准备阻塞）；地点 `locationReference` 证据链贯通（place-foundation/evidence/extractor prompt-66→67、semantic-compiler-37，标签只证地点身份与地址层级、不证在场/知情/篇末位置）；设施别名短榻/矮榻；地图头像尾巴钳位 34→25、当前情境标签段末排版、设置启用项字号。
+
+**验证**（合并提交 `f73017f`）：
+- 门禁 1：清洗器金样 6 块 0 失败（43 例）；门禁 2：`production-entry-load` **45/45**（含上游新增 TT 四路批写与 root 发布顺序测试）。
+- 主仓全量 **4167 项：4166 通过、0 失败、1 skip 全绿**（v1.2.0 基线 4114 → 上游净增 53 项）。首轮曾现 `v3-extractor-memory` 2 子测红，即上述 4 例夹具适配的其中两例，适配后该文件 779/779。
+- 等价对 `50e6282` **144/144 逐字节一致**（`recall-audit` sibling 清单本轮无需扩充，上游未动召回侧）。
+
 ## 8. 维护约定
 
 - 新的逐版本合并要点写入 §6.1；新的冲突实录与上游原生红代修实例写入 §6.2 / §5；新的 UI 迁移写法写入 §7。
