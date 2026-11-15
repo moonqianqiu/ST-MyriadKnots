@@ -5309,14 +5309,18 @@ function Zi(e) {
 	if (typeof e != "string" || !e) return [];
 	let t = [], n = [];
 	for (let r of e.matchAll(Xi)) {
-		let [, e, i, a] = r;
-		if (i.toLocaleLowerCase("en-US") === "location") {
-			if (e) {
-				n.length && t.push([n.pop().start, r.index + r[0].length]);
-				continue;
+		let [, e, i, a] = r, o = i.toLocaleLowerCase("en-US");
+		if (e) {
+			for (let e = n.length - 1; e >= 0; --e) if (n[e].name === o) {
+				o === "location" && t.push([n[e].start, r.index + r[0].length]), n.length = e;
+				break;
 			}
-			a || n.push({ start: r.index });
+			continue;
 		}
+		a || n.push({
+			name: o,
+			start: r.index
+		});
 	}
 	return t;
 }

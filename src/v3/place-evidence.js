@@ -15,13 +15,23 @@ const NARRATIVE_TAG_TOKEN_RX = /<(\/?)\s*([\p{L}][\p{L}\p{N}_-]*~?)(?:\s[^>]*)?(
 
 export function locationTagRanges(content) {
  if (typeof content !== 'string' || !content) return [];
- const ranges = [], open = [];
+ const ranges = [], stack = [];
  for (const match of content.matchAll(NARRATIVE_TAG_TOKEN_RX)) {
   const [, closing, name, selfClosing] = match;
-  if (name.toLocaleLowerCase('en-US') !== 'location') continue;
-  if (closing) { if (open.length) ranges.push([open.pop().start, match.index + match[0].length]); continue; }
+  const lower = name.toLocaleLowerCase('en-US');
+  if (closing) {
+   // 与 parseTagTokenTree 相同的闭配语义：就近同名闭合并截断丢弃其上方未闭合节点
+   // （`</wrapper>` 会吞掉其内未闭合的 location 开标记——此后游离 </location> 不再配对）。
+   for (let index = stack.length - 1; index >= 0; index -= 1) {
+    if (stack[index].name !== lower) continue;
+    if (lower === 'location') ranges.push([stack[index].start, match.index + match[0].length]);
+    stack.length = index;
+    break;
+   }
+   continue;
+  }
   if (selfClosing) continue;
-  open.push({ start: match.index });
+  stack.push({ name: lower, start: match.index });
  }
  return ranges; // 末尾未闭合块不算元数据：与 readLocationReference「只认闭合块」一致
 }

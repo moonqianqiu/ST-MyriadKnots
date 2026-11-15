@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { locatePlaceQuote, collectMissingPlaceSources } from '../src/v3/place-evidence.js';
 import * as placeEvidence from '../src/v3/place-evidence.js';
+import { readMemoryTagBlocks } from '../src/memory-content-sanitizer.js';
 
 test('194地点引用保原有省略号及空白匹配，恢复只保唯一正序短片段', () => {
   const content = '甲楼有客房。' + '中间剧情。'.repeat(500) + '客房里有书桌。';
@@ -201,4 +202,28 @@ test('默认M0保留的闭合地点标签块是元数据，不冒充正文证据
   assert.equal(placeEvidence.isNarrativeSpan('abc', -1, 2), false);
   assert.deepEqual(placeEvidence.narrativeOccurrences('', 'x'), []);
   assert.ok(locatePlaceQuote('<location>甲</location>', '甲'), 'locatePlaceQuote保持纯定位，叙事闸门在证据调用点');
+});
+
+test('闭配与截断语义全栈镜像 parseTagTokenTree：带空格自闭合按开标记、被上级同名闭合截断的开标记不产区间', () => {
+  // 与 readMemoryTagBlocks 共享同一 TAG_PATTERN：属性段会吞掉 "/ "，故 <location />、<location class="a" />
+  // 等带空格/属性的"自闭合"在两个解析器里都按开标记处理——闸门与 locationReference 通道必须同判，
+  // 否则同一文本会被通道当标签、闸门却当叙事。此为上游解析器逐字共享的怪癖，故意保持一致。
+  const parity = shape => assert.equal(placeEvidence.locationTagRanges(shape).length,
+    readMemoryTagBlocks(shape).filter(block => block.name === 'location' && block.closed).length, JSON.stringify(shape));
+  const shapes = ['<location/>', '<location />', '<location class="a"/>', '<location class="a" />', '<location\n/>',
+    '<location />铺垫。</location>', '<location />无闭合的叙事。', '<wrapper><location>截断</wrapper>叙事。</location>',
+    '<location><wrapper><location>内</location></wrapper></location>', '<location>甲</location>'];
+  for (const shape of shapes) parity(shape);
+
+  assert.deepEqual(placeEvidence.locationTagRanges('<location />无闭合的叙事。'), [], '带空格自闭合无后续闭合不成块');
+  assert.deepEqual(placeEvidence.narrativeOccurrences('<location />无闭合的叙事。', '无闭合'),
+    ['<location />无闭合的叙事。'.indexOf('无闭合')], '上游块解析同样不产块，叙事可引');
+
+  const tagged = '<location />铺垫。</location>';
+  assert.deepEqual(placeEvidence.locationTagRanges(tagged), [[0, tagged.length]], '后续出现闭合则整段成块（通道同判）');
+  assert.equal(placeEvidence.narrativeOccurrences(tagged, '铺垫').length, 0, '误写标签时的保守拒绝方向');
+
+  const truncated = '<wrapper><location>截断</wrapper>叙事。</location>';
+  assert.deepEqual(placeEvidence.locationTagRanges(truncated), [], '上级同名闭合截断丢弃内层开标记');
+  assert.equal(placeEvidence.narrativeOccurrences(truncated, '叙事').length, 1, '被截断段不再误判为标签块');
 });
