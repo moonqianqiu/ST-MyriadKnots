@@ -29,6 +29,7 @@
 | v1.2.0 | 11-14 | `29f6ac0` | 6 冲突：分包重建、manifest、inline 白名单并集、time-body 部分时间戳嫁接、qianchuang-view import、v3-cse harness；键 `.333-010f29e1abf45db6` | 4114/4113/0fail+1skip 全绿；等价 144/144 |
 | v1.2.1 | 11-15 | `f73017f` | 3 冲突：分包重建（分块同 SHA）、manifest 键 `.344`、README 整取上游+清洗说明迁 troubleshooting；health stub 退役、4 例 location 夹具 extraTags 适配 | 4167/4166/0fail+1skip 全绿；等价 144/144 |
 | v1.2.1+闸门（fork 修复） | 11-15 | `31dbeea`+`76c435a` | 非合并：地点标签证据闸门（M0 保留标签不冒充正文证据）+ parseTagTokenTree 全栈镜像精化；键 `.346-f08732aa6e8add6e` | 4173/4172/0fail+1skip；等价 144/144 |
+| v1.3.0 | 11-17 | `22f713d` | 4 冲突；量化状态并入 CSE/公开上下文，AbortError 停正文、长故事钟签名；旧票时间断言改“计划时间” | 4202/4206 首轮；定向 582 全绿 |
 
 ---
 
@@ -258,3 +259,11 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 - **记忆化容量策略关注点**（用户复审标记）：`compactMemo`/`preparedMaterialMemo` 两处模块级 Map 各限 20 万**条目数**、达限整体清空，长档驻留内存不稳——记 fork-contracts §3.5「容量策略注意点」，后续实测峰值堆内存再议按总字符/token 限额或 LRU（届时改动须先过等价门禁 144/144）。
 - **文档重整**（本节所述结构调整）：AGENTS.md 62KB 瘦身为 ~4KB 入口（红线/文档地图/门禁/当前状态），逐文件契约外移 fork-contracts.md、合并流程外移 merge-playbook.md，本文成为合并实录唯一存放处（卷首索引表承接旧 AGENTS §5.1，§8 归位至 §7 之后）；fork 本地文档归拢 `docs/fork/`（本文 + 两份 audit + 两份新文档），其余 `docs/**` 为上游产权（含 `docs/superpowers/`，勿搬动）。
 - **用户独立复审结论**：全量 4173 项 4172 通过 / 0 失败 / 1 skip 全绿一次；等价 144/144；持久回执清理核验拿到宿主聊天对象引用（非脱宿快照副本）；56 文件差异判定为有边界、可解释的 fork 定制，无已证实功能回归。
+
+## 13. v1.3.0（2026-11-17，合并提交 `22f713d`）
+
+上游 `8c5f8c9` 发布 v1.3.0。四处冲突均按语义并集处理：生产入口夹具保留本地 M0 直通 sanitizer 合同并并入上游 numeric CSE fixtures；楼卡测试同时保留本地旧知情边界兼容与上游量化/纯时间投影覆盖；manifest 采用上游版本并在正式构建后更新缓存键；dist 由 Vite/Rolldown 重建，稳定素材分块字节未变。
+
+主要上游能力：CSE 可选量化值贯通归一、验证、记忆状态、召回 DTO 与公开上下文，紧预算仍优先保留原状态文字；生产召回遇有效操作期间底层 fetch/SSE AbortError 时停止正文派发；故事钟接受长签名。协议仍保持 schemaVersion 1，构画消费者继续读取格式化文本，无需跨仓 API 迁移。
+
+一条上游旧票测试仍断言 `约定：`，而上游已将 `scheduledTime` 明确标为 `计划时间：`。按避免把计划误称承诺的语义更新断言；相关 582 项召回、楼卡、生产入口与量化 CSE 定向回归全过。全量首轮 4206 项中 4202 通过、3 项为该断言的父/子失败、1 skip；默认 runner 的子进程隔离被沙箱拒绝，进程内模式可运行。bundle SHA-256 `365521faffc9bb54008a4de55a37c7136f1b1dfca83aa484abd90e7f3cabb139`，缓存键 `20261117.356-365521faffc9bb54`。
