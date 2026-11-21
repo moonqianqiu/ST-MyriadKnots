@@ -30,6 +30,7 @@
 | v1.2.1 | 11-15 | `f73017f` | 3 冲突：分包重建（分块同 SHA）、manifest 键 `.344`、README 整取上游+清洗说明迁 troubleshooting；health stub 退役、4 例 location 夹具 extraTags 适配 | 4167/4166/0fail+1skip 全绿；等价 144/144 |
 | v1.2.1+闸门（fork 修复） | 11-15 | `31dbeea`+`76c435a` | 非合并：地点标签证据闸门（M0 保留标签不冒充正文证据）+ parseTagTokenTree 全栈镜像精化；键 `.346-f08732aa6e8add6e` | 4173/4172/0fail+1skip；等价 144/144 |
 | v1.3.0 | 11-17 | `22f713d` | 4 冲突；量化状态并入 CSE/公开上下文，AbortError 停正文、长故事钟签名；旧票时间断言改“计划时间” | 4202/4206 首轮；定向 582 全绿 |
+| v1.3.1 | 11-21 | `98de638` | 2 冲突（预判全中）：manifest 键 `.362`、bundle 重建；帧清洗/空输入复票/纯 canonical 守卫直通，排除图块用例种子改 M0+extra（§2.1） | 4264/4263/0fail+1skip 全绿 |
 
 ---
 
@@ -267,3 +268,13 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 主要上游能力：CSE 可选量化值贯通归一、验证、记忆状态、召回 DTO 与公开上下文，紧预算仍优先保留原状态文字；生产召回遇有效操作期间底层 fetch/SSE AbortError 时停止正文派发；故事钟接受长签名。协议仍保持 schemaVersion 1，构画消费者继续读取格式化文本，无需跨仓 API 迁移。
 
 一条上游旧票测试仍断言 `约定：`，而上游已将 `scheduledTime` 明确标为 `计划时间：`。按避免把计划误称承诺的语义更新断言；相关 582 项召回、楼卡、生产入口与量化 CSE 定向回归全过。全量首轮 4206 项中 4202 通过、3 项为该断言的父/子失败、1 skip；默认 runner 的子进程隔离被沙箱拒绝，进程内模式可运行。bundle SHA-256 `365521faffc9bb54008a4de55a37c7136f1b1dfca83aa484abd90e7f3cabb139`，缓存键 `20261117.356-365521faffc9bb54`。
+
+## 14. v1.3.1（2026-11-21，合并提交 `98de638`）
+
+上游 `9b46b36` 发布 v1.3.1。两处物理冲突（预判全中）：manifest 缓存键（`20261121.362-a74100f4fcd7d528`，主入口 SHA-256 `a74100f4…`，稳定素材分块未变）、`dist/qqj-app.js` 由 Vite/Rolldown 重建。其余 7 个上游改动文件（cse-engine/public-memory-bridge/qianshi-domain/recall-{llm-selector,runtime,selector,source}）3-way 自动合并，逐文件与上游版本 diff 核验：差异仅限既有本地增量——四项记忆化锚点（compactOf/stableKeyMemo/preparedMaterialMemo/entityDerivedCache）全在上游未触碰区；回执三件套（见证 6 参向前截断/invalidate 三参/密封点活版本重对齐）与 receiptMaterial qianshiDeletionWitness 行逐行在位；cse-engine extraOnly 钩子与各测试文件本仓适配完整存活。上游 selector 未新增 import，perf-audit sibling 清单无需扩充。
+
+上游能力：生图提示词按正文清洗规则进入召回帧键（`liveRecallFrameKey` 带 `sanitizerOptions`，MESSAGE_EDITED 期间生图块编辑不再判 narrativeChanged）；预设清空用户输入时优先复用冻结回执、无票抛 `V3_RECALL_QUERY_EMPTY`（不可重试）；正文守卫去掉 rawContent/rawFingerprint 只留 canonical 指纹；选材对照同楼用户原文核对金额/地点细节；双丝网复核自动性格重复；公开桥新增按楼就绪订阅接口（getReadiness/subscribeReadiness）。
+
+三条上游新增/改写用例依赖其宽松 keep 语义，均按 §2.1 适配（裁决记录见 fork-contracts 一、召回链路条）：①「排除图块编辑继续原召回」夹具种子 `keepTags:'content'` → `keepTags:''`+`extraTags:'bbi_image'`——本仓 M2 合同下无标签正文 canonical 被整体剔除，容器种子生效后的 foundation 复扫得空 canonical 候选 → stableCountMismatch → needsReview 卡死（纯上游树同测试 1/1 绿坐实）；测试意图（生图块编辑不改帧键）由 extra 清洗完整覆盖。②「用户来源仅按本轮R/P读取清洗」的 `projectRecallSource(…, {removeTags:'noise'})` → `{extraTags:'noise'}`——`removeTags` 并非上游清洗器真实选项（全树仅该测试出现），上游靠缺省 keep='content' 丢弃非 keep 标签，本仓等义 M1 extra 输出逐字一致。③「已记忆近期AI只接受同楼同swipe的净正文等价变化」五场景 harness 同款改 M0——无标签正文 + canonical==raw 预置指纹，M2 剔除致 coveredRefs 失配。**工程教训**：本次诊断期间在主树用 `git checkout <branch> -- <paths>` 做 bisect，该命令会连同暂存区一起覆盖，一度破坏合并结果的 index（后经 `merge --abort` 重做闭环）；二分类操作必须一律在临时 worktree 进行。
+
+验证：生产入口+装配 54/54；recall-local-guards 9/9；金样 43/43；等价对拍 vs `9b46b36` 合并前后各 144/144；全量 4264/4263/0fail+1skip 全绿。本次同时补齐 v1.3.0 漏跑的等价门禁（脚手架缺 cse-quantification.js 重写致对拍报 ERR_MODULE_NOT_FOUND；补齐后对 `8c5f8c9` 144/144）。

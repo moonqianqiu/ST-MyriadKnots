@@ -3451,6 +3451,10 @@ test('runtime 净正文守卫仍使真实AI剧情和USER排除块文字编辑失
 });
 
 test('runtime 已记忆近期AI只接受同楼同swipe的净正文等价变化', async t => {
+  // 本仓适配（v1.3.1，§2.1）：夹具正文无标签且指纹按 canonical==raw 预置，上游 keepTags:'content'
+  // 的宽松 keep 对无标签正文等价直通；本仓 M2 合同会把它从 canonical 整体剔除 → 指纹失配 →
+  // coveredRefs 落空。改 keepTags:''（M0 直通），extraTags:'bbi_image' 保留 excludedImage 场景
+  // 的生图块清洗意图，两种语义下 canonical 与预置指纹逐字一致。
   for (const kind of ['excludedImage', 'storyTail', 'swipe', 'delete', 'unanchored']) await t.test(kind, async () => {
     const { raw, messages } = await partialBindingFixture();
     const coveredFloorId = '12345678-1234-4234-8234-123456789abc';
@@ -3462,7 +3466,7 @@ test('runtime 已记忆近期AI只接受同楼同swipe的净正文等价变化',
     if (kind !== 'unanchored') messages[2].extra = { qianqianjie_floor: { schemaVersion: 1, chatId: CHAT, floorId: coveredFloorId } };
     let h, entered, release, selectedSource, selections = 0;
     const started = new Promise(resolve => { entered = resolve; });
-    h = createRuntimeHarness({ sanitizerOptions: () => ({ keepTags: 'content', extraTags: 'bbi_image' }),
+    h = createRuntimeHarness({ sanitizerOptions: () => ({ keepTags: '', extraTags: 'bbi_image' }),
       sourceReader: options => readRecallSource(options), reachableReader: async () => structuredClone(raw),
       selector: async input => { selections++; selectedSource = input.source; entered(); await new Promise(resolve => { release = resolve; }); return selectRecall(input); } });
     h.chat.splice(0, h.chat.length, ...messages, h.userMessage);
@@ -10469,7 +10473,10 @@ test('取材质量：用户来源仅按本轮R/P读取清洗，不在全档投�
   let selectedReads = 0, unrelatedReads = 0;
   Object.defineProperty(raw.floorMemories[0].sourceUserInputSnapshot.messages[0], 'content', { get() { selectedReads++; return '钟楼钥匙租约602室。<noise>应清掉的材料</noise>'; } });
   raw.floorMemories[25].sourceUserInputSnapshot = { messages: [{ messageIndex: 51, get content() { unrelatedReads++; return '不相关私文'; } }] };
-  const source = await projectRecallSource(raw, () => new Date(NOW), null, null, { removeTags: 'noise' });
+  // 本仓适配（v1.3.1，§2.1）：上游传 {removeTags:'noise'} 依赖其清洗器缺省 keep='content' 语义
+  // （非 keep 标签连内容丢弃、无标签正文保留）；removeTags 并非上游清洗器真实选项（全树仅此测试
+  // 出现）。本仓等义模式为 M1 extra：extraTags:'noise' 连内容删、其余正文逐字保留，输出逐字一致。
+  const source = await projectRecallSource(raw, () => new Date(NOW), null, null, { extraTags: 'noise' });
   assert.equal(selectedReads, 0); assert.equal(unrelatedReads, 0);
   assert.equal(JSON.stringify(source).includes('不相关私文'), false);
   assert.equal(selectedReads, 0); assert.equal(unrelatedReads, 0);
