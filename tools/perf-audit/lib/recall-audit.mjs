@@ -64,9 +64,10 @@ export function assertUpstreamMarkers(text, label) {
 // 按「存在才重写」处理（谱系守卫由 assertUpstreamMarkers 承担，不依赖这里的缺失报错）。
 // place-foundation/place-workspace/spatial-domain 自上游 v1.1.0 起被 recall-selector 导入，同上按需重写。
 // recall-text.js 自上游 v1.2.0 起被 recall-selector 导入（RECALL_KNOWLEDGE_GUIDANCE），同上按需重写。
+// cse-quantification.js 自上游 v1.3.0 起被 recall-selector 导入（量化 CSE 指引/字段），同上按需重写。
 export function absolutizeImports(text, sourceDir = resolve(REPO_ROOT, 'src', 'v3')) {
   const siblings = ['recall-ranking.js', 'recall-source.js', 'vector-source.js', 'memory-exclusion.js',
-    'place-foundation.js', 'place-workspace.js', 'spatial-domain.js', 'recall-text.js'];
+    'place-foundation.js', 'place-workspace.js', 'spatial-domain.js', 'recall-text.js', 'cse-quantification.js'];
   return siblings.reduce((acc, name) => {
     const specifier = `'./${name}'`;
     if (!acc.includes(specifier)) return acc;
