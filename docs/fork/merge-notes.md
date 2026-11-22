@@ -31,6 +31,7 @@
 | v1.2.1+闸门（fork 修复） | 11-15 | `31dbeea`+`76c435a` | 非合并：地点标签证据闸门（M0 保留标签不冒充正文证据）+ parseTagTokenTree 全栈镜像精化；键 `.346-f08732aa6e8add6e` | 4173/4172/0fail+1skip；等价 144/144 |
 | v1.3.0 | 11-17 | `22f713d` | 4 冲突；量化状态并入 CSE/公开上下文，AbortError 停正文、长故事钟签名；旧票时间断言改“计划时间” | 4202/4206 首轮；定向 582 全绿 |
 | v1.3.1 | 11-21 | `98de638` | 2 冲突（预判全中）：manifest 键 `.362`、bundle 重建；帧清洗/空输入复票/纯 canonical 守卫直通，排除图块用例种子改 M0+extra（§2.1） | 4264/4263/0fail+1skip 全绿 |
+| v1.3.2 | 11-22 | `5dbc86f` | 3 冲突（预判全中）：manifest 键 `.367`、bundle 重建、troubleshooting 双保留；正文未识别/双丝网/千事统计/千窗修订直通，9 夹具种子改 M1 extra（§2.1） | 4296/4295/0fail+1skip |
 
 ---
 
@@ -278,3 +279,13 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 三条上游新增/改写用例依赖其宽松 keep 语义，均按 §2.1 适配（裁决记录见 fork-contracts 一、召回链路条）：①「排除图块编辑继续原召回」夹具种子 `keepTags:'content'` → `keepTags:''`+`extraTags:'bbi_image'`——本仓 M2 合同下无标签正文 canonical 被整体剔除，容器种子生效后的 foundation 复扫得空 canonical 候选 → stableCountMismatch → needsReview 卡死（纯上游树同测试 1/1 绿坐实）；测试意图（生图块编辑不改帧键）由 extra 清洗完整覆盖。②「用户来源仅按本轮R/P读取清洗」的 `projectRecallSource(…, {removeTags:'noise'})` → `{extraTags:'noise'}`——`removeTags` 并非上游清洗器真实选项（全树仅该测试出现），上游靠缺省 keep='content' 丢弃非 keep 标签，本仓等义 M1 extra 输出逐字一致。③「已记忆近期AI只接受同楼同swipe的净正文等价变化」五场景 harness 同款改 M0——无标签正文 + canonical==raw 预置指纹，M2 剔除致 coveredRefs 失配。**工程教训**：本次诊断期间在主树用 `git checkout <branch> -- <paths>` 做 bisect，该命令会连同暂存区一起覆盖，一度破坏合并结果的 index（后经 `merge --abort` 重做闭环）；二分类操作必须一律在临时 worktree 进行。
 
 验证：生产入口+装配 54/54；recall-local-guards 9/9；金样 43/43；等价对拍 vs `9b46b36` 合并前后各 144/144；全量 4264/4263/0fail+1skip 全绿。本次同时补齐 v1.3.0 漏跑的等价门禁（脚手架缺 cse-quantification.js 重写致对拍报 ERR_MODULE_NOT_FOUND；补齐后对 `8c5f8c9` 144/144）。
+
+## 15. v1.3.2（2026-11-22，合并提交 `5dbc86f`）
+
+上游 `5bc0db8` 发布 v1.3.2。三处物理冲突（预判全中）：manifest 缓存键（`20261122.367-a807d93d074eb5a5`——序号接上游发布键 `.366` 全局递增；主入口 SHA-256 `a807d93d…`）、`dist/qqj-app.js` 由 Vite/Rolldown 重建、`docs/troubleshooting.md`（上游在「摘要里缺正文」节新增「正文未识别」说明段、与本仓增补改写段相邻）——裁决为上游新段 + 本仓改写段双保留。其余 8 个碰撞文件 3-way 自动合并，逐文件与上游增量比对：差异恰为本仓资产（foundation-view invalidate 三联动 11 行、cse-engine extraOnly 世界书隔离 4 行、foundation-domain SANITIZER_VERSION/M0 缺省 4 行），其余逐字节一致；v1.3.1 三处 §2.1 适配（entry-load wrapperSeed、v3-recall 两处）逐点在位。上游未动 recall-selector 与清洗器，等价脚手架与金样均无需改动。
+
+上游能力：正文识别反馈（raw 非空而清洗后为空 → `emptyAfterSanitizing` 诊断，contentIssues 带 chatId 作用域与生成生命周期过滤、合并提醒一次、修正后消退，UI 卡片红色态）；双丝网（CSE 须提交复核后完整情境，`noMaterialChange` 文案改「沿用前态」，测试夹具统一换 `reviewedCsePacket` 助手）；千事统计（「不计入记忆」楼不再计入待处理覆盖）；千窗修订（地点人工修订校验/读取对齐当前 chatId+narrativeGeneration，剧情楼建立前修订不再误判）。
+
+九处上游新增用例依赖其宽松 keep 语义（`<story>` 非保留标签整块剥除→canonical 空），均按 §2.1 适配（记录见 fork-contracts §3.1「正文未识别族」）：`tests/v3-foundation.test.mjs` 直连域 2 例种子 `extraTags:'story'`；`tests/v3-extractor-memory.test.mjs` 通知/生命周期 7 例——六例缺省 M0 harness 加同款种子，「合并提醒一次」例种子变量 `keepTags:'content'` 改 `extraTags:'story'`（M2 keep='content' 会把无标签健康尾楼剔空反标记新问题 → 去重断言 2≠1；切换机制同构映射），「保留marker」例前半段 keepTags 切换在本仓 M2 语义恰好同构保持原样、仅后半段大批坏楼 harness 加种子。extractor 7 例经纯上游临时 worktree（`5bc0db8` + junction）归因 7/7 绿坐实非上游原生红；foundation 2 例在评估阶段预判同根因、适配后单跑绿坐实。
+
+验证：生产入口+装配 54/54；recall-local-guards 9/9；金样 43/43；等价对拍 vs `5bc0db8` 144/144；跨仓 settings-api 47/47；全量 4296 项/4295 通过/0 失败/1 skip（三轮全量并集：首轮 7 红全为宽松 keep 族、适配后单跑与次轮全绿；次三轮各随机命中 1-2 例已知 TT ENOTEMPTY 临时目录竞态、受害者用例名每轮不同且单跑全绿，见 merge-playbook §4）。

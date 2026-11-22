@@ -46,7 +46,7 @@ node --experimental-vm-modules --test tests/tag-sanitizer-golden.test.mjs tests/
 # 2) 生产构建与入口装配（校验 manifest 缓存键与 bundle SHA 吻合）
 node --experimental-vm-modules --test tests/production-entry-load.test.mjs tests/v3-wiring.test.mjs                  # 全绿（entry-load 当前 54 例）
 # 3) 全量
-npm test                                                                                                             # 当前 4264 例 / 4263 通过 / 0 失败 / 1 skip
+npm test                                                                                                             # 当前 4296 例 / 4295 通过 / 0 失败 / 1 skip
 # 4) 召回选择器等价
 node tools/perf-audit/verify-equivalence.mjs <上游提交>                                                               # 144/144 逐字节一致
 ```
@@ -55,7 +55,7 @@ node tools/perf-audit/verify-equivalence.mjs <上游提交>                     
 
 ## 当前状态（合并/发布后原地更新本节，旧值删除不保留）
 
-- **分支** `main`；**上游基线** v1.3.1（提交 `9b46b36`）；合并提交 `98de638`（2026-11-21）。
-- **产物**：manifest 版本 `1.3.1`，缓存键 `20261121.362-a74100f4fcd7d528`（主入口 SHA-256 `a74100f4…`；稳定分块未变且与上游同 SHA）。
-- **测试基线**：全量 4264 项 / 4263 通过 / 0 失败 / 1 skip；等价 144/144（对 `9b46b36`，合并前后各一）；生产入口+装配 54/54；跨仓 `tests/settings-api.test.mjs` 47/47。默认隔离模式受沙箱 `spawn EPERM` 限制，进程内模式可运行；`tauri-backend` 的 TT 临时目录清理偶发 `ENOTEMPTY`（单跑绿，见 merge-playbook §4）。
-- **兄弟仓库**：`ST-SevenDaysCal` 同步至 v4.2.6moon（合并提交 `f788a3a`）；清洗器金样双仓 SHA-256 一致，改动须两边同改（见 fork-contracts §3.1 同步标记）。
+- **分支** `main`；**上游基线** v1.3.2（提交 `5bc0db8`）；合并提交 `5dbc86f`（2026-11-22）。
+- **产物**：manifest 版本 `1.3.2`，缓存键 `20261122.367-a807d93d074eb5a5`（主入口 SHA-256 `a807d93d…`；稳定分块未变）。
+- **测试基线**：全量 4296 项 / 4295 通过 / 0 失败 / 1 skip；等价 144/144（对 `5bc0db8`）；生产入口+装配 54/54；recall-local-guards 9/9；跨仓 `tests/settings-api.test.mjs` 47/47。默认隔离模式受沙箱 `spawn EPERM` 限制，进程内模式可运行；`tauri-backend` 的 TT 临时目录清理偶发 `ENOTEMPTY`（单跑绿，见 merge-playbook §4）。
+- **兄弟仓库**：`ST-SevenDaysCal` 同步至 v4.2.8moon（合并提交 `31320e6`）；清洗器金样双仓 SHA-256 一致，改动须两边同改（见 fork-contracts §3.1 同步标记）。
