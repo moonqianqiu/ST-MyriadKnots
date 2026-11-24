@@ -32,6 +32,7 @@
 | v1.3.0 | 11-17 | `22f713d` | 4 冲突；量化状态并入 CSE/公开上下文，AbortError 停正文、长故事钟签名；旧票时间断言改“计划时间” | 4202/4206 首轮；定向 582 全绿 |
 | v1.3.1 | 11-21 | `98de638` | 2 冲突（预判全中）：manifest 键 `.362`、bundle 重建；帧清洗/空输入复票/纯 canonical 守卫直通，排除图块用例种子改 M0+extra（§2.1） | 4264/4263/0fail+1skip 全绿 |
 | v1.3.2 | 11-22 | `5dbc86f` | 3 冲突（预判全中）：manifest 键 `.367`、bundle 重建、troubleshooting 双保留；正文未识别/双丝网/千事统计/千窗修订直通，9 夹具种子改 M1 extra（§2.1） | 4296/4295/0fail+1skip |
+| v1.3.3 | 11-24 | `e921b9d` | 2 冲突（预判全中）：manifest 键 `.370`、bundle 重建；摘要人物群体原名/召回中断直通，15 新例按 M0 直通全绿（免 §2.1） | 4311/4310/0fail+1skip |
 
 ---
 
@@ -289,3 +290,15 @@ const sameMaterial = (left, right) => materiallySame(left, right, prepareMateria
 九处上游新增用例依赖其宽松 keep 语义（`<story>` 非保留标签整块剥除→canonical 空），均按 §2.1 适配（记录见 fork-contracts §3.1「正文未识别族」）：`tests/v3-foundation.test.mjs` 直连域 2 例种子 `extraTags:'story'`；`tests/v3-extractor-memory.test.mjs` 通知/生命周期 7 例——六例缺省 M0 harness 加同款种子，「合并提醒一次」例种子变量 `keepTags:'content'` 改 `extraTags:'story'`（M2 keep='content' 会把无标签健康尾楼剔空反标记新问题 → 去重断言 2≠1；切换机制同构映射），「保留marker」例前半段 keepTags 切换在本仓 M2 语义恰好同构保持原样、仅后半段大批坏楼 harness 加种子。extractor 7 例经纯上游临时 worktree（`5bc0db8` + junction）归因 7/7 绿坐实非上游原生红；foundation 2 例在评估阶段预判同根因、适配后单跑绿坐实。
 
 验证：生产入口+装配 54/54；recall-local-guards 9/9；金样 43/43；等价对拍 vs `5bc0db8` 144/144；跨仓 settings-api 47/47；全量 4296 项/4295 通过/0 失败/1 skip（三轮全量并集：首轮 7 红全为宽松 keep 族、适配后单跑与次轮全绿；次三轮各随机命中 1-2 例已知 TT ENOTEMPTY 临时目录竞态、受害者用例名每轮不同且单跑全绿，见 merge-playbook §4）。
+
+## 16. v1.3.3（2026-11-24，合并提交 `e921b9d`）
+
+上游 `30a4a40` 发布 v1.3.3，两个能力：**召回中断**——本轮选材被另一笔生成接管时，`intercept` 记录被接管轮的 `hostAbort`，若其仍在 `selecting` 阶段且未停止则同步停止原轮正文并提示「本轮召回被另一笔生成打断，请重试」，同时修正接管 continue 的 chainId 结束归属，后继生成沿自己的流程继续；**摘要人物**——新增 `src/v3/memory-participants.js`（`buildMemoryParticipantDirectory`/`memoryParticipantsForDisplay`/`parseMemoryParticipantNames`），`memory-runtime` 的 `projectMemoryEntities` 统一实体投影（群体目录不再依赖空间事实、人物恒投影且带 `memberEntityIds`），`entity-identity` 增 `includeMemberEntityIds` 开关，摘要详情/楼内卡/编辑框显示群体原名，编辑名单保留原群体身份与证据（同名个人/群体并存、含顿号群体名不被拆散、明确空名单清引用）。
+
+两处物理冲突（预判全中）：manifest 缓存键（`20261124.370-840b0f58573be91e`——全史序列 361→366→〔本仓 367〕→369，368 全库未用，接上游 `.369` 取 `.370`；主入口 SHA-256 `840b0f58…`）与 `dist/qqj-app.js`（Vite 8.2.2/Rolldown 重建，日志「写入 1 项，保留 1 项未变产物」）。稳定分块 `qianchuang-static-yL4fQlU6.js` 与上游同名同 SHA，未生成本地分叉。`CHANGELOG`/`README` 自动合并（1.3.3 节 + 本仓 1.2.x 补丁段双保留）。
+
+八个自动合并文件逐文件 §6 核验（方法：合并前本地 delta 与合并后「本仓 vs 上游」差异行集合比对）：`recall-runtime`、`v3-foundation-view`、`inline-projection`、`production-entry-load`、`v3-extractor-memory` 五者差异集合 **md5 逐一相同**——合并结果＝上游全量 delta ＋ 恰为本仓资产行，无静默吞并、无过时适配残留；`entity-identity`/`memory-runtime`/`memory-participants` 本仓未改，合并后与上游逐字节一致。`troubleshooting` 本轮上游未动。
+
+上游新增 15 例（`memory-participants.test.mjs` 3 例 + extractor「摘要参与者」6 例 + entry-load 重叠选材 3 类型×2 入口 6 例）**首次免 §2.1 种子适配**：夹具正文均为无包裹标签文本，本仓 M0 直通的 canonical 与上游宽松 keep 结果等价，全部直绿；无上游原生红，`fork-contracts` 无需改动。
+
+验证：生产入口+装配 **60/60**（+6 新例）；recall-local-guards 9/9；金样 43/43（跨仓 SHA-256 `a61361cb…` 一致）；等价对拍 vs `30a4a40` 144/144（上游未动 `recall-selector.js`，脚手架未改）；跨仓 settings-api 47/47；全量 **4311 项/4310 通过/0 失败/1 skip**——单轮即全绿，本轮未命中 TT `ENOTEMPTY` 偶发（基线见 merge-playbook §4）。
